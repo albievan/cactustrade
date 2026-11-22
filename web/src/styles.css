@@ -1,0 +1,8 @@
+:root { --ct-green: #1f7a4d; }
+body { min-height: 100vh; }
+.navbar-brand .bi { color: var(--ct-green); }
+.real-banner { background: #b02a37; color: #fff; font-weight: 600; text-align: center; padding: .4rem; letter-spacing: .02em; }
+.demo-badge { background: var(--ct-green); }
+.auth-card { max-width: 26rem; margin: 8vh auto; }
+.stat .value { font-size: 1.5rem; font-weight: 600; }
+.mono { font-family: var(--bs-font-monospace); word-break: break-all; }

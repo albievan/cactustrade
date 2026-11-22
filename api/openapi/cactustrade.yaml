@@ -1,0 +1,494 @@
+openapi: 3.0.3
+info:
+  title: cactusTrade API
+  version: 0.1.0
+  description: |
+    REST API of cactusTrade, an autonomous long-only share-trading agent for one eToro
+    account (demo by default). Contract-first: handlers are generated from this file.
+
+    **Authentication.** The web UI signs in with `POST /api/v1/auth/login`, which sets the
+    `cactustrade_session` cookie (HttpOnly, Secure, SameSite=Strict); every state-changing
+    request with that cookie must also send the session's CSRF token in `X-CSRF-Token`.
+    Programs use an API key: `Authorization: Bearer ctk_<id>_<secret>` (no CSRF needed).
+
+    **Roles.** `viewer` reads; `operator` also starts, stops and pulls the kill switch;
+    `admin` manages users, credentials, limits and the trading mode.
+
+    **Secrets are write-only.** Credentials can be set or deleted but are never returned.
+
+    cactusTrade is software, not financial advice; trading can lose money.
+  license:
+    name: Public domain (SQLite-style blessing)
+servers:
+  - url: /
+tags:
+  - name: system
+  - name: auth
+  - name: users
+  - name: apikeys
+  - name: credentials
+  - name: audit
+security:
+  - sessionCookie: []
+  - bearerApiKey: []
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      operationId: healthz
+      summary: Liveness (the process is serving)
+      security: []
+      responses:
+        "200": { $ref: "#/components/responses/Health" }
+  /readyz:
+    get:
+      tags: [system]
+      operationId: readyz
+      summary: Readiness (the database answers)
+      security: []
+      responses:
+        "200": { $ref: "#/components/responses/Health" }
+        "503": { $ref: "#/components/responses/Health" }
+  /api/v1/public/status:
+    get:
+      tags: [system]
+      operationId: getPublicStatus
+      summary: What the sign-in page needs before anyone is signed in
+      security: []
+      responses:
+        "200":
+          description: Public status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicStatus" }
+  /api/v1/setup:
+    post:
+      tags: [auth]
+      operationId: setup
+      summary: First-run setup — create the first administrator
+      description: |
+        Works only while no user exists and only with the setup token, which the install
+        printed (`deploy.sh`) or wrote to `setup_token` in the data folder (standalone).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetupRequest" }
+      responses:
+        "201":
+          description: Administrator created; sign in next
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Sign in (sets the session cookie)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Sign out (clears the session cookie)
+      security: []
+      responses:
+        "204": { description: Signed out }
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: The signed-in user, permissions and CSRF token
+      responses:
+        "200":
+          description: Current principal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/password:
+    post:
+      tags: [auth]
+      operationId: changePassword
+      summary: Change your own password (ends your other sessions)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+      responses:
+        "204": { description: Changed; sign in again }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/system/status:
+    get:
+      tags: [system]
+      operationId: getSystemStatus
+      summary: Version, trading mode and agent state (viewer)
+      responses:
+        "200":
+          description: System status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemStatus" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /api/v1/users:
+    get:
+      tags: [users]
+      operationId: listUsers
+      summary: List users (admin)
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [users]
+      operationId: createUser
+      summary: Create a user (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateUserRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/users/{userId}:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    patch:
+      tags: [users]
+      operationId: updateUser
+      summary: Change a user's role, enabled state or password (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateUserRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [users]
+      operationId: deleteUser
+      summary: Delete a user, their sessions and API keys (admin)
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/api-keys:
+    get:
+      tags: [apikeys]
+      operationId: listApiKeys
+      summary: List your API keys (admins see all)
+      responses:
+        "200":
+          description: API keys (never their secrets)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApiKey" }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [apikeys]
+      operationId: createApiKey
+      summary: Create an API key (signed-in users only; role ≤ yours)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateApiKeyRequest" }
+      responses:
+        "201":
+          description: Created — the secret is shown this once
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedApiKey" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/api-keys/{keyId}:
+    parameters:
+      - { name: keyId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    delete:
+      tags: [apikeys]
+      operationId: revokeApiKey
+      summary: Revoke an API key (yours; admins any)
+      responses:
+        "204": { description: Revoked }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/credentials:
+    get:
+      tags: [credentials]
+      operationId: listCredentials
+      summary: Which credentials are set (never their values)
+      responses:
+        "200":
+          description: Credential status
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Credential" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /api/v1/credentials/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { $ref: "#/components/schemas/CredentialName" } }
+    put:
+      tags: [credentials]
+      operationId: setCredential
+      summary: Set a credential (admin, web UI session only); write-only
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetCredentialRequest" }
+      responses:
+        "204": { description: Stored (encrypted) }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [credentials]
+      operationId: deleteCredential
+      summary: Delete a credential (admin, web UI session only)
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/audit:
+    get:
+      tags: [audit]
+      operationId: listAudit
+      summary: Newest audit entries (admin)
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Audit entries, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditEntry" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: cactustrade_session
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      description: "API key: ctk_<id>_<secret>"
+  responses:
+    Problem:
+      description: Error (RFC 9457 problem details)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Health:
+      description: Health
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Health" }
+  schemas:
+    Problem:
+      type: object
+      required: [title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        field: { type: string, description: The invalid field, for 400s }
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+        detail: { type: string }
+    Role:
+      type: string
+      enum: [admin, operator, viewer]
+    TradingMode:
+      type: string
+      enum: [demo, real]
+    AgentState:
+      type: string
+      enum: [stopped, running, paused, killed]
+    PublicStatus:
+      type: object
+      required: [version, setupRequired]
+      properties:
+        version: { type: string }
+        setupRequired: { type: boolean }
+    SystemStatus:
+      type: object
+      required: [version, build, mode, agentState, database, startedAt, now]
+      properties:
+        version: { type: string }
+        build: { type: string }
+        mode: { $ref: "#/components/schemas/TradingMode" }
+        agentState: { $ref: "#/components/schemas/AgentState" }
+        database: { type: string, enum: [sqlite, mariadb] }
+        startedAt: { type: string, format: date-time }
+        now: { type: string, format: date-time }
+    SetupRequest:
+      type: object
+      required: [setupToken, username, password]
+      properties:
+        setupToken: { type: string, maxLength: 256 }
+        username: { type: string, maxLength: 64 }
+        password: { type: string, maxLength: 256 }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, maxLength: 64 }
+        password: { type: string, maxLength: 256 }
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, maxLength: 256 }
+        newPassword: { type: string, maxLength: 256 }
+    User:
+      type: object
+      required: [id, username, role, disabled, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        disabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Me:
+      type: object
+      required: [user, permissions, via]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        permissions:
+          type: array
+          items: { type: string }
+        via: { type: string, enum: [session, apikey] }
+        csrfToken:
+          type: string
+          description: Send as X-CSRF-Token on state-changing requests (session only)
+    CreateUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username: { type: string, maxLength: 64 }
+        password: { type: string, maxLength: 256 }
+        role: { $ref: "#/components/schemas/Role" }
+    UpdateUserRequest:
+      type: object
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        disabled: { type: boolean }
+        password: { type: string, maxLength: 256 }
+    ApiKey:
+      type: object
+      required: [id, ownerId, name, role, createdAt]
+      properties:
+        id: { type: string }
+        ownerId: { type: string }
+        name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    CreateApiKeyRequest:
+      type: object
+      required: [name, role]
+      properties:
+        name: { type: string, maxLength: 64 }
+        role: { $ref: "#/components/schemas/Role" }
+        expiresInDays: { type: integer, minimum: 0, maximum: 365, description: 0 = never }
+    CreatedApiKey:
+      type: object
+      required: [apiKey, secret]
+      properties:
+        apiKey: { $ref: "#/components/schemas/ApiKey" }
+        secret: { type: string, description: "Bearer value; shown once, never again" }
+    CredentialName:
+      type: string
+      enum: [etoro_demo_api_key, etoro_demo_user_key, etoro_real_api_key, etoro_real_user_key, llm_api_key]
+    Credential:
+      type: object
+      required: [name, label, set]
+      properties:
+        name: { $ref: "#/components/schemas/CredentialName" }
+        label: { type: string }
+        set: { type: boolean }
+        source: { type: string, enum: [ui, env], description: "env = from an environment variable; read-only here" }
+        envVar: { type: string, description: The environment variable that may provide it }
+        updatedAt: { type: string, format: date-time }
+    SetCredentialRequest:
+      type: object
+      required: [value]
+      properties:
+        value: { type: string, maxLength: 4096, description: "Write-only: never returned" }
+    AuditEntry:
+      type: object
+      required: [id, at, actor, action, target, details, remoteIp]
+      properties:
+        id: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+        actorId: { type: string }
+        actor: { type: string }
+        action: { type: string }
+        target: { type: string }
+        details: { type: string }
+        remoteIp: { type: string }

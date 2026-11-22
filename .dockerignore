@@ -1,0 +1,12 @@
+.git
+bin
+dist
+data
+secrets
+backups
+.deploy
+.cache
+.env.local
+web/node_modules
+web/dist
+coverage*.out

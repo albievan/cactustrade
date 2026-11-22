@@ -1,0 +1,37 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+import { Layout } from "./components/Layout";
+import { useSession } from "./lib/session";
+import { Login } from "./pages/Login";
+import { Setup } from "./pages/Setup";
+import { Dashboard } from "./pages/Dashboard";
+import { Credentials } from "./pages/Credentials";
+import { Users } from "./pages/Users";
+import { ApiKeys } from "./pages/ApiKeys";
+import { Audit } from "./pages/Audit";
+import { Account } from "./pages/Account";
+
+export function App() {
+  const { me, loading } = useSession();
+  if (loading) return <div className="p-5 text-center text-secondary">Loading…</div>;
+  if (!me) {
+    return (
+      <Routes>
+        <Route path="/setup" element={<Setup />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
+  }
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route index element={<Dashboard />} />
+        <Route path="credentials" element={<Credentials />} />
+        <Route path="users" element={<Users />} />
+        <Route path="api-keys" element={<ApiKeys />} />
+        <Route path="audit" element={<Audit />} />
+        <Route path="account" element={<Account />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
+}

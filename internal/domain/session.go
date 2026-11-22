@@ -1,0 +1,63 @@
+package domain
+
+import "time"
+
+// Session is a signed-in browser. Only the SHA-256 of its token is stored.
+type Session struct {
+	TokenHash string
+	UserID    string
+	CSRFToken string
+	CreatedAt time.Time
+	LastSeen  time.Time
+	ExpiresAt time.Time
+}
+
+// SessionPolicy bounds a session's life.
+type SessionPolicy struct {
+	Absolute time.Duration // from sign-in, whatever the activity
+	Idle     time.Duration // since the last request
+}
+
+// DefaultSessionPolicy: 12 hours absolute, 1 hour idle.
+var DefaultSessionPolicy = SessionPolicy{Absolute: 12 * time.Hour, Idle: time.Hour}
+
+// Active reports whether the session may still be used at now.
+func (s Session) Active(now time.Time, p SessionPolicy) bool {
+	return now.Before(s.ExpiresAt) && now.Sub(s.LastSeen) < p.Idle
+}
+
+// APIKey is a bearer credential for programmatic access. Only the SHA-256 of its secret is
+// stored; the secret is shown once at creation.
+type APIKey struct {
+	ID         string
+	OwnerID    string
+	Name       string
+	Role       Role
+	SecretHash string
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	ExpiresAt  *time.Time
+}
+
+// Usable reports whether the key may authenticate at now.
+func (k APIKey) Usable(now time.Time) bool { return k.ExpiresAt == nil || now.Before(*k.ExpiresAt) }
+
+// ValidateKeyName checks an API key's label.
+func ValidateKeyName(s string) error {
+	if s == "" || len(s) > 64 {
+		return Invalid("name", "1-64 characters")
+	}
+	return nil
+}
+
+// AuditEntry records who did what. Details never hold secrets.
+type AuditEntry struct {
+	ID       int64
+	At       time.Time
+	ActorID  string // user id, "" for the system
+	Actor    string // username or "system"
+	Action   string // e.g. "user.create", "credential.set"
+	Target   string // e.g. a user id or credential name
+	Details  string
+	RemoteIP string
+}

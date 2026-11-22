@@ -1,0 +1,74 @@
+# cactusTrade on Docker (Docker Desktop, Docker Engine or Podman) with MariaDB. Settings and
+# volume mappings come from .env; secrets from files in ${SECRETS_DIR}. Use ./deploy.sh.
+name: cactustrade
+services:
+  mariadb:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      MARIADB_DATABASE: ${MARIADB_DATABASE}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+    secrets: [db_password, db_root_password]
+    volumes:
+      - ${MARIADB_DATA_DIR}:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # The app runs as uid 65532; make the mapped data folder writable for it, and only for it.
+  volume-init:
+    image: busybox:1.37
+    command: ["sh", "-c", "chown -R 65532:65532 /data && chmod 700 /data"]
+    volumes:
+      - ${DATA_DIR}:/data
+    restart: "no"
+
+  app:
+    image: ${CACTUSTRADE_IMAGE}
+    build:
+      context: .
+      args:
+        VERSION: ${CACTUSTRADE_VERSION:-dev}
+        BUILD: ${CACTUSTRADE_BUILD:-0}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    depends_on:
+      mariadb: { condition: service_healthy }
+      volume-init: { condition: service_completed_successfully }
+    environment:
+      TZ: ${TZ}
+      CACTUSTRADE_DB_DRIVER: mariadb
+      CACTUSTRADE_DB_HOST: mariadb
+      CACTUSTRADE_DB_NAME: ${MARIADB_DATABASE}
+      CACTUSTRADE_DB_USER: ${MARIADB_USER}
+      CACTUSTRADE_SECRETS_DIR: /run/secrets
+      CACTUSTRADE_TLS: auto
+      CACTUSTRADE_ADDR: ":8443"
+      CACTUSTRADE_LOG_LEVEL: ${CACTUSTRADE_LOG_LEVEL}
+      CACTUSTRADE_COOKIE_SECURE: ${CACTUSTRADE_COOKIE_SECURE}
+      # eToro demo keys (empty files when not provided; then set them in the web UI).
+      ETORO_DEMO_PUB_FILE: /run/secrets/etoro_demo_pub
+      ETORO_DEMO_PK_FILE: /run/secrets/etoro_demo_pk
+    secrets: [db_password, master_key, setup_token, metrics_token, etoro_demo_pub, etoro_demo_pk]
+    volumes:
+      - ${DATA_DIR}:/data
+    ports:
+      - "${HTTPS_PORT}:8443"
+
+secrets:
+  db_password: { file: "${SECRETS_DIR}/db_password" }
+  db_root_password: { file: "${SECRETS_DIR}/db_root_password" }
+  master_key: { file: "${SECRETS_DIR}/master_key" }
+  setup_token: { file: "${SECRETS_DIR}/setup_token" }
+  metrics_token: { file: "${SECRETS_DIR}/metrics_token" }
+  etoro_demo_pub: { file: "${SECRETS_DIR}/etoro_demo_pub" }
+  etoro_demo_pk: { file: "${SECRETS_DIR}/etoro_demo_pk" }

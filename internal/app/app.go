@@ -1,0 +1,114 @@
+// Package app holds cactusTrade's use cases. Every exported method that acts for someone
+// takes a Principal and checks its permission first; nothing here knows about HTTP or SQL.
+package app
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
+)
+
+// Via says how a principal authenticated.
+type Via string
+
+// Authentication methods.
+const (
+	ViaSession Via = "session"
+	ViaAPIKey  Via = "apikey"
+)
+
+// Principal is an authenticated caller.
+type Principal struct {
+	UserID   string
+	Username string
+	Role     domain.Role // for an API key: the key's role (never above its owner's)
+	Via      Via
+	APIKeyID string
+	RemoteIP string
+}
+
+// Can reports whether the principal has permission p.
+func (p Principal) Can(perm domain.Permission) bool { return p.UserID != "" && p.Role.Allows(perm) }
+
+// Deps are the ports the use cases need.
+type Deps struct {
+	Store   ports.Store
+	Secrets ports.SecretStore
+	Hasher  ports.PasswordHasher
+	Random  ports.Random
+	Clock   ports.Clock
+	Log     *slog.Logger
+}
+
+// Config holds use-case settings.
+type Config struct {
+	// SetupToken must accompany first-run setup. Empty disables setup (fail closed).
+	SetupToken string
+	Sessions   domain.SessionPolicy
+	Version    string
+	Build      string
+}
+
+// Service implements the use cases.
+type Service struct {
+	d         Deps
+	cfg       Config
+	startedAt time.Time
+	dummyHash string // verified against when a username is unknown (equal timing)
+}
+
+// New builds the service.
+func New(d Deps, cfg Config) (*Service, error) {
+	if d.Store == nil || d.Secrets == nil || d.Hasher == nil || d.Random == nil || d.Clock == nil {
+		return nil, errors.New("app.New: missing dependency")
+	}
+	if d.Log == nil {
+		d.Log = slog.New(slog.DiscardHandler)
+	}
+	if cfg.Sessions.Absolute == 0 {
+		cfg.Sessions = domain.DefaultSessionPolicy
+	}
+	dummy, err := d.Hasher.Hash(d.Random.Token())
+	if err != nil {
+		return nil, fmt.Errorf("app.New: %w", err)
+	}
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy}, nil
+}
+
+func (s *Service) authorize(p Principal, perm domain.Permission) error {
+	if p.UserID == "" {
+		return domain.ErrUnauthenticated
+	}
+	if !p.Can(perm) {
+		return domain.ErrForbidden
+	}
+	return nil
+}
+
+// audit records an action. A failed audit write is logged, never silently dropped.
+func (s *Service) audit(ctx context.Context, p Principal, action, target, details string) {
+	actor := p.Username
+	if actor == "" {
+		actor = "system"
+	}
+	e := domain.AuditEntry{
+		At: s.d.Clock.Now().UTC(), ActorID: p.UserID, Actor: actor, Action: action,
+		Target: target, Details: details, RemoteIP: p.RemoteIP,
+	}
+	if err := s.d.Store.Audit().Append(ctx, e); err != nil {
+		s.d.Log.ErrorContext(ctx, "audit write failed", "action", action, "target", target, "err", err)
+	}
+}
+
+// hashToken is the stored form of a session token or API key secret.
+func hashToken(t string) string {
+	sum := sha256.Sum256([]byte(t))
+	return hex.EncodeToString(sum[:])
+}

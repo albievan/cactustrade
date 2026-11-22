@@ -1,0 +1,17 @@
+/cactustrade
+/bin/
+/dist/
+/data/
+/secrets/
+/backups/
+/.deploy/
+/.cache/
+coverage*.out
+*.test
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+.DS_Store
+/.env.local
+# The original brief names private projects: kept local, not published.
+/cactusTrade-claude-code-prompt.md
