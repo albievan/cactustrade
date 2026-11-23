@@ -19,6 +19,8 @@ embedded with `go:embed`.
    sqlstore (SQLite│MariaDB)   secretstore (AES-256-GCM,     etoro (allowlist; client
    goose migrations x2         env overlay)                  from phase 2)
                                                              llm (phase 5, no broker access)
+
+ internal/strategy (pure: features, HMM, playbooks, backtester; no I/O, no ports)
 ```
 
 Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters ← cmd`.
@@ -34,7 +36,9 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `PasswordHasher` | `argon2` (argon2id, 64 MiB, t=3) |
 | `Clock`, `Random` | `system` |
 | `EventBus` | `eventbus` (in-process, never blocks a publisher) |
-| `MarketCalendar`, `MarketData`, `Broker` | phase 2 / 4 |
+| `MarketCalendar` | `calendar` (LSE, NYSE/NASDAQ; tables 2026–2027) |
+| `MarketData` | `etoro.Feed` (WebSocket stream, REST fallback) |
+| `Broker` | `etoro.Client` (read-only until phase 4) |
 | `SignalModel` | phase 3 |
 | `RiskEngine` | phase 4 |
 | `Reviewer` | phase 5 |

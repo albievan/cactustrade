@@ -126,18 +126,19 @@ setup → login → write-only credentials page → users/API keys work for the 
 | 2.6 | `MarketCalendar` (`internal/adapters/calendar`): LSE 08:00–16:30 London, NYSE/NASDAQ 09:30–16:00 New York, DST from the embedded tz database, 2026–2027 holidays and half days verified against nyse.com, nasdaq.com, londonstockexchange.com and gov.uk (2026-11-23). Unknown year = closed + start-up warning. | done |
 | 2.7 | Answer Q1 (LSE quote units, real settlement availability, `isPotential`) with the owner's demo keys; replace the synthetic fixtures with sanitised recordings. | blocked: needs the demo keys set |
 
-## Phase 3 — regime model, playbooks, backtester — `todo`
+## Phase 3 — regime model, playbooks, backtester — `in progress`
 
-- 3.1 Features: log returns, realised volatility, volume z-score from intraday candles.
-- 3.2 Gaussian HMM (2–3 states), Baum–Welch on a rolling window, scaled forward filter only
-  (no Viterbi, no smoothing); deterministic seeds; property test: no look-ahead (appending
-  future bars never changes past filtered probabilities).
-- 3.3 Playbooks as separate modules: trend/breakout, mean-reversion, no-entry in
-  high-volatility; output candidate {instrument, reason, stop, take-profit, size, probs}.
-- 3.4 Backtester sharing the strategy + risk code; next-bar execution, fills only within the
-  bar's traded range, costs from a recorded costs table; walk-forward only.
-- 3.5 Report: net-of-cost return, max drawdown, Sharpe, win rate, trade count vs holding an
-  index; honest when it loses. No profitability claims.
+All in `internal/strategy`: pure, deterministic functions of closed bars (depguard: no I/O,
+no ports, no adapters; floats allowed only here and at the eToro JSON edge).
+
+| Step | What | Status |
+|---|---|---|
+| 3.1 | Features: log return, realised volatility (RMS of the last 20 returns), volume z-score. Feature t depends only on bars ≤ t (test). | done |
+| 3.2 | Gaussian HMM (2–3 states, diagonal), Baum–Welch with deterministic volatility-quantile initialisation and variance floors; inference is the scaled forward filter only. Labels: highest-volatility state = high_volatility, then the higher mean-return/vol state = trending, else choppy. Property test: appending future observations never changes past filtered probabilities (25 random splits). | done |
+| 3.3 | Playbooks (separate types): `TrendBreakout` (P(trending) ≥ 0.6, up-trend state, close above the 20-bar high; stop 3σ (≥ 0.2 %), target 2R), `MeanReversion` (P(choppy) ≥ 0.6, close ≥ 2 sd below the 20-bar mean; target the mean), no entries at P(high_volatility) ≥ 0.4. Size risks 0.5 % of equity at the stop, capped at 20 % of equity (the risk engine caps further in phase 4). `Engine` refits every 30 bars on the last 390 observations and filters in between. | done |
+| 3.4 | `Backtest`: walk-forward with the same `Engine`; next-bar-open fills; exits only at prices the bar traded (stop at min(open, stop), target at max(open, target), stop first when both are in one bar); never across a session; costs from eToro's costs endpoint (spread half in/half out, fees and tax on the buy); amount ≤ cash. Fill rules tested with scripted signals. The phase-4 risk engine will be plugged into the same loop. | done |
+| 3.5 | Report (`Report.String`): net-of-cost return vs buy-and-hold of the instrument, max drawdown, per-session Sharpe, win rate, trades, costs paid, and a verdict that says "lost money" / "worse than holding" plainly. `cactustrade backtest --instrument ID [--interval 1m --bars 1000 --equity 10000 --market NYSE]` runs it on eToro candles with the demo keys (read-only). | done |
+| 3.6 | Run the backtest on the watchlist with real demo-account candles and record the (honest) results; tune nothing on the test period. | blocked: needs the demo keys |
 
 ## Phase 4 — risk engine, demo execution, reconciliation, kill switch — `todo`
 

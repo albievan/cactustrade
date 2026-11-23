@@ -49,6 +49,18 @@ linters:
             - { pkg: "database/sql", desc: "use ports, not the database" }
             - { pkg: "net/http", desc: "use ports, not HTTP" }
             - { pkg: "os", desc: "use ports, not the OS" }
+        # The regime model and playbooks are pure functions of candles: no I/O, no ports, no
+        # broker. Floats are allowed here (and only here and at the eToro JSON edge).
+        strategy:
+          files: ["**/internal/strategy/**"]
+          list-mode: lax
+          deny:
+            - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "strategy is pure" }
+            - { pkg: "github.com/albievan/cactustrade/internal/ports", desc: "strategy is pure" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters", desc: "strategy never reaches the broker or the database" }
+            - { pkg: "database/sql", desc: "strategy does no I/O" }
+            - { pkg: "net/http", desc: "strategy does no I/O" }
+            - { pkg: "os", desc: "strategy does no I/O" }
         # The LLM reviewer (phase 5) must never reach the broker (CLAUDE.md §2.5).
         reviewer:
           files: ["**/internal/adapters/llm/**"]

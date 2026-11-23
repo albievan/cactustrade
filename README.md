@@ -10,11 +10,13 @@ Kubernetes using the same `deploy.sh` as the other cactus apps.
 > implies that it is profitable. It runs in **demo mode by default**. Real money needs a
 > deliberate, gated switch, and you use it entirely at your own risk (see `LICENSE`).
 
-**Status: phase 2 of 7 (in progress).** Sign-in, roles, API keys, the encrypted write-only
+**Status: phases 1–2 done, phase 3 in progress (of 7).** Sign-in, roles, API keys, the encrypted write-only
 credential store, deployment, and now a **read-only** eToro client: test connection, account
 cash/equity/positions, market sessions (LSE, NYSE/NASDAQ) and a watchlist of eligible shares
-with live quotes. **It cannot trade yet:** order operations are refused inside the client until
-phase 4 (demo orders). See [`docs/PLAN.md`](docs/PLAN.md).
+with live quotes (WebSocket stream, REST fallback), and the phase-3 regime model, playbooks
+and walk-forward backtester (`cactustrade backtest --instrument ID`). **It cannot trade yet:**
+order operations are refused inside the client until phase 4 (demo orders). Backtests
+describe the past only; they are not a forecast and not advice. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Money guardrails (enforced in code, covered by tests)
 

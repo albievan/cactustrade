@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/albievan/cactustrade/internal/domain"
 )
 
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
@@ -92,5 +95,37 @@ func TestMigrateAndTLS(t *testing.T) {
 	}
 	if tc, err := trustOwnCert(filepath.Join(dir, "tls", "cert.pem")); err != nil || tc.ServerName != "localhost" {
 		t.Fatal("trustOwnCert", err)
+	}
+}
+
+func TestBacktestCommandValidates(t *testing.T) {
+	var out strings.Builder
+	e := envOf(map[string]string{"CACTUSTRADE_DATA_DIR": t.TempDir()})
+	for _, args := range [][]string{
+		{"backtest"}, {"backtest", "--instrument", "1", "--equity", "0"}, {"backtest", "--instrument", "1", "--market", "XETRA"}, {"backtest", "--bogus"},
+	} {
+		if err := run(context.Background(), args, e, &out); err == nil {
+			t.Errorf("%v accepted", args)
+		}
+	}
+	// no keys: fails before any network call, with the reason
+	err := run(context.Background(), []string{"backtest", "--instrument", "1"}, e, &out)
+	if err == nil || !strings.Contains(err.Error(), "not both set") {
+		t.Fatalf("without keys: %v", err)
+	}
+}
+
+func TestCostsFromQuote(t *testing.T) {
+	c := costsFromQuote([]domain.CostItem{
+		{Type: "marketSpread", Value: 1_000_000}, {Type: "sdrt", Value: 5_000_000}, {Type: "overnightFee", Value: 9_000_000},
+	}, 100_000, time.Now())
+	if math.Abs(c.Spread-0.001) > 1e-12 || math.Abs(c.BuyFee-0.005) > 1e-12 || c.SellFee != 0 || !strings.Contains(c.Recorded, "$1000.00") {
+		t.Fatalf("costs = %+v", c)
+	}
+	if costsFromQuote(nil, 0, time.Now()).Spread != 0 {
+		t.Fatal("zero size")
+	}
+	if l, err := marketLocation("lse"); err != nil || l.String() != "Europe/London" {
+		t.Fatal("LSE location")
 	}
 }
