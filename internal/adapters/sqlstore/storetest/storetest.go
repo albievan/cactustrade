@@ -488,4 +488,90 @@ func Run(t *testing.T, s ports.Store) {
 			t.Fatalf("after delete = %+v", list)
 		}
 	})
+
+	t.Run("themes_reviews", func(t *testing.T) {
+		th, rv := s.Themes(), s.Reviews()
+		space := domain.Theme{
+			ID: "th-1", AccountID: "acc-1", Name: "Space", Keywords: []string{"rocket", "satellite"}, Enabled: true,
+			Instruments: []domain.InstrumentID{1001}, CreatedAt: t0, UpdatedAt: t0,
+		}
+		if err := th.Create(ctx, space); err != nil {
+			t.Fatal(err)
+		}
+		if err := th.Create(ctx, space); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("duplicate: %v", err)
+		}
+		bad := space
+		bad.ID, bad.Instruments = "th-bad", []domain.InstrumentID{999999}
+		if err := th.Create(ctx, bad); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("uncached instrument: %v", err)
+		}
+		if _, err := th.Get(ctx, "th-bad"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("a failed create left a theme behind")
+		}
+		semis := domain.Theme{ID: "th-2", AccountID: "acc-1", Name: "Semiconductors", IndustryID: 7, CreatedAt: t0, UpdatedAt: t0}
+		if err := th.Create(ctx, semis); err != nil {
+			t.Fatal(err)
+		}
+		got, err := th.Get(ctx, "th-1")
+		if err != nil || got.Name != "Space" || len(got.Keywords) != 2 || got.Keywords[1] != "satellite" || len(got.Instruments) != 1 || !got.Enabled {
+			t.Fatalf("Get = %+v %v", got, err)
+		}
+		list, err := th.List(ctx, "acc-1")
+		if err != nil || len(list) != 2 || list[0].Name != "Semiconductors" || list[0].Keywords != nil || list[1].Instruments[0] != 1001 {
+			t.Fatalf("List = %+v %v", list, err)
+		}
+		space.Enabled, space.Keywords, space.Instruments, space.UpdatedAt = false, nil, nil, t0.Add(time.Minute)
+		if err := th.Update(ctx, space); err != nil {
+			t.Fatal(err)
+		}
+		if g, _ := th.Get(ctx, "th-1"); g.Enabled || len(g.Keywords) != 0 || len(g.Instruments) != 0 {
+			t.Fatalf("after Update = %+v", g)
+		}
+		if err := th.Update(ctx, domain.Theme{ID: "nope", Name: "x"}); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("Update missing")
+		}
+		if err := th.Delete(ctx, "th-2"); err != nil {
+			t.Fatal(err)
+		}
+		if err := th.Delete(ctx, "th-2"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("Delete missing")
+		}
+
+		r1 := domain.Review{
+			AccountID: "acc-1", Instrument: 1001, Symbol: "AAPL", Theme: "Space", At: t0, Outcome: domain.ReviewNoSignal,
+			Probs: map[domain.Regime]float64{domain.RegimeTrending: 0.7}, Checks: []domain.ReviewCheck{{Rule: "enough price history", Pass: true, Detail: "300 bars"}, {Rule: "playbook x", Detail: "no breakout"}},
+			Summary: "no signal",
+		}
+		if err := rv.Upsert(ctx, r1); err != nil {
+			t.Fatal(err)
+		}
+		r1.At, r1.Outcome, r1.Direction = t0.Add(time.Minute), domain.ReviewAdded, domain.Short
+		if err := rv.Upsert(ctx, r1); err != nil {
+			t.Fatal(err)
+		}
+		r2 := domain.Review{AccountID: "acc-1", Instrument: 2002, Symbol: "BARC.L", At: t0, Outcome: domain.ReviewError, Summary: "no candles"}
+		_ = rv.Upsert(ctx, r2)
+		rs, err := rv.List(ctx, "acc-1", 10)
+		if err != nil || len(rs) != 2 || rs[0].Instrument != 1001 || rs[0].Outcome != domain.ReviewAdded || rs[0].Direction != domain.Short ||
+			rs[0].Probs[domain.RegimeTrending] != 0.7 || len(rs[0].Checks) != 2 || !rs[0].Checks[0].Pass || rs[0].Checks[1].Detail != "no breakout" {
+			t.Fatalf("List = %+v %v", rs, err)
+		}
+		if rs, _ := rv.List(ctx, "acc-1", 1); len(rs) != 1 {
+			t.Fatal("limit")
+		}
+		if n, err := rv.DeleteBefore(ctx, t0.Add(30*time.Second)); err != nil || n != 1 {
+			t.Fatalf("DeleteBefore = %d %v", n, err)
+		}
+		// deleting the account removes its themes and reviews
+		if err := s.Accounts().Delete(ctx, "acc-1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := th.Get(ctx, "th-1"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("theme survived its account")
+		}
+		if rs, _ := rv.List(ctx, "acc-1", 10); len(rs) != 0 {
+			t.Fatal("reviews survived their account")
+		}
+	})
 }

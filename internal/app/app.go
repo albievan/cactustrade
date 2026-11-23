@@ -13,6 +13,7 @@ import (
 
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
+	"github.com/albievan/cactustrade/internal/strategy"
 )
 
 // Via says how a principal authenticated.
@@ -54,6 +55,7 @@ type Deps struct {
 	Market   ports.MarketData
 	Calendar ports.MarketCalendar
 	Reviewer ports.Reviewer // the LLM reviewer (nil = not available)
+	Research ports.Research // industries and the screen for the scanner (nil = not available)
 	// Reload re-reads settings that live outside the database (credentials from the
 	// environment / secret files). Restart asks the process to restart gracefully. Both are
 	// supplied by cmd/cactustrade; nil = not supported.
@@ -74,6 +76,8 @@ type Service struct {
 	cfg       Config
 	startedAt time.Time
 	dummyHash string // verified against when a username is unknown (equal timing)
+	// evalOverride replaces the strategy in scanner tests.
+	evalOverride func(domain.InstrumentID, []domain.Candle) strategy.Decision
 }
 
 // New builds the service.

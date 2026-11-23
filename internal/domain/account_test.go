@@ -27,3 +27,35 @@ func TestAccountKeyNamesAndName(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeTheme(t *testing.T) {
+	th, err := NormalizeTheme(Theme{Name: " Space ", Keywords: []string{" rocket ", "", "satellite"}})
+	if err != nil || th.Name != "Space" || len(th.Keywords) != 2 || th.Keywords[0] != "rocket" {
+		t.Fatalf("theme = %+v %v", th, err)
+	}
+	if _, err := NormalizeTheme(Theme{Name: "Semis", IndustryID: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NormalizeTheme(Theme{Name: "Picks", Instruments: []InstrumentID{1}}); err != nil {
+		t.Fatal(err)
+	}
+	long := make([]string, 11)
+	for i := range long {
+		long[i] = "k"
+	}
+	many := make([]InstrumentID, 51)
+	for _, bad := range []Theme{
+		{Name: "", Keywords: []string{"a"}},
+		{Name: "Empty"},
+		{Name: "x", Keywords: long},
+		{Name: "x", Keywords: []string{string(make([]rune, 101))}},
+		{Name: "x", IndustryID: -1},
+		{Name: "x", Keywords: []string{"a\nb"}},
+		{Name: "a\tb", Keywords: []string{"a"}},
+		{Name: "x", Instruments: many},
+	} {
+		if _, err := NormalizeTheme(bad); err == nil {
+			t.Errorf("%+v accepted", bad)
+		}
+	}
+}

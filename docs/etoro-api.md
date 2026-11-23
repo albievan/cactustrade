@@ -32,6 +32,8 @@ explicit demo/real path pair per operation in `allowlist.go`; the mode is chosen
 | Operation | Demo | Real | Quota |
 |---|---|---|---|
 | Instrument search (free text, ≤50) | `GET /api/v2/market-data/instruments/search` | same | market data 120/60s |
+| Industries (stock sectors; item fields undocumented: first `*id*` int and `*name*` string are read) | `GET /api/v1/market-data/stocks-industries` | same | market data |
+| Screen (field search with filters: `industryNameId`, `isCurrentlyTradable`; sort `-popularityUniques7Day`) | `GET /api/v1/market-data/search` | same | market data |
 | Instrument metadata | `GET /api/v2/market-data/instruments` | same | market data |
 | Exchanges | `GET /api/v1/market-data/exchanges` | same | market data |
 | Bid/ask rates (≤1000 ids) | `GET /api/v2/market-data/rates` | same | market data |

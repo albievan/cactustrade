@@ -43,7 +43,7 @@ func newMarketTC(t *testing.T) (*tc, *fakes.Broker) {
 	}
 	svc, err := app.New(app.Deps{
 		Store: st, Secrets: &fakes.SecretStore{Now: clk.Now}, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: clk,
-		Broker: b, Market: b, Calendar: lseOnly{},
+		Broker: b, Market: b, Calendar: lseOnly{}, Research: b,
 	}, app.Config{Version: "9.9.9"})
 	if err != nil {
 		t.Fatal(err)
@@ -282,5 +282,47 @@ func TestAccountEndpoints(t *testing.T) {
 	}
 	if code, _, _ := x.do("PUT", "/api/v1/accounts/current", `{"accountId":"nope"}`, csrf...); code != 404 {
 		t.Fatalf("switch to unknown %d", code)
+	}
+}
+
+func TestResearchEndpoints(t *testing.T) {
+	x, b := newMarketTC(t)
+	csrf := []string{"X-CSRF-Token", x.csrf}
+	b.Inds = []domain.Industry{{ID: 9, Name: "Technology"}}
+	var inds []map[string]any
+	if code := x.getJSON("/api/v1/industries", &inds); code != 200 || len(inds) != 1 || inds[0]["name"] != "Technology" {
+		t.Fatalf("industries %d %v", code, inds)
+	}
+	code, m, _ := x.do("POST", "/api/v1/themes", `{"name":"Space","keywords":["rocket"],"industryId":0,"enabled":true,"instruments":[1]}`, csrf...)
+	if code != 201 || m["name"] != "Space" || len(m["instruments"].([]any)) != 1 {
+		t.Fatalf("create theme %d %v", code, m)
+	}
+	id := m["id"].(string)
+	if code, m, _ := x.do("POST", "/api/v1/themes", `{"name":"Empty","keywords":[],"industryId":0,"enabled":true,"instruments":[]}`, csrf...); code != 400 {
+		t.Fatalf("empty theme %d %v", code, m)
+	}
+	if code, m, _ := x.do("PUT", "/api/v1/themes/"+id, `{"name":"Space","keywords":["rocket","satellite"],"industryId":9,"enabled":false,"instruments":[]}`, csrf...); code != 200 || m["enabled"] != false || m["industryId"] != 9.0 {
+		t.Fatalf("update theme %d %v", code, m)
+	}
+	var themes []map[string]any
+	if code := x.getJSON("/api/v1/themes", &themes); code != 200 || len(themes) != 1 {
+		t.Fatalf("themes %d %v", code, themes)
+	}
+	b.Bars = map[domain.InstrumentID][]domain.Candle{}
+	if code, m, _ := x.do("POST", "/api/v1/scanner/run", "", csrf...); code != 200 || m["added"] == nil {
+		t.Fatalf("run %d %v", code, m)
+	}
+	code, m, _ = x.do("GET", "/api/v1/reviews?limit=10", "")
+	if code != 200 || m["scannerEnabled"] != true {
+		t.Fatalf("reviews %d %v", code, m)
+	}
+	if code, _, _ := x.do("PUT", "/api/v1/scanner", `{"enabled":false}`, csrf...); code != 204 {
+		t.Fatalf("switch %d", code)
+	}
+	if _, m, _ := x.do("GET", "/api/v1/reviews", ""); m["scannerEnabled"] != false {
+		t.Fatalf("after switch %v", m)
+	}
+	if code, _, _ := x.do("DELETE", "/api/v1/themes/"+id, "", csrf...); code != 204 {
+		t.Fatalf("delete %d", code)
 	}
 }

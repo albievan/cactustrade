@@ -139,6 +139,8 @@ type Store struct {
 	watch    map[string]map[domain.InstrumentID]domain.WatchItem // account → instrument
 	events   []domain.Event
 	accounts map[string]domain.Account
+	themes   map[string]domain.Theme
+	reviews  map[string]domain.Review                  // account/instrument
 	shares   map[string]map[string]domain.AccountShare // account → user
 	PingErr  error
 }
@@ -156,6 +158,7 @@ func NewStore() *Store {
 		settings: map[string]string{}, instr: map[domain.InstrumentID]instrRec{},
 		watch:    map[string]map[domain.InstrumentID]domain.WatchItem{},
 		accounts: map[string]domain.Account{}, shares: map[string]map[string]domain.AccountShare{},
+		themes: map[string]domain.Theme{}, reviews: map[string]domain.Review{},
 	}
 }
 
@@ -187,6 +190,12 @@ func (s *Store) Watchlist() ports.Watchlist { return watchRepo{s} }
 
 // Events returns the event feed.
 func (s *Store) Events() ports.Events { return eventRepo{s} }
+
+// Themes returns the themes repository.
+func (s *Store) Themes() ports.Themes { return themeRepo{s} }
+
+// Reviews returns the reviews repository.
+func (s *Store) Reviews() ports.Reviews { return reviewRepo{s} }
 
 // Accounts returns the accounts repository.
 func (s *Store) Accounts() ports.Accounts { return accountRepo{s} }
@@ -776,5 +785,98 @@ func (r eventRepo) DeleteBefore(_ context.Context, before time.Time) (int64, err
 		keep = append(keep, e)
 	}
 	r.s.events = keep
+	return n, nil
+}
+
+type themeRepo struct{ s *Store }
+
+func (r themeRepo) Create(_ context.Context, t domain.Theme) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if _, ok := r.s.themes[t.ID]; ok {
+		return domain.ErrConflict
+	}
+	r.s.themes[t.ID] = t
+	return nil
+}
+
+func (r themeRepo) Get(_ context.Context, id string) (domain.Theme, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	t, ok := r.s.themes[id]
+	if !ok {
+		return domain.Theme{}, domain.ErrNotFound
+	}
+	return t, nil
+}
+
+func (r themeRepo) List(_ context.Context, acct string) ([]domain.Theme, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	var out []domain.Theme
+	for _, t := range r.s.themes {
+		if t.AccountID == acct {
+			out = append(out, t)
+		}
+	}
+	slices.SortFunc(out, func(a, b domain.Theme) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+func (r themeRepo) Update(_ context.Context, t domain.Theme) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if _, ok := r.s.themes[t.ID]; !ok {
+		return domain.ErrNotFound
+	}
+	r.s.themes[t.ID] = t
+	return nil
+}
+
+func (r themeRepo) Delete(_ context.Context, id string) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if _, ok := r.s.themes[id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(r.s.themes, id)
+	return nil
+}
+
+type reviewRepo struct{ s *Store }
+
+func (r reviewRepo) Upsert(_ context.Context, v domain.Review) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	r.s.reviews[fmt.Sprintf("%s/%d", v.AccountID, v.Instrument)] = v
+	return nil
+}
+
+func (r reviewRepo) List(_ context.Context, acct string, limit int) ([]domain.Review, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	var out []domain.Review
+	for _, v := range r.s.reviews {
+		if v.AccountID == acct {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b domain.Review) int { return cmp.Or(b.At.Compare(a.At), int(a.Instrument-b.Instrument)) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r reviewRepo) DeleteBefore(_ context.Context, before time.Time) (int64, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	var n int64
+	for k, v := range r.s.reviews {
+		if v.At.Before(before) {
+			delete(r.s.reviews, k)
+			n++
+		}
+	}
 	return n, nil
 }

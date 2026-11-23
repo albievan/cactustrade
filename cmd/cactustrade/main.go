@@ -180,6 +180,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Random: system.Random{}, Clock: clock, Log: log,
 		Broker: broker, Market: feed, Calendar: cal,
 		Reviewer: llm.New(&http.Client{Timeout: 10 * time.Minute}),
+		Research: broker,
 		Reload: func(ctx context.Context) error {
 			vals, err := secretstore.FromEnvironment(getenv, os.ReadFile)
 			if err != nil {
@@ -249,6 +250,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		stream.Watch(ids...)
 	}
 	go stream.Run(ctx)
+	go scannerLoop(ctx, svc, cal, 15*time.Minute)
 
 	errc := make(chan error, 2)
 	var redirect *http.Server
@@ -287,6 +289,24 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return errRestart
 	}
 	return nil
+}
+
+// scannerLoop runs the scanner for every account that has it on, every interval while LSE
+// or NYSE/NASDAQ is in session (read-only on eToro: it reviews stocks and fills watchlists).
+func scannerLoop(ctx context.Context, svc *app.Service, cal *calendar.Calendar, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			now := time.Now()
+			if cal.IsOpen(domain.MarketLSE, now) || cal.IsOpen(domain.MarketNYSE, now) {
+				svc.ScanAll(ctx)
+			}
+		}
+	}
 }
 
 // streamAccount picks the account whose keys the price stream uses: a demo account with

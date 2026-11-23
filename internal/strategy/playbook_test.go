@@ -133,7 +133,14 @@ func TestEngine(t *testing.T) {
 	if !seen["highvol"] || !seen["none"] {
 		t.Errorf("outcomes = %v", seen)
 	}
-	if e.Refits < 8 || e.Refits > 10 {
+	d := e.Evaluate(1, bars, 1_000_000)
+	if len(d.Checks) < 3 || d.Checks[0].Rule != "enough price history" || !d.Checks[0].Pass || !d.Checks[1].Pass {
+		t.Fatalf("checks = %+v", d.Checks)
+	}
+	if d := e.Evaluate(1, bars[:10], 1); len(d.Checks) != 1 || d.Checks[0].Pass {
+		t.Fatalf("short history checks = %+v", d.Checks)
+	}
+	if e.Refits < 8 || e.Refits > 11 {
 		t.Errorf("refits = %d, want one per 50 bars", e.Refits)
 	}
 	bad := append([]domain.Candle{}, bars[:300]...)

@@ -1,0 +1,310 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strconv"
+	"time"
+
+	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/strategy"
+)
+
+// Scanner settings.
+const (
+	scanMax             = 40              // stocks reviewed per account per scan
+	scanInterval        = 5 * time.Minute // candle interval the scanner reads
+	scanBars            = 400             // ~5 NYSE sessions of 5-minute bars
+	watchlistCap        = 30              // the scanner never grows a watchlist past this
+	eligibilityMaxAge   = 24 * time.Hour
+	reviewRetention     = 14 * 24 * time.Hour
+	scannerNominalCents = domain.Cents(1_000_000) // sizing only shapes the checks; nothing is traded here
+)
+
+func scannerKey(accountID string) string { return "scanner.enabled." + accountID }
+
+// ScannerEnabled reports whether the scanner runs for an account (on unless switched off).
+func (s *Service) ScannerEnabled(ctx context.Context, accountID string) bool {
+	v, err := s.d.Store.Settings().Get(ctx, scannerKey(accountID))
+	return err != nil || v != "off"
+}
+
+// SetScanner switches the scanner on or off for the current account (trade access).
+func (s *Service) SetScanner(ctx context.Context, p Principal, on bool) error {
+	v, err := s.account(ctx, p, "", domain.AccessTrade)
+	if err != nil {
+		return err
+	}
+	val := "on"
+	if !on {
+		val = "off"
+	}
+	if err := s.d.Store.Settings().Set(ctx, scannerKey(v.ID), val, s.d.Clock.Now().UTC()); err != nil {
+		return fmt.Errorf("app.SetScanner: %w", err)
+	}
+	s.audit(ctx, p, "scanner."+val, v.ID, "")
+	return nil
+}
+
+// universeItem is a stock to review and why it is in the universe.
+type universeItem struct {
+	in    domain.Instrument
+	theme string
+}
+
+// universe is the stocks the scanner reviews for an account: the watchlist, then the enabled
+// themes' picked shares, search words and industry, at most scanMax, supported shares only.
+func (s *Service) universe(ctx context.Context, v domain.AccountView) ([]universeItem, error) {
+	bctx := brokerCtx(ctx, v)
+	var out []universeItem
+	seen := map[domain.InstrumentID]bool{}
+	add := func(in domain.Instrument, theme string) {
+		if len(out) >= scanMax || seen[in.ID] || in.ID <= 0 || in.Market == "" || !domain.IsShare(in.Type) {
+			return
+		}
+		seen[in.ID] = true
+		out = append(out, universeItem{in: in, theme: theme})
+	}
+	wl, err := s.d.Store.Watchlist().List(ctx, v.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range wl {
+		add(w.Instrument, "watchlist")
+	}
+	themes, err := s.d.Store.Themes().List(ctx, v.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range themes {
+		if !t.Enabled {
+			continue
+		}
+		for _, id := range t.Instruments {
+			if in, _, err := s.d.Store.Instruments().Get(ctx, id); err == nil {
+				add(in, t.Name)
+			}
+		}
+		for _, kw := range t.Keywords {
+			res, err := s.d.Market.Search(bctx, kw)
+			if err != nil {
+				s.d.Log.WarnContext(ctx, "scanner search failed", "account", v.ID, "theme", t.Name, "err", err)
+				continue
+			}
+			for _, in := range res {
+				add(in, t.Name)
+			}
+		}
+		if t.IndustryID > 0 && s.d.Research != nil {
+			res, err := s.d.Research.Screen(bctx, t.IndustryID, 30)
+			if err != nil {
+				s.d.Log.WarnContext(ctx, "scanner screen failed", "account", v.ID, "theme", t.Name, "err", err)
+				continue
+			}
+			for _, in := range res {
+				add(in, t.Name)
+			}
+		}
+	}
+	return out, nil
+}
+
+// refreshEligibility asks eToro about every stock whose cached answer is missing or older
+// than a day, and caches the answers.
+func (s *Service) refreshEligibility(ctx context.Context, v domain.AccountView, items []universeItem) map[domain.InstrumentID]domain.Eligibility {
+	now := s.d.Clock.Now().UTC()
+	out := map[domain.InstrumentID]domain.Eligibility{}
+	var stale []domain.InstrumentID
+	for _, it := range items {
+		_, el, err := s.d.Store.Instruments().Get(ctx, it.in.ID)
+		if err == nil && !el.CheckedAt.IsZero() && now.Sub(el.CheckedAt) < eligibilityMaxAge {
+			out[it.in.ID] = el
+			continue
+		}
+		stale = append(stale, it.in.ID)
+	}
+	if len(stale) == 0 {
+		return out
+	}
+	els, err := s.d.Broker.Eligibility(brokerCtx(ctx, v), stale)
+	if err != nil {
+		s.d.Log.WarnContext(ctx, "scanner eligibility failed", "account", v.ID, "err", err)
+		return out // unknown eligibility = not eligible (fail closed)
+	}
+	for _, el := range els {
+		if el.CheckedAt.IsZero() {
+			el.CheckedAt = now
+		}
+		out[el.Instrument] = el
+		i := slices.IndexFunc(items, func(it universeItem) bool { return it.in.ID == el.Instrument })
+		if i >= 0 {
+			if err := s.d.Store.Instruments().Upsert(ctx, items[i].in, el, now); err != nil {
+				s.d.Log.WarnContext(ctx, "caching eligibility failed", "err", err)
+			}
+		}
+	}
+	return out
+}
+
+// ScanResult summarises one scan.
+type ScanResult struct {
+	Reviewed int
+	Added    []string // symbols added to the watchlist
+}
+
+// scan reviews an account's universe (no principal: called by the runner and by ScanNow).
+func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, error) {
+	if err := s.needBroker(); err != nil {
+		return ScanResult{}, err
+	}
+	items, err := s.universe(ctx, v)
+	if err != nil {
+		return ScanResult{}, fmt.Errorf("app.scan: %w", err)
+	}
+	elig := s.refreshEligibility(ctx, v, items)
+	limits := s.riskLimits(ctx, v.ID)
+	sizing := scannerNominalCents
+	if limits.TradingBudget > 0 {
+		sizing = limits.TradingBudget
+	}
+	wl, err := s.d.Store.Watchlist().List(ctx, v.ID)
+	if err != nil {
+		return ScanResult{}, fmt.Errorf("app.scan: %w", err)
+	}
+	onList := map[domain.InstrumentID]bool{}
+	for _, w := range wl {
+		onList[w.Instrument.ID] = true
+	}
+	var res ScanResult
+	bctx := brokerCtx(ctx, v)
+	for _, it := range items {
+		if ctx.Err() != nil {
+			return res, ctx.Err()
+		}
+		r := domain.Review{AccountID: v.ID, Instrument: it.in.ID, Symbol: it.in.Symbol, Theme: it.theme, At: s.d.Clock.Now().UTC()}
+		bars, err := s.d.Market.Candles(bctx, it.in.ID, scanInterval, scanBars)
+		if err != nil {
+			r.Outcome, r.Summary = domain.ReviewError, "no price history: "+err.Error()
+			s.saveReview(ctx, r)
+			res.Reviewed++
+			continue
+		}
+		d := s.evaluate(it.in.ID, bars, sizing, limits.MaxShort > 0)
+		r.Probs = d.Probs
+		for _, c := range d.Checks {
+			r.Checks = append(r.Checks, domain.ReviewCheck{Rule: c.Rule, Pass: c.Pass, Detail: c.Detail})
+		}
+		if s.d.Calendar != nil {
+			_, _, trading, cerr := s.d.Calendar.Session(it.in.Market, s.d.Clock.Now())
+			r.Checks = append(r.Checks, domain.ReviewCheck{Rule: string(it.in.Market) + " trades today", Pass: trading && cerr == nil})
+		}
+		if d.Candidate == nil {
+			r.Outcome, r.Summary = domain.ReviewNoSignal, d.Reason
+		} else {
+			c := d.Candidate
+			r.Direction = c.Direction
+			el := elig[it.in.ID]
+			ok, why := el.Allows(c.Direction)
+			r.Checks = append(r.Checks, domain.ReviewCheck{Rule: "eToro allows a " + string(c.Direction) + " at leverage 1", Pass: ok, Detail: why})
+			switch {
+			case !ok:
+				r.Outcome, r.Summary = domain.ReviewSkipped, c.Playbook+" passed, but eToro does not allow it: "+cmpOr(why, "not checked")
+			case onList[it.in.ID]:
+				r.Outcome, r.Summary = domain.ReviewCandidate, c.Playbook+": "+c.Reason
+			case len(onList) >= watchlistCap:
+				r.Outcome, r.Summary = domain.ReviewSkipped, c.Playbook+" passed, but the watchlist is full ("+strconv.Itoa(watchlistCap)+")"
+			default:
+				if err := s.d.Store.Watchlist().Add(ctx, v.ID, it.in.ID, "scanner", r.At); err != nil && !errors.Is(err, domain.ErrConflict) {
+					r.Outcome, r.Summary = domain.ReviewError, "adding to the watchlist failed: "+err.Error()
+					break
+				}
+				onList[it.in.ID] = true
+				r.Outcome, r.Summary = domain.ReviewAdded, c.Playbook+": "+c.Reason
+				res.Added = append(res.Added, it.in.Symbol)
+				s.emitFor(ctx, v.ID, "scanner", "scanner.added", domain.SeverityInfo,
+					it.in.Symbol+" added to the watchlist of "+v.Name+" by the scanner",
+					string(c.Direction)+" · "+c.Playbook+" · theme "+it.theme+": "+c.Reason)
+			}
+		}
+		s.saveReview(ctx, r)
+		res.Reviewed++
+	}
+	return res, nil
+}
+
+// evaluate runs the strategy on one stock's bars (tests replace it with evalOverride).
+func (s *Service) evaluate(id domain.InstrumentID, bars []domain.Candle, sizing domain.Cents, shorts bool) strategy.Decision {
+	if s.evalOverride != nil {
+		return s.evalOverride(id, bars)
+	}
+	eng := strategy.NewEngine(strategy.Config{Shorts: shorts, RefitEvery: scanBars})
+	return eng.Evaluate(id, bars, sizing)
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func (s *Service) saveReview(ctx context.Context, r domain.Review) {
+	if err := s.d.Store.Reviews().Upsert(ctx, r); err != nil {
+		s.d.Log.ErrorContext(ctx, "saving a review failed", "account", r.AccountID, "instrument", r.Instrument, "err", err)
+	}
+}
+
+// ScanNow runs the scanner for the current account now (trade access).
+func (s *Service) ScanNow(ctx context.Context, p Principal) (ScanResult, error) {
+	v, err := s.account(ctx, p, "", domain.AccessTrade)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	res, err := s.scan(ctx, v)
+	if err != nil {
+		return res, err
+	}
+	s.audit(ctx, p, "scanner.run", v.ID, fmt.Sprintf("reviewed=%d added=%d", res.Reviewed, len(res.Added)))
+	return res, nil
+}
+
+// ScanAll runs the scanner for every account that has it on (the background runner).
+func (s *Service) ScanAll(ctx context.Context) {
+	accts, err := s.d.Store.Accounts().List(ctx)
+	if err != nil {
+		s.d.Log.WarnContext(ctx, "scanner: listing accounts failed", "err", err)
+		return
+	}
+	for _, a := range accts {
+		if ctx.Err() != nil || !s.ScannerEnabled(ctx, a.ID) {
+			continue
+		}
+		res, err := s.scan(ctx, domain.AccountView{Account: a, Access: domain.AccessOwner})
+		if err != nil {
+			s.d.Log.WarnContext(ctx, "scanner run failed", "account", a.ID, "err", err)
+			continue
+		}
+		s.d.Log.InfoContext(ctx, "scanner run", "account", a.ID, "reviewed", res.Reviewed, "added", len(res.Added))
+	}
+	if n, err := s.d.Store.Reviews().DeleteBefore(ctx, s.d.Clock.Now().Add(-reviewRetention)); err == nil && n > 0 {
+		s.d.Log.InfoContext(ctx, "purged old reviews", "count", n)
+	}
+}
+
+// Reviews returns the current account's latest reviews (view).
+func (s *Service) Reviews(ctx context.Context, p Principal, limit int) ([]domain.Review, bool, error) {
+	v, err := s.account(ctx, p, "", domain.AccessView)
+	if err != nil {
+		return nil, false, err
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rs, err := s.d.Store.Reviews().List(ctx, v.ID, limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("app.Reviews: %w", err)
+	}
+	return rs, s.ScannerEnabled(ctx, v.ID), nil
+}

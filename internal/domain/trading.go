@@ -95,6 +95,12 @@ func IsShare(instrumentType string) bool {
 	return false
 }
 
+// Industry is one of eToro's stock industries (broad sectors such as technology).
+type Industry struct {
+	ID   int64
+	Name string
+}
+
 // Direction is long (own the share) or short (a CFD sold short; owner's decision D19).
 type Direction string
 

@@ -118,6 +118,22 @@ type Events interface {
 	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
+// Themes stores accounts' themes (with their picked shares).
+type Themes interface {
+	Create(ctx context.Context, t domain.Theme) error
+	Get(ctx context.Context, id string) (domain.Theme, error)
+	List(ctx context.Context, accountID string) ([]domain.Theme, error) // by name
+	Update(ctx context.Context, t domain.Theme) error                   // incl. the picked shares
+	Delete(ctx context.Context, id string) error
+}
+
+// Reviews stores the scanner's latest review per account and stock.
+type Reviews interface {
+	Upsert(ctx context.Context, r domain.Review) error
+	List(ctx context.Context, accountID string, limit int) ([]domain.Review, error) // newest first
+	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -130,6 +146,8 @@ type Store interface {
 	Watchlist() Watchlist
 	Events() Events
 	Accounts() Accounts
+	Themes() Themes
+	Reviews() Reviews
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
@@ -204,6 +222,14 @@ type MarketData interface {
 	Candles(ctx context.Context, id domain.InstrumentID, interval time.Duration, count int) ([]domain.Candle, error)
 	Search(ctx context.Context, query string) ([]domain.Instrument, error)
 	Instruments(ctx context.Context, ids []domain.InstrumentID) ([]domain.Instrument, error)
+}
+
+// Research finds shares for the scanner: eToro's stock industries and a screen of tradable
+// shares, most popular first.
+type Research interface {
+	Industries(ctx context.Context) ([]domain.Industry, error)
+	// Screen lists tradable shares, optionally in one industry (0 = any), up to limit.
+	Screen(ctx context.Context, industryID int64, limit int) ([]domain.Instrument, error)
 }
 
 // Broker is the only door to the eToro account. It exposes no money-movement operation by

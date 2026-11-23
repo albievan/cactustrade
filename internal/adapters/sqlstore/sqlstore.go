@@ -200,6 +200,12 @@ func mustAffect(res sql.Result, err error) error {
 // Instruments returns the instrument cache.
 func (s *Store) Instruments() ports.Instruments { return instruments{s.db} }
 
+// Themes returns the themes repository.
+func (s *Store) Themes() ports.Themes { return themes{s.db} }
+
+// Reviews returns the scanner's reviews.
+func (s *Store) Reviews() ports.Reviews { return reviews{s.db} }
+
 // Accounts returns the eToro accounts repository.
 func (s *Store) Accounts() ports.Accounts { return accounts{s.db} }
 

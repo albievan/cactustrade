@@ -13,6 +13,9 @@ const sections: { title: string; items: Item[] }[] = [
     { to: "/watchlist", icon: "bi-binoculars", label: "Watchlist" },
     { to: "/risk", icon: "bi-shield-check", label: "Risk limits" },
   ] },
+  { title: "Research", items: [
+    { to: "/themes", icon: "bi-stars", label: "Themes" },
+  ] },
   { title: "Setup", items: [
     { to: "/accounts", icon: "bi-wallet2", label: "eToro accounts" },
     { to: "/llm", icon: "bi-robot", label: "LLM reviewer" },

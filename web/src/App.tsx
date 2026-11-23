@@ -9,6 +9,7 @@ import { ApiKeys } from "./pages/ApiKeys";
 import { Audit } from "./pages/Audit";
 import { Watchlist } from "./pages/Watchlist";
 import { Accounts } from "./pages/Accounts";
+import { Themes } from "./pages/Themes";
 import { System } from "./pages/System";
 import { RiskLimits } from "./pages/RiskLimits";
 import { LlmReviewer } from "./pages/LlmReviewer";
@@ -31,6 +32,7 @@ export function App() {
         <Route index element={<Dashboard />} />
         <Route path="watchlist" element={<Watchlist />} />
         <Route path="accounts" element={<Accounts />} />
+        <Route path="themes" element={<Themes />} />
         <Route path="credentials" element={<Navigate to="/accounts" replace />} />
         <Route path="users" element={<Users />} />
         <Route path="api-keys" element={<ApiKeys />} />

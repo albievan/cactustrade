@@ -52,6 +52,8 @@ type Op string
 // The operations cactusTrade may perform. There is no operation that moves money.
 const (
 	OpSearch          Op = "search"
+	OpScreen          Op = "screen"     // field search with filters (industry, tradability)
+	OpIndustries      Op = "industries" // eToro's stock industries
 	OpInstruments     Op = "instruments"
 	OpExchanges       Op = "exchanges"
 	OpRates           Op = "rates"
@@ -109,6 +111,8 @@ func (e Endpoint) Path(m domain.TradingMode) string {
 var Allowlist = map[Op]Endpoint{
 	// Free-text search by name or symbol (v2; same market-data quota as the v1 field search).
 	OpSearch:      {Method: "GET", Demo: "/api/v2/market-data/instruments/search", Real: "/api/v2/market-data/instruments/search", Quota: QuotaMarketData},
+	OpScreen:      {Method: "GET", Demo: "/api/v1/market-data/search", Real: "/api/v1/market-data/search", Quota: QuotaMarketData},
+	OpIndustries:  {Method: "GET", Demo: "/api/v1/market-data/stocks-industries", Real: "/api/v1/market-data/stocks-industries", Quota: QuotaMarketData},
 	OpInstruments: {Method: "GET", Demo: "/api/v2/market-data/instruments", Real: "/api/v2/market-data/instruments", Quota: QuotaMarketData},
 	OpExchanges:   {Method: "GET", Demo: "/api/v1/market-data/exchanges", Real: "/api/v1/market-data/exchanges", Quota: QuotaMarketData},
 	OpRates:       {Method: "GET", Demo: "/api/v2/market-data/rates", Real: "/api/v2/market-data/rates", Quota: QuotaMarketData},

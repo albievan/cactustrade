@@ -569,3 +569,38 @@ func TestLimiterKeepsUnderQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIndustriesAndScreen(t *testing.T) {
+	e := newEnv(t)
+	e.fake.route = func(r *http.Request, _ int) (int, string, http.Header) {
+		switch r.URL.Path {
+		case "/api/v1/market-data/stocks-industries":
+			return 200, `{"stocksIndustries":[{"industryId":2,"industryName":"Technology"},{"industryId":1,"industryName":"Healthcare"},{"x":1},{"industryId":3,"industryName":"  "}]}`, nil
+		case "/api/v1/market-data/search":
+			q := r.URL.Query()
+			if (q.Get("industryNameId") != "2" && q.Get("pageSize") == "50") || q.Get("isCurrentlyTradable") != "true" || q.Get("sort") != "-popularityUniques7Day" || !strings.Contains(q.Get("fields"), "internalSymbolFull") {
+				t.Errorf("screen query = %v", q)
+			}
+			return 200, `{"page":1,"pageSize":50,"totalItems":4,"items":[
+				{"instrumentId":1001,"internalSymbolFull":"NVDA","displayname":"NVIDIA","internalAssetClassName":"Stocks","internalExchangeId":4,"isCurrentlyTradable":true,"industryNameId":2},
+				{"instrumentId":2002,"internalSymbolFull":"ARM.L","displayname":"Arm","internalAssetClassName":"Stocks","isCurrentlyTradable":true,"industryNameId":2},
+				{"instrumentId":3003,"internalSymbolFull":"HALT","displayname":"Halted","internalAssetClassName":"Stocks","isCurrentlyTradable":false,"industryNameId":2},
+				{"instrumentId":4004,"internalSymbolFull":"PFE","displayname":"Pfizer","internalAssetClassName":"Stocks","isCurrentlyTradable":true,"industryNameId":1}]}`, nil
+		}
+		return 404, "", nil
+	}
+	inds, err := e.c.Industries(e.ctx())
+	if err != nil || len(inds) != 2 || inds[0].Name != "Healthcare" || inds[1].ID != 2 {
+		t.Fatalf("industries = %+v %v", inds, err)
+	}
+	got, err := e.c.Screen(e.ctx(), 2, 0)
+	if err != nil || len(got) != 2 || got[0].Market != domain.MarketNYSE || got[1].Market != domain.MarketLSE {
+		t.Fatalf("screen = %+v %v", got, err)
+	}
+	if e.last().URL.Query().Get("pageSize") != "50" {
+		t.Fatal("default page size")
+	}
+	if _, err := e.c.Screen(e.ctx(), 0, 10); err != nil {
+		t.Fatal(err)
+	}
+}

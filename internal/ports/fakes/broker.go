@@ -23,6 +23,21 @@ type Broker struct {
 	// SeeAccount makes Portfolio record the account in the context (LastAccount).
 	SeeAccount  bool
 	LastAccount domain.Account
+	// Bars are the candles per instrument; Inds and Screened feed Industries / Screen.
+	Bars      map[domain.InstrumentID][]domain.Candle
+	Inds      []domain.Industry
+	Screened  map[int64][]domain.Instrument
+	EligCalls int
+}
+
+var _ ports.Research = (*Broker)(nil)
+
+// Industries returns Inds.
+func (b *Broker) Industries(context.Context) ([]domain.Industry, error) { return b.Inds, b.fail() }
+
+// Screen returns Screened[industry].
+func (b *Broker) Screen(_ context.Context, industry int64, _ int) ([]domain.Instrument, error) {
+	return b.Screened[industry], b.fail()
 }
 
 var (
@@ -51,6 +66,9 @@ func (b *Broker) Portfolio(ctx context.Context) (domain.Portfolio, error) {
 
 // Eligibility returns Eligible entries (unknown ids: not eligible, "instrument not found").
 func (b *Broker) Eligibility(_ context.Context, ids []domain.InstrumentID) ([]domain.Eligibility, error) {
+	b.mu.Lock()
+	b.EligCalls++
+	b.mu.Unlock()
 	if err := b.fail(); err != nil {
 		return nil, err
 	}
@@ -110,9 +128,16 @@ func (b *Broker) Quotes(_ context.Context, ids []domain.InstrumentID) ([]domain.
 	return out, nil
 }
 
-// Candles returns nothing.
-func (b *Broker) Candles(context.Context, domain.InstrumentID, time.Duration, int) ([]domain.Candle, error) {
-	return nil, b.fail()
+// Candles returns Bars[id], or an error when there are none.
+func (b *Broker) Candles(_ context.Context, id domain.InstrumentID, _ time.Duration, _ int) ([]domain.Candle, error) {
+	if err := b.fail(); err != nil {
+		return nil, err
+	}
+	bs, ok := b.Bars[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return bs, nil
 }
 
 // Search returns every Known instrument (sorted by id).

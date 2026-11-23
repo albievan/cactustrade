@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { ReviewBoard } from "../components/ReviewBoard";
 import { api, errorText, usd, type MarketSession, type Portfolio, type SystemStatus } from "../lib/api";
 
 export function Dashboard() {
@@ -47,6 +48,7 @@ export function Dashboard() {
           </div>
         ))}
       </div>
+      <ReviewBoard />
       <div className="card">
         <div className="card-body">
           <h2 className="h5">Open positions</h2>

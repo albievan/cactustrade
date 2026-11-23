@@ -224,6 +224,51 @@ func (e MeVia) Valid() bool {
 	}
 }
 
+// Defines values for ReviewDirection.
+const (
+	Long  ReviewDirection = "long"
+	Short ReviewDirection = "short"
+)
+
+// Valid indicates whether the value is a known member of the ReviewDirection enum.
+func (e ReviewDirection) Valid() bool {
+	switch e {
+	case Long:
+		return true
+	case Short:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReviewOutcome.
+const (
+	Added     ReviewOutcome = "added"
+	Candidate ReviewOutcome = "candidate"
+	Error     ReviewOutcome = "error"
+	NoSignal  ReviewOutcome = "no_signal"
+	Skipped   ReviewOutcome = "skipped"
+)
+
+// Valid indicates whether the value is a known member of the ReviewOutcome enum.
+func (e ReviewOutcome) Valid() bool {
+	switch e {
+	case Added:
+		return true
+	case Candidate:
+		return true
+	case Error:
+		return true
+	case NoSignal:
+		return true
+	case Skipped:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Role.
 const (
 	Admin    Role = "admin"
@@ -492,6 +537,12 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// Industry defines model for Industry.
+type Industry struct {
+	Id   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
 // Instrument defines model for Instrument.
 type Instrument struct {
 	ExchangeId   *int64 `json:"exchangeId,omitempty"`
@@ -661,6 +712,38 @@ type RenameAccountRequest struct {
 	Name string `json:"name"`
 }
 
+// Review defines model for Review.
+type Review struct {
+	At           time.Time           `json:"at"`
+	Checks       []ReviewCheck       `json:"checks"`
+	Direction    *ReviewDirection    `json:"direction,omitempty"`
+	InstrumentId int64               `json:"instrumentId"`
+	Outcome      ReviewOutcome       `json:"outcome"`
+	Probs        *map[string]float32 `json:"probs,omitempty"`
+	Summary      string              `json:"summary"`
+	Symbol       string              `json:"symbol"`
+	Theme        string              `json:"theme"`
+}
+
+// ReviewDirection defines model for Review.Direction.
+type ReviewDirection string
+
+// ReviewOutcome defines model for Review.Outcome.
+type ReviewOutcome string
+
+// ReviewBoard defines model for ReviewBoard.
+type ReviewBoard struct {
+	Reviews        []Review `json:"reviews"`
+	ScannerEnabled bool     `json:"scannerEnabled"`
+}
+
+// ReviewCheck defines model for ReviewCheck.
+type ReviewCheck struct {
+	Detail *string `json:"detail,omitempty"`
+	Pass   bool    `json:"pass"`
+	Rule   string  `json:"rule"`
+}
+
 // RiskLimits defines model for RiskLimits.
 type RiskLimits struct {
 	// DailyLossBp stop new entries at this loss from the start-of-day equity (bp; 200 = 2 %)
@@ -686,6 +769,17 @@ type RiskLimits struct {
 
 // Role defines model for Role.
 type Role string
+
+// ScanResult defines model for ScanResult.
+type ScanResult struct {
+	Added    []string `json:"added"`
+	Reviewed int      `json:"reviewed"`
+}
+
+// ScannerSwitch defines model for ScannerSwitch.
+type ScannerSwitch struct {
+	Enabled bool `json:"enabled"`
+}
 
 // SetAccountKeysRequest defines model for SetAccountKeysRequest.
 type SetAccountKeysRequest struct {
@@ -725,6 +819,31 @@ type SystemStatus struct {
 
 // SystemStatusDatabase defines model for SystemStatus.Database.
 type SystemStatusDatabase string
+
+// Theme defines model for Theme.
+type Theme struct {
+	CreatedAt time.Time `json:"createdAt"`
+	Enabled   bool      `json:"enabled"`
+	Id        string    `json:"id"`
+
+	// IndustryId 0 = none
+	IndustryId  int64     `json:"industryId"`
+	Instruments []int64   `json:"instruments"`
+	Keywords    []string  `json:"keywords"`
+	Name        string    `json:"name"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// ThemeInput defines model for ThemeInput.
+type ThemeInput struct {
+	Enabled bool `json:"enabled"`
+
+	// IndustryId 0 = none
+	IndustryId  int64    `json:"industryId"`
+	Instruments []int64  `json:"instruments"`
+	Keywords    []string `json:"keywords"`
+	Name        string   `json:"name"`
+}
 
 // TradingMode defines model for TradingMode.
 type TradingMode string
@@ -774,6 +893,11 @@ type SearchInstrumentsParams struct {
 	Q string `form:"q" json:"q"`
 }
 
+// ListReviewsParams defines parameters for ListReviews.
+type ListReviewsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
 type CreateAccountJSONRequestBody = CreateAccountRequest
 
@@ -809,6 +933,15 @@ type ListLlmModelsJSONRequestBody = LlmConfig
 
 // SetRiskLimitsJSONRequestBody defines body for SetRiskLimits for application/json ContentType.
 type SetRiskLimitsJSONRequestBody = RiskLimits
+
+// SetScannerJSONRequestBody defines body for SetScanner for application/json ContentType.
+type SetScannerJSONRequestBody = ScannerSwitch
+
+// CreateThemeJSONRequestBody defines body for CreateTheme for application/json ContentType.
+type CreateThemeJSONRequestBody = ThemeInput
+
+// UpdateThemeJSONRequestBody defines body for UpdateTheme for application/json ContentType.
+type UpdateThemeJSONRequestBody = ThemeInput
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequest
@@ -899,6 +1032,9 @@ type ServerInterface interface {
 	// MarkEventsSeen Mark every event as seen by the caller
 	// (POST /api/v1/events/seen)
 	MarkEventsSeen(w http.ResponseWriter, r *http.Request)
+	// ListIndustries eToro's stock industries (view)
+	// (GET /api/v1/industries)
+	ListIndustries(w http.ResponseWriter, r *http.Request)
 	// SearchInstruments Search eToro instruments by name or symbol (admin)
 	// (GET /api/v1/instruments/search)
 	SearchInstruments(w http.ResponseWriter, r *http.Request, params SearchInstrumentsParams)
@@ -920,12 +1056,21 @@ type ServerInterface interface {
 	// GetPublicStatus What the sign-in page needs before anyone is signed in
 	// (GET /api/v1/public/status)
 	GetPublicStatus(w http.ResponseWriter, r *http.Request)
+	// ListReviews The stocks the scanner reviewed for the current account, the rules applied and the outcome (view)
+	// (GET /api/v1/reviews)
+	ListReviews(w http.ResponseWriter, r *http.Request, params ListReviewsParams)
 	// GetRiskLimits The risk limits (viewer)
 	// (GET /api/v1/risk/limits)
 	GetRiskLimits(w http.ResponseWriter, r *http.Request)
 	// SetRiskLimits Change the risk limits (admin, web UI, only while the agent is stopped)
 	// (PUT /api/v1/risk/limits)
 	SetRiskLimits(w http.ResponseWriter, r *http.Request)
+	// SetScanner Switch the scanner on or off for the current account (trade access)
+	// (PUT /api/v1/scanner)
+	SetScanner(w http.ResponseWriter, r *http.Request)
+	// RunScanner Review the current account's themes and watchlist now (trade access; read-only on eToro)
+	// (POST /api/v1/scanner/run)
+	RunScanner(w http.ResponseWriter, r *http.Request)
 	// ReloadSettings Re-read credentials from the environment and secret files (admin, web UI)
 	// (POST /api/v1/system/reload)
 	ReloadSettings(w http.ResponseWriter, r *http.Request)
@@ -935,6 +1080,18 @@ type ServerInterface interface {
 	// GetSystemStatus Version, trading mode and agent state (viewer)
 	// (GET /api/v1/system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
+	// ListThemes The current account's themes (view)
+	// (GET /api/v1/themes)
+	ListThemes(w http.ResponseWriter, r *http.Request)
+	// CreateTheme Add a theme such as Space or Semiconductors (trade access)
+	// (POST /api/v1/themes)
+	CreateTheme(w http.ResponseWriter, r *http.Request)
+	// DeleteTheme Remove a theme (trade access)
+	// (DELETE /api/v1/themes/{themeId})
+	DeleteTheme(w http.ResponseWriter, r *http.Request, themeId string)
+	// UpdateTheme Change a theme (trade access)
+	// (PUT /api/v1/themes/{themeId})
+	UpdateTheme(w http.ResponseWriter, r *http.Request, themeId string)
 	// ListUsers List users (admin)
 	// (GET /api/v1/users)
 	ListUsers(w http.ResponseWriter, r *http.Request)
@@ -1519,6 +1676,20 @@ func (siw *ServerInterfaceWrapper) MarkEventsSeen(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ListIndustries operation middleware
+func (siw *ServerInterfaceWrapper) ListIndustries(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListIndustries(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SearchInstruments operation middleware
 func (siw *ServerInterfaceWrapper) SearchInstruments(w http.ResponseWriter, r *http.Request) {
 
@@ -1636,6 +1807,39 @@ func (siw *ServerInterfaceWrapper) GetPublicStatus(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ListReviews operation middleware
+func (siw *ServerInterfaceWrapper) ListReviews(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListReviewsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListReviews(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetRiskLimits operation middleware
 func (siw *ServerInterfaceWrapper) GetRiskLimits(w http.ResponseWriter, r *http.Request) {
 
@@ -1655,6 +1859,34 @@ func (siw *ServerInterfaceWrapper) SetRiskLimits(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetRiskLimits(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetScanner operation middleware
+func (siw *ServerInterfaceWrapper) SetScanner(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetScanner(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunScanner operation middleware
+func (siw *ServerInterfaceWrapper) RunScanner(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunScanner(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1697,6 +1929,86 @@ func (siw *ServerInterfaceWrapper) GetSystemStatus(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetSystemStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListThemes operation middleware
+func (siw *ServerInterfaceWrapper) ListThemes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListThemes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateTheme operation middleware
+func (siw *ServerInterfaceWrapper) CreateTheme(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateTheme(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteTheme operation middleware
+func (siw *ServerInterfaceWrapper) DeleteTheme(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "themeId" -------------
+	var themeId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "themeId", r.PathValue("themeId"), &themeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "themeId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteTheme(w, r, themeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateTheme operation middleware
+func (siw *ServerInterfaceWrapper) UpdateTheme(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "themeId" -------------
+	var themeId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "themeId", r.PathValue("themeId"), &themeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "themeId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateTheme(w, r, themeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2045,6 +2357,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/events/seen", wrapper.MarkEventsSeen)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.GetRiskLimits)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.SetRiskLimits)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/themes", wrapper.ListThemes)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/themes", wrapper.CreateTheme)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/themes/{themeId}", wrapper.DeleteTheme)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/themes/{themeId}", wrapper.UpdateTheme)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/industries", wrapper.ListIndustries)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/reviews", wrapper.ListReviews)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/scanner", wrapper.SetScanner)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/scanner/run", wrapper.RunScanner)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/llm", wrapper.GetLlmSetup)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/llm", wrapper.SetLlmConfig)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/models", wrapper.ListLlmModels)

@@ -303,25 +303,34 @@ type Engine struct {
 // NewEngine builds an engine.
 func NewEngine(cfg Config) *Engine { return &Engine{cfg: cfg.withDefaults(), fitAt: -1} }
 
+// Check is one rule the engine applied, for the review board.
+type Check struct {
+	Rule   string
+	Pass   bool
+	Detail string
+}
+
 // Decision is the engine's output for one bar.
 type Decision struct {
 	Candidate *domain.Candidate
 	Probs     map[domain.Regime]float64
-	Reason    string // why there is no candidate
+	Reason    string  // why there is no candidate
+	Checks    []Check // every rule applied, in order
 }
 
 // Evaluate decides at the close of the last of bars (all closed, oldest first).
 func (e *Engine) Evaluate(id domain.InstrumentID, bars []domain.Candle, equity domain.Cents) Decision {
 	fs := Features(bars, e.cfg.FeatureWindow)
-	if len(fs) == 0 || !fs[len(fs)-1].Start.Equal(bars[len(bars)-1].Start) {
-		return Decision{Reason: "not enough valid bars"}
+	if len(bars) == 0 || len(fs) == 0 || !fs[len(fs)-1].Start.Equal(bars[len(bars)-1].Start) {
+		return Decision{Reason: "not enough valid bars", Checks: []Check{{Rule: "enough price history", Detail: fmt.Sprintf("%d bars", len(bars))}}}
 	}
+	checks := []Check{{Rule: "enough price history", Pass: true, Detail: fmt.Sprintf("%d bars", len(bars))}}
 	obs := Observations(fs)
 	if e.model == nil || len(fs)-e.fitAt >= e.cfg.RefitEvery || len(fs) < e.fitAt {
 		from := max(0, len(obs)-e.cfg.FitWindow)
 		m, err := Fit(obs[from:], FitConfig{K: e.cfg.States})
 		if err != nil {
-			return Decision{Reason: "regime model: " + err.Error()}
+			return Decision{Reason: "regime model: " + err.Error(), Checks: append(checks, Check{Rule: "regime model fitted", Detail: err.Error()})}
 		}
 		e.model, e.fitAt = m, len(fs)
 		e.Refits++
@@ -329,17 +338,22 @@ func (e *Engine) Evaluate(id domain.InstrumentID, bars []domain.Candle, equity d
 	from := max(0, len(obs)-e.cfg.FitWindow)
 	filtered := e.model.Filter(obs[from:])
 	probs := e.model.RegimeProbs(filtered[len(filtered)-1])
-	if probs[domain.RegimeHighVol] >= e.cfg.HighVolStop {
-		return Decision{Probs: probs, Reason: fmt.Sprintf("high volatility (P %.2f): no entries", probs[domain.RegimeHighVol])}
+	checks = append(checks, Check{Rule: "regime model fitted", Pass: true, Detail: fmt.Sprintf("%d states, refit every %d bars", e.cfg.States, e.cfg.RefitEvery)})
+	hv := Check{Rule: fmt.Sprintf("volatility gate: P(high volatility) < %.2f", e.cfg.HighVolStop), Pass: probs[domain.RegimeHighVol] < e.cfg.HighVolStop, Detail: fmt.Sprintf("%.2f", probs[domain.RegimeHighVol])}
+	checks = append(checks, hv)
+	if !hv.Pass {
+		return Decision{Probs: probs, Reason: fmt.Sprintf("high volatility (P %.2f): no entries", probs[domain.RegimeHighVol]), Checks: checks}
 	}
 	in := Input{Instrument: id, Bars: bars, Features: fs, Probs: probs, Model: e.model, Equity: equity, Cfg: e.cfg}
 	var why []string
 	for _, pb := range Playbooks {
 		c, ok, reason := pb.Propose(in)
 		if ok {
-			return Decision{Candidate: &c, Probs: probs}
+			checks = append(checks, Check{Rule: "playbook " + pb.Name(), Pass: true, Detail: c.Reason})
+			return Decision{Candidate: &c, Probs: probs, Checks: checks}
 		}
+		checks = append(checks, Check{Rule: "playbook " + pb.Name(), Detail: reason})
 		why = append(why, pb.Name()+": "+reason)
 	}
-	return Decision{Probs: probs, Reason: fmt.Sprint(why)}
+	return Decision{Probs: probs, Reason: fmt.Sprint(why), Checks: checks}
 }
