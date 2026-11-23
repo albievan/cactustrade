@@ -101,8 +101,10 @@ func marketLocation(m string) (*time.Location, error) {
 		return time.LoadLocation("Europe/London")
 	case string(domain.MarketNYSE), "NASDAQ":
 		return time.LoadLocation("America/New_York")
+	case string(domain.MarketASX):
+		return time.LoadLocation("Australia/Sydney")
 	}
-	return nil, fmt.Errorf("backtest: --market must be LSE or NYSE, not %q", m)
+	return nil, fmt.Errorf("backtest: --market must be LSE, NYSE or ASX, not %q", m)
 }
 
 // costsFromQuote turns eToro's cost lines for buying `size` into fractions of the amount.

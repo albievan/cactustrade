@@ -29,6 +29,7 @@ tags:
   - name: credentials
   - name: accounts
   - name: broker
+  - name: overview
   - name: market
   - name: events
   - name: risk
@@ -501,7 +502,7 @@ paths:
     get:
       tags: [accounts]
       operationId: getAccountKeys
-      summary: Whether the account's eToro keys are set (never their values)
+      summary: Whether the account's keys are set (never their values)
       responses:
         "200":
           description: Key status
@@ -514,7 +515,10 @@ paths:
     put:
       tags: [accounts]
       operationId: setAccountKeys
-      summary: Store the account's eToro key pair, write-only (owner, web UI); an empty value keeps the stored one
+      summary: Store the account's key pair, write-only (owner, web UI); an empty value keeps the stored one
+      description: |
+        eToro: `apiKey` is the Public API Key (x-api-key), `userKey` the User Key (x-user-key).
+        Trading 212: `apiKey` is the API key, `userKey` the API secret.
       requestBody:
         required: true
         content:
@@ -590,6 +594,41 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/overview:
+    get:
+      tags: [overview]
+      operationId: getOverview
+      summary: Every account you can view, on every platform — cash, equity, positions (viewer)
+      description: |
+        Reads each account now (eToro and Trading 212). An account that cannot be read carries
+        its `error` (and `noKeys` when its keys are not set yet) instead of failing the call.
+        Totals are per currency: amounts in different currencies are never added up.
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Overview" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/overview/history:
+    get:
+      tags: [overview]
+      operationId: getEquityHistory
+      summary: Equity over time of every account you can view (snapshots every 15 minutes, kept 400 days)
+      parameters:
+        - { name: days, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 400, default: 30 } }
+      responses:
+        "200":
+          description: One series per account that has snapshots
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EquitySeries" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
   /api/v1/broker/test:
     post:
       tags: [broker]
@@ -625,7 +664,7 @@ paths:
     get:
       tags: [market]
       operationId: getMarketStatus
-      summary: Today's sessions for LSE and NYSE/NASDAQ (viewer)
+      summary: Today's sessions for LSE, NYSE/NASDAQ and ASX (viewer)
       responses:
         "200":
           description: Sessions
@@ -1302,8 +1341,8 @@ components:
       description: An exact decimal (prices and units, up to 6 places)
     Market:
       type: string
-      enum: ["", LSE, NYSE]
-      description: LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+      enum: ["", LSE, NYSE, ASX]
+      description: LSE, NYSE (NYSE and NASDAQ share a calendar), ASX or "" when not tradable here
     BrokerCheck:
       type: object
       required: [mode, ok, latencyMs, checkedAt, configuredKeys]
@@ -1495,15 +1534,20 @@ components:
         reason: { type: string }
         error: { type: string }
         latencyMs: { type: integer, format: int64 }
+    Platform:
+      type: string
+      enum: [etoro, trading212]
+      description: eToro (traded) or Trading 212 (view-only for now)
     Account:
       type: object
-      required: [id, name, ownerId, ownerName, mode, envKeys, access, createdAt]
+      required: [id, name, ownerId, ownerName, mode, platform, envKeys, access, createdAt]
       properties:
         id: { type: string }
         name: { type: string }
         ownerId: { type: string }
         ownerName: { type: string }
         mode: { $ref: "#/components/schemas/TradingMode" }
+        platform: { $ref: "#/components/schemas/Platform" }
         envKeys: { type: boolean, description: "uses the deployment's ETORO_DEMO_PUB / _PK" }
         access: { type: string, enum: [view, trade, owner] }
         createdAt: { type: string, format: date-time }
@@ -1513,6 +1557,7 @@ components:
       properties:
         name: { type: string, maxLength: 60 }
         mode: { $ref: "#/components/schemas/TradingMode" }
+        platform: { $ref: "#/components/schemas/Platform" }
     RenameAccountRequest:
       type: object
       required: [name]
@@ -1534,8 +1579,91 @@ components:
       type: object
       required: [apiKey, userKey]
       properties:
-        apiKey: { type: string, maxLength: 4096, description: "eToro Public API Key (x-api-key); empty = keep" }
-        userKey: { type: string, maxLength: 4096, description: "eToro User Key (x-user-key); empty = keep" }
+        apiKey: { type: string, maxLength: 4096, description: "eToro Public API Key (x-api-key) or Trading 212 API key; empty = keep" }
+        userKey: { type: string, maxLength: 4096, description: "eToro User Key (x-user-key) or Trading 212 API secret; empty = keep" }
+    MinorUnits:
+      type: integer
+      format: int64
+      description: An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+    Holding:
+      type: object
+      required: [symbol, name, currency, quantity, avgPrice, currentPrice, value, cost, pnl, long, cfd]
+      properties:
+        symbol: { type: string }
+        name: { type: string }
+        currency: { type: string, description: "the instrument's price currency (\"\" when unknown)" }
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        avgPrice: { $ref: "#/components/schemas/Decimal" }
+        currentPrice: { $ref: "#/components/schemas/Decimal" }
+        value: { $ref: "#/components/schemas/MinorUnits" }
+        cost: { $ref: "#/components/schemas/MinorUnits" }
+        pnl: { $ref: "#/components/schemas/MinorUnits" }
+        openedAt: { type: string, format: date-time }
+        long: { type: boolean }
+        cfd: { type: boolean }
+    Holdings:
+      type: object
+      required: [platform, currency, cash, invested, equity, unrealisedPnl, realisedPnl, positions, asOf]
+      description: Amounts are minor units of `currency`, the account's own currency.
+      properties:
+        platform: { $ref: "#/components/schemas/Platform" }
+        currency: { type: string }
+        cash: { $ref: "#/components/schemas/MinorUnits" }
+        invested: { $ref: "#/components/schemas/MinorUnits" }
+        equity: { $ref: "#/components/schemas/MinorUnits" }
+        unrealisedPnl: { $ref: "#/components/schemas/MinorUnits" }
+        realisedPnl: { $ref: "#/components/schemas/MinorUnits" }
+        positions:
+          type: array
+          items: { $ref: "#/components/schemas/Holding" }
+        asOf: { type: string, format: date-time }
+    AccountHoldings:
+      type: object
+      required: [account, noKeys]
+      properties:
+        account: { $ref: "#/components/schemas/Account" }
+        holdings: { $ref: "#/components/schemas/Holdings" }
+        error: { type: string, description: why the account could not be read }
+        noKeys: { type: boolean, description: the account's keys are not set yet }
+    CurrencyTotal:
+      type: object
+      required: [currency, accounts, cash, equity, unrealisedPnl]
+      properties:
+        currency: { type: string }
+        accounts: { type: integer }
+        cash: { $ref: "#/components/schemas/MinorUnits" }
+        equity: { $ref: "#/components/schemas/MinorUnits" }
+        unrealisedPnl: { $ref: "#/components/schemas/MinorUnits" }
+    Overview:
+      type: object
+      required: [accounts, totals, asOf]
+      properties:
+        accounts:
+          type: array
+          items: { $ref: "#/components/schemas/AccountHoldings" }
+        totals:
+          type: array
+          items: { $ref: "#/components/schemas/CurrencyTotal" }
+        asOf: { type: string, format: date-time }
+    EquityPoint:
+      type: object
+      required: [at, cash, equity]
+      properties:
+        at: { type: string, format: date-time }
+        cash: { $ref: "#/components/schemas/MinorUnits" }
+        equity: { $ref: "#/components/schemas/MinorUnits" }
+    EquitySeries:
+      type: object
+      required: [accountId, name, platform, mode, currency, points]
+      properties:
+        accountId: { type: string }
+        name: { type: string }
+        platform: { $ref: "#/components/schemas/Platform" }
+        mode: { $ref: "#/components/schemas/TradingMode" }
+        currency: { type: string }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/EquityPoint" }
     AccountShare:
       type: object
       required: [userId, username, access, createdAt]

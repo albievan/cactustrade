@@ -4,7 +4,7 @@ import "testing"
 
 func TestMarketForSymbol(t *testing.T) {
 	for sym, want := range map[string]Market{
-		"AAPL": MarketNYSE, "brk.b": MarketNYSE, "BARC.L": MarketLSE, "VOD.L": MarketLSE,
+		"AAPL": MarketNYSE, "brk.b": MarketNYSE, "BARC.L": MarketLSE, "VOD.L": MarketLSE, "CBA.ASX": MarketASX, "bhp.asx": MarketASX, ".ASX": "", "CBA.AX": "",
 		"SAP.DE": "", "MC.PA": "", "": "", ".L": "", "X.LL": "", "A.1": "",
 	} {
 		got, ok := MarketForSymbol(sym)

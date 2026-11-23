@@ -103,7 +103,7 @@ func (s *Service) MarketStatus(ctx context.Context, p Principal) ([]MarketSessio
 	}
 	now := s.d.Clock.Now()
 	var out []MarketSession
-	for _, m := range []domain.Market{domain.MarketLSE, domain.MarketNYSE} {
+	for _, m := range domain.Markets {
 		open, closeAt, trading, err := s.d.Calendar.Session(m, now)
 		ms := MarketSession{Market: m, Trading: trading}
 		if err != nil {
@@ -150,7 +150,7 @@ func (s *Service) Watchlist(ctx context.Context, p Principal) ([]domain.WatchIte
 }
 
 // AddToWatchlist adds a share to the current account's watchlist after checking with eToro
-// that it is a share on LSE or NYSE/NASDAQ and can be bought as a real share, long, at
+// that it is a share on LSE, NYSE/NASDAQ or the ASX and can be bought as a real share, long, at
 // leverage 1 (trade access). Anything else is refused with eToro's reason (fail closed).
 func (s *Service) AddToWatchlist(ctx context.Context, p Principal, id domain.InstrumentID) (domain.WatchItem, error) {
 	v, err := s.account(ctx, p, "", domain.AccessTrade)
@@ -179,7 +179,7 @@ func (s *Service) addToWatchlist(ctx context.Context, v domain.AccountView, acto
 	}
 	in := ins[idx]
 	if !domain.IsShare(in.Type) || in.Market == "" {
-		return domain.WatchItem{}, domain.Invalid("instrumentId", "only shares listed in London (LSE) or New York (NYSE/NASDAQ) can be traded")
+		return domain.WatchItem{}, domain.Invalid("instrumentId", "only shares listed in London (LSE), New York (NYSE/NASDAQ) or Sydney (ASX) can be traded")
 	}
 	els, err := s.d.Broker.Eligibility(bctx, []domain.InstrumentID{id})
 	if err != nil {

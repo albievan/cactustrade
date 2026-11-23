@@ -35,6 +35,14 @@ func TestSessions(t *testing.T) {
 		// The weeks when only one side has moved its clocks (US changes earlier in March).
 		{"NYSE after US DST, before UK", domain.MarketNYSE, "2026-03-16T15:00:00Z", true, "2026-03-16T13:30:00Z", "2026-03-16T20:00:00Z"},
 		{"LSE same week", domain.MarketLSE, "2026-03-16T12:00:00Z", true, "2026-03-16T08:00:00Z", "2026-03-16T16:30:00Z"},
+		// Sydney: AEDT (UTC+11) in the southern summer, AEST (UTC+10) in winter; the trading
+		// day starts the previous UTC day in summer.
+		{"ASX summer", domain.MarketASX, "2026-11-23T01:00:00Z", true, "2026-11-22T23:00:00Z", "2026-11-23T05:00:00Z"},
+		{"ASX winter", domain.MarketASX, "2026-07-15T02:00:00Z", true, "2026-07-15T00:00:00Z", "2026-07-15T06:00:00Z"},
+		{"ASX King's Birthday", domain.MarketASX, "2026-06-08T02:00:00Z", false, "", ""},
+		{"ASX Christmas Eve closes 14:10", domain.MarketASX, "2026-12-24T01:00:00Z", true, "2026-12-23T23:00:00Z", "2026-12-24T03:10:00Z"},
+		{"ASX ANZAC Day 2027 substitute is open", domain.MarketASX, "2027-04-26T02:00:00Z", true, "2027-04-26T00:00:00Z", "2027-04-26T06:00:00Z"},
+		{"ASX Boxing Day 2027 substitute", domain.MarketASX, "2027-12-28T02:00:00Z", false, "", ""},
 		// Weekends and holidays.
 		{"Saturday", domain.MarketLSE, "2026-11-21T12:00:00Z", false, "", ""},
 		{"Sunday", domain.MarketNYSE, "2026-11-22T15:00:00Z", false, "", ""},

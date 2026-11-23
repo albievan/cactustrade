@@ -49,11 +49,15 @@ type InstrumentID int64
 // Market is a trading venue the calendar knows.
 type Market string
 
-// Markets in scope: long-only shares on London and New York.
+// Markets in scope: shares on London, New York and Sydney (ASX, owner's request R19).
 const (
 	MarketLSE  Market = "LSE"
 	MarketNYSE Market = "NYSE" // also NASDAQ: same hours and holidays
+	MarketASX  Market = "ASX"
 )
+
+// Markets lists every supported market, for the calendar checks and the dashboard.
+var Markets = []Market{MarketLSE, MarketNYSE, MarketASX}
 
 // Instrument is a tradable share.
 type Instrument struct {
@@ -66,9 +70,10 @@ type Instrument struct {
 	Currency   string // quote currency as eToro reports it ("" until known)
 }
 
-// MarketForSymbol infers the market from an eToro symbol: "BARC.L" is London; a plain
-// ticker ("AAPL") or a US share-class suffix ("BRK.B") is New York (NYSE or NASDAQ, same
-// calendar). Any other suffix ("SAP.DE", "MC.PA") is an unsupported market (ok=false).
+// MarketForSymbol infers the market from an eToro symbol: "BARC.L" is London, "CBA.ASX" is
+// Sydney; a plain ticker ("AAPL") or a US share-class suffix ("BRK.B") is New York (NYSE or
+// NASDAQ, same calendar). Any other suffix ("SAP.DE", "MC.PA") is an unsupported market
+// (ok=false).
 func MarketForSymbol(symbol string) (Market, bool) {
 	s := strings.ToUpper(strings.TrimSpace(symbol))
 	base, suffix, dotted := strings.Cut(s, ".")
@@ -79,6 +84,8 @@ func MarketForSymbol(symbol string) (Market, bool) {
 		return MarketNYSE, true
 	case suffix == "L":
 		return MarketLSE, true
+	case suffix == "ASX":
+		return MarketASX, true
 	case len(suffix) == 1 && suffix[0] >= 'A' && suffix[0] <= 'Z':
 		return MarketNYSE, true
 	}

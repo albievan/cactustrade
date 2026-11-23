@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type LlmProfile, type LlmProfileInput, type LlmSetup, type LlmTestResult } from "../lib/api";
 import { useSession } from "../lib/session";
+import { InfoCard } from "../components/InfoCard";
 
 const blank: LlmProfileInput = { name: "", provider: "anthropic", model: "", baseUrl: "", timeoutSeconds: 0 };
 
@@ -29,8 +30,7 @@ export function LlmReviewer() {
   return (
     <>
       <h1 className="h3">LLM reviewer</h1>
-      <div className="card mb-4"><div className="card-body">
-        <h2 className="h5">What it does</h2>
+      <InfoCard id="llm" title="What it does">
         <p className="mb-2">
           Before a share is added to the watchlist by the scanner, and before an order is sent, the idea — instrument, reason,
           entry, stop, target, size, the market regime and the recent prices — is shown to a large language model acting as a
@@ -44,7 +44,7 @@ export function LlmReviewer() {
           <li>The deterministic risk engine still has the final say (budget, cash, loss limits, kill switch).</li>
           <li>Each review is one request to the provider, paid with that profile's key. A <em>429 / quota</em> error comes from the provider: check your plan there.</li>
         </ul>
-      </div></div>
+      </InfoCard>
       {msg && <div className="alert alert-success" role="status">{msg}</div>}
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
 
@@ -103,6 +103,7 @@ export function LlmReviewer() {
                     <i className="bi bi-trash" /></button>
                 </div>
               )}
+              <ProviderLogo provider={p.provider} label={label(p.provider)} />
               <div className="flex-grow-1 min-w-0">
                 <div className="d-flex align-items-start gap-2 mb-2">
                   <strong className="text-break">{p.name}</strong>
@@ -121,6 +122,29 @@ export function LlmReviewer() {
         ))}
       </div>
     </>
+  );
+}
+
+// The provider's mark: the brand glyph where Bootstrap Icons has one, otherwise a coloured
+// monogram (we draw no logos of our own).
+const logos: Record<string, { icon?: string; text?: string; bg: string; fg?: string }> = {
+  anthropic: { icon: "bi-claude", bg: "#d97757" },
+  openai: { icon: "bi-openai", bg: "#0d0d0d" },
+  gemini: { icon: "bi-google", bg: "#1a73e8" },
+  deepseek: { text: "DS", bg: "#4d6bfe" },
+  openrouter: { text: "OR", bg: "#6467f2" },
+  kimi: { text: "K", bg: "#16191e" },
+  grok: { text: "xAI", bg: "#000000" },
+  ollama: { text: "Ol", bg: "#5a5a5a" },
+  ollama_local: { icon: "bi-pc-display", bg: "#5a5a5a" },
+};
+
+export function ProviderLogo({ provider, label }: { provider: string; label: string }) {
+  const l = logos[provider] ?? { icon: "bi-robot", bg: "#6c757d" };
+  return (
+    <div className="provider-logo flex-shrink-0" style={{ background: l.bg, color: l.fg ?? "#fff" }} role="img" aria-label={`${label} logo`} title={label}>
+      {l.icon ? <i className={`bi ${l.icon}`} /> : <span>{l.text}</span>}
+    </div>
   );
 }
 

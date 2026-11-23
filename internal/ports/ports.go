@@ -157,6 +157,17 @@ type PasswordResets interface {
 	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
+// EquitySnapshots stores each account's equity over time (the overview chart).
+type EquitySnapshots interface {
+	// Add stores a snapshot; ErrConflict when the account already has one at that time,
+	// ErrNotFound when the account does not exist.
+	Add(ctx context.Context, s domain.EquitySnapshot) error
+	// List returns the snapshots of the given accounts taken at or after since, oldest first
+	// (by account, then time). No ids = none.
+	List(ctx context.Context, accountIDs []string, since time.Time) ([]domain.EquitySnapshot, error)
+	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -173,6 +184,7 @@ type Store interface {
 	Reviews() Reviews
 	Outbox() Outbox
 	PasswordResets() PasswordResets
+	EquitySnapshots() EquitySnapshots
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
@@ -272,6 +284,13 @@ type Broker interface {
 	Lookup(ctx context.Context, requestID string) (domain.OrderStatus, error)
 	Cancel(ctx context.Context, orderID int64) error
 	Close(ctx context.Context, positionID int64, instrument domain.InstrumentID) (domain.OrderStatus, error)
+}
+
+// Holdings reads an account's cash and open positions, read-only, for the account set with
+// WithAccount (without one it refuses). It has no operation that changes anything: it is how
+// cactusTrade shows platforms it does not trade (Trading 212).
+type Holdings interface {
+	Holdings(ctx context.Context) (domain.Holdings, error)
 }
 
 // SignalModel turns candles into candidates (regime model + playbooks).

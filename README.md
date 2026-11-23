@@ -93,6 +93,27 @@ the client contains only the allowlisted paths. Real-money keys stay unused unti
 gate in phase 7: at least 20 demo trading days, admin, a typed confirmation phrase, and a
 banner on every page.
 
+## Trading 212 accounts (view-only)
+
+cactusTrade can **show** Trading 212 accounts next to your eToro accounts on the *Overview*
+page (cash, equity, unrealised P&L, open positions and an equity chart). It does **not** trade
+them: the agent, scanner, watchlist, themes and risk limits refuse a Trading 212 account, and
+the Trading 212 client (`internal/adapters/trading212`) can only send GET requests to three
+allowlisted read paths. Amounts stay in the account's own currency (often GBP or EUR);
+different currencies are never added up.
+
+To create a read-only key:
+
+1. In the Trading 212 app: **Settings → API (Beta) → Generate API key**.
+2. Give it **only read permissions**: account, portfolio, history. Restricting it to your
+   server's IP address is optional. A key works in one environment: a demo (practice) key for a
+   demo account, a live key for a real one.
+3. In cactusTrade: **Trading Platform Accounts → New account**, platform *Trading 212*, then
+   paste the **API key** and the **API secret** (write-only, encrypted, never shown again).
+
+The overview reads every account when you open it; equity snapshots are recorded every 15
+minutes and kept 400 days. See `docs/trading212-api.md` for the verified API facts.
+
 ## Configuration
 
 | Variable | Default | Meaning |

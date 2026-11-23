@@ -2,6 +2,7 @@ package fakes
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -168,4 +169,34 @@ func (b *Broker) Instruments(_ context.Context, ids []domain.InstrumentID) ([]do
 		}
 	}
 	return out, nil
+}
+
+// Holdings is an in-memory read-only ports.Holdings. ByAccount answers per account id; an
+// account without an entry has no keys (ErrCredentialsMissing), like the real client.
+type Holdings struct {
+	mu        sync.Mutex
+	ByAccount map[string]domain.Holdings
+	Errs      map[string]error
+	Calls     int
+}
+
+var _ ports.Holdings = (*Holdings)(nil)
+
+// Holdings answers for the account in ctx; without one it refuses.
+func (h *Holdings) Holdings(ctx context.Context) (domain.Holdings, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Calls++
+	a, ok := ports.AccountFrom(ctx)
+	if !ok {
+		return domain.Holdings{}, domain.ErrUnavailable
+	}
+	if err := h.Errs[a.ID]; err != nil {
+		return domain.Holdings{}, err
+	}
+	x, ok := h.ByAccount[a.ID]
+	if !ok {
+		return domain.Holdings{}, fmt.Errorf("keys: %w: %w", domain.ErrCredentialsMissing, domain.ErrUnavailable)
+	}
+	return x, nil
 }

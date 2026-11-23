@@ -173,6 +173,17 @@ func TestNoAccountFailsClosed(t *testing.T) {
 	}
 }
 
+func TestOtherPlatformFailsClosed(t *testing.T) {
+	e := newEnv(t)
+	a := domain.Account{ID: "t212", Name: "ISA", Mode: domain.ModeDemo, Platform: domain.PlatformTrading212}
+	k, s := domain.AccountKeyNames(a)
+	_ = e.sec.Put(context.Background(), k, "t212-key")
+	_ = e.sec.Put(context.Background(), s, "t212-secret")
+	if _, err := e.c.Portfolio(ports.WithAccount(context.Background(), a)); !errors.Is(err, domain.ErrUnavailable) || len(e.fake.reqs) != 0 {
+		t.Fatalf("a Trading 212 account reached eToro: %v (%d requests)", err, len(e.fake.reqs))
+	}
+}
+
 func TestLimitersArePerAccount(t *testing.T) {
 	e := newEnv(t)
 	a1, a2, b := e.c.limiter("a"), e.c.limiter("a"), e.c.limiter("b")

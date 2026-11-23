@@ -43,6 +43,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/secretstore"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
 	"github.com/albievan/cactustrade/internal/adapters/system"
+	"github.com/albievan/cactustrade/internal/adapters/trading212"
 	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
@@ -176,6 +177,11 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return streamAccount(ctx, store, secrets)
 	})
 	feed := etoro.NewFeed(broker, stream, 30*time.Second)
+	// Trading 212: read-only (account summary and positions), shown in the overview only.
+	t212, err := trading212.New(trading212.Config{HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Log: log})
+	if err != nil {
+		return err
+	}
 	fallback := &mailFallback{}
 	if err := fallback.load(getenv); err != nil {
 		return err
@@ -185,6 +191,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
 		Broker: broker, Market: feed, Calendar: cal,
+		Holdings:     map[domain.Platform]ports.Holdings{domain.PlatformTrading212: t212},
 		Reviewer:     llm.New(&http.Client{Timeout: 10 * time.Minute}),
 		Research:     broker,
 		Mailer:       mail.New(time.Now, host),
@@ -215,8 +222,10 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	if y := time.Now().Year(); !slices.Contains(cal.Years(domain.MarketLSE), y) || !slices.Contains(cal.Years(domain.MarketNYSE), y) {
-		log.Warn("the market calendar has no holiday table for this year: markets are treated as closed", "year", y)
+	for _, m := range domain.Markets {
+		if y := time.Now().Year(); !slices.Contains(cal.Years(m), y) {
+			log.Warn("the market calendar has no holiday table for this year: the market is treated as closed", "market", string(m), "year", y)
+		}
 	}
 	if created, err := svc.EnsureDefaultAdmin(ctx); err != nil {
 		return err
@@ -267,6 +276,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	}
 	go stream.Run(ctx)
 	go scannerLoop(ctx, svc, cal, 15*time.Minute)
+	go equityLoop(ctx, svc, time.Minute, 15*time.Minute)
 	go mailLoop(ctx, svc, log, 15*time.Second)
 
 	errc := make(chan error, 2)
@@ -308,8 +318,9 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	return nil
 }
 
-// scannerLoop runs the scanner for every account that has it on, every interval while LSE
-// or NYSE/NASDAQ is in session (read-only on eToro: it reviews stocks and fills watchlists).
+// scannerLoop runs the scanner for every account that has it on, every interval while any
+// supported market (LSE, NYSE/NASDAQ, ASX) is in session; each share is reviewed only while
+// its own market is open (read-only on eToro: it reviews stocks and fills watchlists).
 func scannerLoop(ctx context.Context, svc *app.Service, cal *calendar.Calendar, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -319,9 +330,25 @@ func scannerLoop(ctx context.Context, svc *app.Service, cal *calendar.Calendar, 
 			return
 		case <-t.C:
 			now := time.Now()
-			if cal.IsOpen(domain.MarketLSE, now) || cal.IsOpen(domain.MarketNYSE, now) {
+			if slices.ContainsFunc(domain.Markets, func(m domain.Market) bool { return cal.IsOpen(m, now) }) {
 				svc.ScanAll(ctx)
 			}
+		}
+	}
+}
+
+// equityLoop records every account's equity for the overview chart: once first after
+// (giving the price stream and the start-up a moment), then every interval.
+func equityLoop(ctx context.Context, svc *app.Service, first, every time.Duration) {
+	t := time.NewTimer(first)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			svc.RecordEquity(ctx)
+			t.Reset(every)
 		}
 	}
 }
@@ -346,6 +373,9 @@ func streamAccount(ctx context.Context, store *sqlstore.Store, secrets ports.Sec
 		return rank(a) - rank(b)
 	})
 	for _, a := range accts {
+		if !a.Tradable() { // Trading 212 keys are not eToro keys
+			continue
+		}
 		ak, uk := domain.AccountKeyNames(a)
 		if v, err := secrets.Get(ctx, ak); err != nil || v == "" {
 			continue

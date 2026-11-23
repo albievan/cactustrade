@@ -295,7 +295,7 @@ func Run(t *testing.T, s ports.Store) {
 		if err := s.Users().Create(ctx, bob); err != nil {
 			t.Fatal(err)
 		}
-		a1 := domain.Account{ID: "acc-1", Name: "Main demo", OwnerID: admin.ID, Mode: domain.ModeDemo, CreatedAt: t0, UpdatedAt: t0}
+		a1 := domain.Account{ID: "acc-1", Name: "Main demo", OwnerID: admin.ID, Mode: domain.ModeDemo, Platform: domain.PlatformEtoro, CreatedAt: t0, UpdatedAt: t0}
 		a2 := domain.Account{ID: "acc-2", Name: "Bob ISA", OwnerID: bob.ID, Mode: domain.ModeReal, EnvKeys: false, CreatedAt: t0, UpdatedAt: t0}
 		env := domain.Account{ID: domain.EnvAccountID, Name: "Demo (environment)", OwnerID: admin.ID, Mode: domain.ModeDemo, EnvKeys: true, CreatedAt: t0, UpdatedAt: t0}
 		for _, a := range []domain.Account{a1, a2, env} {
@@ -675,6 +675,79 @@ func Run(t *testing.T, s ports.Store) {
 		}
 		if n, _ := pr.CountSince(ctx, admin.ID, t0); n != 0 {
 			t.Fatal("DeleteForUser left links")
+		}
+	})
+
+	t.Run("platform_equity_snapshots", func(t *testing.T) {
+		ar, es := s.Accounts(), s.EquitySnapshots()
+		t212 := domain.Account{ID: "acc-t212", Name: "ISA (Trading 212)", OwnerID: admin.ID, Mode: domain.ModeReal, Platform: domain.PlatformTrading212, CreatedAt: t0, UpdatedAt: t0}
+		plain := domain.Account{ID: "acc-plain", Name: "No platform given", OwnerID: admin.ID, Mode: domain.ModeDemo, CreatedAt: t0, UpdatedAt: t0}
+		for _, a := range []domain.Account{t212, plain} {
+			if err := ar.Create(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if g, err := ar.Get(ctx, t212.ID); err != nil || g.Platform != domain.PlatformTrading212 {
+			t.Fatalf("Get t212 = %+v %v", g, err)
+		}
+		if g, _ := ar.Get(ctx, plain.ID); g.Platform != domain.PlatformEtoro {
+			t.Fatalf("default platform = %q", g.Platform)
+		}
+		vs, _ := ar.ForUser(ctx, admin.ID)
+		found := false
+		for _, v := range vs {
+			found = found || (v.ID == t212.ID && v.Platform == domain.PlatformTrading212)
+		}
+		if !found {
+			t.Fatalf("ForUser lost the platform: %+v", vs)
+		}
+		// Update never changes the platform.
+		t212.Name, t212.Platform, t212.UpdatedAt = "Renamed", domain.PlatformEtoro, t0.Add(time.Minute)
+		if err := ar.Update(ctx, t212); err != nil {
+			t.Fatal(err)
+		}
+		if g, _ := ar.Get(ctx, t212.ID); g.Name != "Renamed" || g.Platform != domain.PlatformTrading212 {
+			t.Fatalf("after Update = %+v", g)
+		}
+
+		snap := func(acct string, at time.Time, cash, eq domain.Cents, cur string) domain.EquitySnapshot {
+			return domain.EquitySnapshot{AccountID: acct, At: at, Currency: cur, Cash: cash, Equity: eq}
+		}
+		for _, e := range []domain.EquitySnapshot{
+			snap(t212.ID, t0, 100_00, 1_000_00, "GBP"),
+			snap(t212.ID, t0.Add(15*time.Minute), 100_00, 1_010_50, "GBP"),
+			snap(plain.ID, t0.Add(15*time.Minute), -5, 9_000_000_000_00, "USD"),
+			snap(plain.ID, t0.Add(-time.Hour), 1, 2, "USD"),
+		} {
+			if err := es.Add(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := es.Add(ctx, snap(t212.ID, t0, 1, 1, "GBP")); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("duplicate: %v", err)
+		}
+		if err := es.Add(ctx, snap("nope", t0, 1, 1, "GBP")); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("unknown account: %v", err)
+		}
+		got, err := es.List(ctx, []string{t212.ID, plain.ID}, t0)
+		if err != nil || len(got) != 3 || got[0].AccountID != plain.ID || got[0].Equity != 9_000_000_000_00 || got[0].Cash != -5 ||
+			got[1].AccountID != t212.ID || !got[1].At.Equal(t0) || got[1].Currency != "GBP" || got[2].Equity != 1_010_50 {
+			t.Fatalf("List = %+v %v", got, err)
+		}
+		if got, _ := es.List(ctx, []string{t212.ID}, t0.Add(time.Minute)); len(got) != 1 {
+			t.Fatalf("List since = %+v", got)
+		}
+		if got, err := es.List(ctx, nil, t0); err != nil || len(got) != 0 {
+			t.Fatalf("List no ids = %+v %v", got, err)
+		}
+		if n, err := es.DeleteBefore(ctx, t0); err != nil || n != 1 {
+			t.Fatalf("DeleteBefore = %d %v", n, err)
+		}
+		if err := ar.Delete(ctx, t212.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := es.List(ctx, []string{t212.ID}, time.Time{}); len(got) != 0 {
+			t.Fatal("snapshots survived their account")
 		}
 	})
 }

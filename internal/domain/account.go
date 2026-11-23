@@ -6,7 +6,28 @@ import (
 	"unicode/utf8"
 )
 
-// Account is one eToro account (one key pair, demo or real) that a user owns and may share
+// Platform is the broker an account lives on.
+type Platform string
+
+// Platforms. eToro is the default and the only one cactusTrade trades; Trading 212 accounts
+// are view-only (owner's decision 2026-11-23: read-only now, trading later).
+const (
+	PlatformEtoro      Platform = "etoro"
+	PlatformTrading212 Platform = "trading212"
+)
+
+// ParsePlatform validates a platform name; "" is eToro.
+func ParsePlatform(s string) (Platform, error) {
+	switch Platform(s) {
+	case "", PlatformEtoro:
+		return PlatformEtoro, nil
+	case PlatformTrading212:
+		return PlatformTrading212, nil
+	}
+	return "", Invalid("platform", "etoro or trading212")
+}
+
+// Account is one broker account (one key pair, demo or real) that a user owns and may share
 // with other users (owner's request, 2026-11-23).
 type Account struct {
 	ID        string
@@ -14,12 +35,25 @@ type Account struct {
 	OwnerID   string
 	OwnerName string // filled on reads
 	Mode      TradingMode
+	Platform  Platform // "" reads as eToro
 	// EnvKeys: the keys are the deployment's ETORO_DEMO_PUB / ETORO_DEMO_PK (or the legacy
 	// stored demo pair), not a per-account pair.
 	EnvKeys   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// OnPlatform is the account's platform ("" = eToro).
+func (a Account) OnPlatform() Platform {
+	if a.Platform == "" {
+		return PlatformEtoro
+	}
+	return a.Platform
+}
+
+// Tradable reports whether cactusTrade may trade the account (or use it for anything but
+// viewing): only eToro accounts. Everything else is view-only (ErrViewOnly).
+func (a Account) Tradable() bool { return a.OnPlatform() == PlatformEtoro }
 
 // EnvAccountID is the account that uses the deployment's environment keys.
 const EnvAccountID = "env-demo"
@@ -68,8 +102,13 @@ type AccountShare struct {
 	CreatedAt time.Time
 }
 
-// AccountKeyNames are the credential names of an account's eToro key pair.
+// AccountKeyNames are the credential names of an account's key pair: for eToro the API key
+// (x-api-key) and the user key (x-user-key); for Trading 212 the API key and the API secret
+// (HTTP Basic user and password).
 func AccountKeyNames(a Account) (apiKey, userKey CredentialName) {
+	if a.OnPlatform() == PlatformTrading212 {
+		return CredentialName("t212." + a.ID + ".api_key"), CredentialName("t212." + a.ID + ".api_secret")
+	}
 	if a.EnvKeys {
 		return CredEtoroDemoAPIKey, CredEtoroDemoUserKey
 	}

@@ -9,6 +9,7 @@ interface Item { to: string; icon: string; label: string; perm?: string; end?: b
 
 const sections: { title: string; items: Item[] }[] = [
   { title: "Trading", items: [
+    { to: "/overview", icon: "bi-grid-1x2", label: "Overview" },
     { to: "/", icon: "bi-speedometer2", label: "Dashboard", end: true },
     { to: "/watchlist", icon: "bi-binoculars", label: "Watchlist" },
     { to: "/risk", icon: "bi-shield-check", label: "Risk limits" },
@@ -17,7 +18,7 @@ const sections: { title: string; items: Item[] }[] = [
     { to: "/themes", icon: "bi-stars", label: "Themes" },
   ] },
   { title: "Setup", items: [
-    { to: "/accounts", icon: "bi-wallet2", label: "eToro accounts" },
+    { to: "/accounts", icon: "bi-wallet2", label: "Platform accounts" },
     { to: "/llm", icon: "bi-robot", label: "LLM reviewer" },
     { to: "/email", icon: "bi-envelope", label: "E-mail", perm: "settings.write" },
     { to: "/api-keys", icon: "bi-plug", label: "API keys" },
@@ -41,7 +42,10 @@ export function Layout() {
         <button className="btn btn-sm btn-outline-secondary side-toggle" onClick={() => setNavOpen(!navOpen)} aria-label="Menu"><i className="bi bi-list" /></button>
         <a className="brand" href="/">
           <img src="/logo.svg" alt="" />
-          <span className="name">cactus<b>trade</b></span>
+          <span className="brand-text">
+            <span className="name">cactus<b>trade</b></span>
+            {mode?.version && <span className="brand-version" title="cactusTrade version">v{mode.version}{mode.build ? ` · build ${mode.build}` : ""}</span>}
+          </span>
         </a>
         <AccountSwitcher />
         <span className="mode-pill" title="The mode of the account you are working on">

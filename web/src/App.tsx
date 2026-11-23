@@ -17,6 +17,7 @@ import { ModeProvider } from "./lib/mode";
 import { Account } from "./pages/Account";
 import { Email } from "./pages/Email";
 import { ResetPassword } from "./pages/ResetPassword";
+import { Overview } from "./pages/Overview";
 
 export function App() {
   const { me, loading } = useSession();
@@ -35,6 +36,7 @@ export function App() {
         <Route path="email" element={<Email />} />
         <Route path="system" element={<System />} />
         <Route index element={<Dashboard />} />
+        <Route path="overview" element={<Overview />} />
         <Route path="watchlist" element={<Watchlist />} />
         <Route path="accounts" element={<Accounts />} />
         <Route path="themes" element={<Themes />} />

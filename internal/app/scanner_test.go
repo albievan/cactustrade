@@ -77,6 +77,7 @@ func TestScanner(t *testing.T) {
 	ctx := context.Background()
 	e, b := withBroker(t)
 	e.svc.d.Research = b
+	e.svc.d.Calendar = openCalendar{}
 	acct, _ := e.svc.CurrentAccount(ctx, e.admin)
 	b.Known[6] = domain.Instrument{ID: 6, Symbol: "RKLB", Name: "Rocket Lab", Type: "Stocks", Market: domain.MarketNYSE}
 	b.Known[7] = domain.Instrument{ID: 7, Symbol: "SEMI", Name: "Semi", Type: "Stocks", Market: domain.MarketNYSE}
@@ -206,5 +207,38 @@ func TestScanner(t *testing.T) {
 	e.svc.d.Broker = nil
 	if _, err := e.svc.ScanNow(ctx, e.admin); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatal("scan without a broker")
+	}
+}
+
+// TestScanSkipsClosedMarketsAndViewOnly: a share is reviewed only while its own market is in
+// session, and the background runner never scans a view-only (Trading 212) account.
+func TestScanSkipsClosedMarketsAndViewOnly(t *testing.T) {
+	ctx := context.Background()
+	e, b := withBroker(t) // fixedCalendar: LSE 08:00–16:30 UTC, NYSE fails closed
+	e.svc.d.Research = b
+	acct, _ := e.svc.CurrentAccount(ctx, e.admin)
+	b.Known[1] = domain.Instrument{ID: 1, Symbol: "AAPL", Type: "Stocks", Market: domain.MarketNYSE}
+	b.Known[2] = domain.Instrument{ID: 2, Symbol: "BARC.L", Type: "Stocks", Market: domain.MarketLSE}
+	for _, id := range []domain.InstrumentID{1, 2} {
+		_ = e.store.Instruments().Upsert(ctx, b.Known[id], domain.Eligibility{Instrument: id}, e.clock.T)
+		_ = e.store.Watchlist().Add(ctx, acct.ID, id, "t", e.clock.T)
+	}
+	e.svc.evalOverride = func(domain.InstrumentID, []domain.Candle) strategy.Decision { return strategy.Decision{Reason: "none"} }
+	e.clock.T = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	if res, err := e.svc.ScanNow(ctx, e.admin); err != nil || res.Reviewed != 1 {
+		t.Fatalf("only BARC.L (LSE open) should be reviewed: %+v %v", res, err)
+	}
+	e.clock.T = time.Date(2026, 11, 23, 20, 0, 0, 0, time.UTC)
+	if res, err := e.svc.ScanNow(ctx, e.admin); err != nil || res.Reviewed != 0 {
+		t.Fatalf("nothing is in session: %+v %v", res, err)
+	}
+
+	// A Trading 212 account with a watchlist row written straight to the store is still never scanned.
+	e.svc.d.Calendar = openCalendar{}
+	isa := e.t212Account(t, e.admin, "ISA")
+	_ = e.store.Watchlist().Add(ctx, isa.ID, 1, "t", e.clock.T)
+	e.svc.ScanAll(ctx)
+	if rs, err := e.store.Reviews().List(ctx, isa.ID, 10); err != nil || len(rs) != 0 {
+		t.Fatalf("view-only account scanned: %+v %v", rs, err)
 	}
 }

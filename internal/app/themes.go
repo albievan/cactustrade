@@ -70,7 +70,7 @@ func (s *Service) cachePicked(ctx context.Context, v domain.AccountView, ids []d
 			return domain.Invalid("instruments", fmt.Sprintf("eToro does not know instrument %d", id))
 		}
 		if !domain.IsShare(ins[i].Type) || ins[i].Market == "" {
-			return domain.Invalid("instruments", ins[i].Symbol+" is not a share on LSE or NYSE/NASDAQ")
+			return domain.Invalid("instruments", ins[i].Symbol+" is not a share on LSE, NYSE/NASDAQ or the ASX")
 		}
 		if err := s.d.Store.Instruments().Upsert(ctx, ins[i], domain.Eligibility{Instrument: id, Symbol: ins[i].Symbol}, now); err != nil {
 			return err

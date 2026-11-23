@@ -30,7 +30,28 @@ describe("LlmReviewer", () => {
     expect(screen.getByRole("group", { name: "Actions for Claude" })).toBeInTheDocument();
     expect(screen.getByLabelText("Make Claude the default")).toBeDisabled();
     expect(screen.getByText("no key")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "anthropic logo" })).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Make DeepSeek desk the default"));
     await waitFor(() => expect(puts).toEqual([{ enabled: true, activeProfileId: "p2" }]));
+  });
+});
+
+describe("InfoCard", () => {
+  it("folds the explanation away and back", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/auth/me")) return new Response(JSON.stringify(me), { status: 200 });
+      if (url.endsWith("/api/v1/llm")) return new Response(JSON.stringify(llm), { status: 200 });
+      return new Response("{}", { status: 404 });
+    });
+    localStorage.removeItem("cactustrade.info.llm");
+    render(<SessionProvider><LlmReviewer /></SessionProvider>);
+    const toggle = await screen.findByRole("button", { name: /What it does/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/second pair of eyes/)).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/second pair of eyes/)).not.toBeInTheDocument();
+    expect(localStorage.getItem("cactustrade.info.llm")).toBe("closed");
   });
 });

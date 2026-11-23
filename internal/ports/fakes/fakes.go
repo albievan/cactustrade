@@ -144,6 +144,7 @@ type Store struct {
 	shares   map[string]map[string]domain.AccountShare // account → user
 	outbox   []domain.OutboxMail
 	resets   map[string]domain.PasswordReset
+	equity   []domain.EquitySnapshot
 	PingErr  error
 }
 
@@ -205,6 +206,9 @@ func (s *Store) Outbox() ports.Outbox { return outboxRepo{s} }
 
 // PasswordResets returns the password-reset repository.
 func (s *Store) PasswordResets() ports.PasswordResets { return resetRepo{s} }
+
+// EquitySnapshots returns the equity history.
+func (s *Store) EquitySnapshots() ports.EquitySnapshots { return equityRepo{s} }
 
 // Accounts returns the accounts repository.
 func (s *Store) Accounts() ports.Accounts { return accountRepo{s} }
@@ -624,6 +628,7 @@ func (r accountRepo) Create(_ context.Context, a domain.Account) error {
 	if _, ok := r.s.accounts[a.ID]; ok {
 		return domain.ErrConflict
 	}
+	a.Platform = a.OnPlatform()
 	r.s.accounts[a.ID] = a
 	return nil
 }
@@ -693,7 +698,48 @@ func (r accountRepo) Delete(_ context.Context, id string) error {
 	delete(r.s.accounts, id)
 	delete(r.s.shares, id)
 	delete(r.s.watch, id)
+	r.s.equity = slices.DeleteFunc(r.s.equity, func(e domain.EquitySnapshot) bool { return e.AccountID == id })
 	return nil
+}
+
+type equityRepo struct{ s *Store }
+
+func (r equityRepo) Add(_ context.Context, e domain.EquitySnapshot) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if _, ok := r.s.accounts[e.AccountID]; !ok {
+		return domain.ErrNotFound
+	}
+	for _, x := range r.s.equity {
+		if x.AccountID == e.AccountID && x.At.Equal(e.At) {
+			return domain.ErrConflict
+		}
+	}
+	r.s.equity = append(r.s.equity, e)
+	return nil
+}
+
+func (r equityRepo) List(_ context.Context, ids []string, since time.Time) ([]domain.EquitySnapshot, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	var out []domain.EquitySnapshot
+	for _, e := range r.s.equity {
+		if slices.Contains(ids, e.AccountID) && !e.At.Before(since) {
+			out = append(out, e)
+		}
+	}
+	slices.SortFunc(out, func(a, b domain.EquitySnapshot) int {
+		return cmp.Or(strings.Compare(a.AccountID, b.AccountID), a.At.Compare(b.At))
+	})
+	return out, nil
+}
+
+func (r equityRepo) DeleteBefore(_ context.Context, before time.Time) (int64, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	n := len(r.s.equity)
+	r.s.equity = slices.DeleteFunc(r.s.equity, func(e domain.EquitySnapshot) bool { return e.At.Before(before) })
+	return int64(n - len(r.s.equity)), nil
 }
 
 func (r accountRepo) Shares(_ context.Context, id string) ([]domain.AccountShare, error) {

@@ -102,6 +102,9 @@ func account(ctx context.Context) (domain.Account, domain.TradingMode, error) {
 	if !ok || a.ID == "" {
 		return domain.Account{}, "", fmt.Errorf("no eToro account was given for this call: %w", domain.ErrUnavailable)
 	}
+	if !a.Tradable() { // a Trading 212 account's keys never go to eToro
+		return domain.Account{}, "", fmt.Errorf("%s is not an eToro account: %w", a.Name, domain.ErrUnavailable)
+	}
 	if a.Mode == domain.ModeReal {
 		return a, domain.ModeReal, nil
 	}

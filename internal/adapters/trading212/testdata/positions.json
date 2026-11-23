@@ -1,0 +1,22 @@
+[
+  {
+    "averagePricePaid": 180.123456,
+    "createdAt": "2026-11-20T14:31:05.123Z",
+    "currentPrice": 190.5,
+    "instrument": { "currency": "USD", "isin": "US0378331005", "name": "Apple", "ticker": "AAPL_US_EQ" },
+    "quantity": 2.5,
+    "quantityAvailableForTrading": 2.5,
+    "quantityInPies": 0,
+    "walletImpact": { "currency": "GBP", "currentValue": 375.12, "fxImpact": -1.2, "totalCost": 355.0, "unrealizedProfitLoss": 20.12 }
+  },
+  {
+    "averagePricePaid": 2225,
+    "createdAt": "2026-11-21T09:00:00Z",
+    "currentPrice": 2210.5,
+    "instrument": { "currency": "GBX", "isin": "GB00B10RZP78", "name": "Unilever", "ticker": "ULVLl_EQ" },
+    "quantity": 10,
+    "quantityAvailableForTrading": 10,
+    "quantityInPies": 0,
+    "walletImpact": { "currency": "GBP", "currentValue": 221.05, "fxImpact": null, "totalCost": 222.5, "unrealizedProfitLoss": -1.45 }
+  }
+]

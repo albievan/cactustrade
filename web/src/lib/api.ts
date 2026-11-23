@@ -42,6 +42,12 @@ export type EmailSetupInput = components["schemas"]["EmailSetupInput"];
 export type OutboxMail = components["schemas"]["OutboxMail"];
 export type Profile = components["schemas"]["Profile"];
 export type LlmTestResult = components["schemas"]["LlmTestResult"];
+export type Platform = components["schemas"]["Platform"];
+export type Overview = components["schemas"]["Overview"];
+export type AccountHoldings = components["schemas"]["AccountHoldings"];
+export type Holding = components["schemas"]["Holding"];
+export type CurrencyTotal = components["schemas"]["CurrencyTotal"];
+export type EquitySeries = components["schemas"]["EquitySeries"];
 
 export class ApiError extends Error {
   constructor(
@@ -153,7 +159,10 @@ export const api = {
   setScanner: (enabled: boolean) => request<void>("PUT", "/api/v1/scanner", { enabled }),
   runScanner: () => request<ScanResult>("POST", "/api/v1/scanner/run"),
   accounts: () => request<Account[]>("GET", "/api/v1/accounts"),
-  createAccount: (name: string, mode: "demo" | "real") => request<Account>("POST", "/api/v1/accounts", { name, mode }),
+  createAccount: (name: string, mode: "demo" | "real", platform: Platform = "etoro") =>
+    request<Account>("POST", "/api/v1/accounts", { name, mode, platform }),
+  overview: () => request<Overview>("GET", "/api/v1/overview"),
+  equityHistory: (days: number) => request<EquitySeries[]>("GET", `/api/v1/overview/history?days=${days}`),
   setCurrentAccount: (accountId: string) => request<Account>("PUT", "/api/v1/accounts/current", { accountId }),
   renameAccount: (id: string, name: string) => request<Account>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}`, { name }),
   deleteAccount: (id: string) => request<void>("DELETE", `/api/v1/accounts/${encodeURIComponent(id)}`),
@@ -173,6 +182,19 @@ export function usd(cents: number | undefined): string {
   if (cents === undefined) return "—";
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
+
+// money formats minor units (hundredths) of an ISO currency, e.g. (123456, "GBP") → "£1,234.56".
+// An unknown code falls back to "1,234.56 XYZ".
+export function money(minor: number | undefined, currency: string): string {
+  if (minor === undefined) return "—";
+  try {
+    return (minor / 100).toLocaleString("en-GB", { style: "currency", currency });
+  } catch {
+    return `${(minor / 100).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+  }
+}
+
+export const platformLabel: Record<Platform, string> = { etoro: "eToro", trading212: "Trading 212" };
 
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) return e.message;

@@ -13,6 +13,7 @@ import (
 func TestThemeSharesAndReviewer(t *testing.T) {
 	ctx := context.Background()
 	e, b := withBroker(t)
+	e.svc.d.Calendar = openCalendar{}
 	r := &fakeReviewer{v: domain.Verdict{Kind: domain.VerdictReject, Reason: "too extended"}}
 	e.svc.d.Reviewer = r
 	def, err := e.svc.SaveLLMProfile(ctx, e.admin, domain.LLMProfile{Name: "Default", LLMConfig: domain.LLMConfig{Provider: "openai", Model: "gpt"}}, sp("k-def"))

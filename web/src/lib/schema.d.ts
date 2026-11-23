@@ -420,9 +420,13 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Whether the account's eToro keys are set (never their values) */
+        /** Whether the account's keys are set (never their values) */
         get: operations["getAccountKeys"];
-        /** Store the account's eToro key pair, write-only (owner, web UI); an empty value keeps the stored one */
+        /**
+         * Store the account's key pair, write-only (owner, web UI); an empty value keeps the stored one
+         * @description eToro: `apiKey` is the Public API Key (x-api-key), `userKey` the User Key (x-user-key).
+         *     Trading 212: `apiKey` is the API key, `userKey` the API secret.
+         */
         put: operations["setAccountKeys"];
         post?: never;
         delete?: never;
@@ -490,6 +494,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every account you can view, on every platform — cash, equity, positions (viewer)
+         * @description Reads each account now (eToro and Trading 212). An account that cannot be read carries
+         *     its `error` (and `noKeys` when its keys are not set yet) instead of failing the call.
+         *     Totals are per currency: amounts in different currencies are never added up.
+         */
+        get: operations["getOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/overview/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Equity over time of every account you can view (snapshots every 15 minutes, kept 400 days) */
+        get: operations["getEquityHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/broker/test": {
         parameters: {
             query?: never;
@@ -535,7 +578,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Today's sessions for LSE and NYSE/NASDAQ (viewer) */
+        /** Today's sessions for LSE, NYSE/NASDAQ and ASX (viewer) */
         get: operations["getMarketStatus"];
         put?: never;
         post?: never;
@@ -1117,10 +1160,10 @@ export interface components {
         /** @description An exact decimal (prices and units, up to 6 places) */
         Decimal: string;
         /**
-         * @description LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+         * @description LSE, NYSE (NYSE and NASDAQ share a calendar), ASX or "" when not tradable here
          * @enum {string}
          */
-        Market: "" | "LSE" | "NYSE";
+        Market: "" | "LSE" | "NYSE" | "ASX";
         BrokerCheck: {
             mode: components["schemas"]["TradingMode"];
             ok: boolean;
@@ -1301,12 +1344,18 @@ export interface components {
             /** Format: int64 */
             latencyMs: number;
         };
+        /**
+         * @description eToro (traded) or Trading 212 (view-only for now)
+         * @enum {string}
+         */
+        Platform: "etoro" | "trading212";
         Account: {
             id: string;
             name: string;
             ownerId: string;
             ownerName: string;
             mode: components["schemas"]["TradingMode"];
+            platform: components["schemas"]["Platform"];
             /** @description uses the deployment's ETORO_DEMO_PUB / _PK */
             envKeys: boolean;
             /** @enum {string} */
@@ -1317,6 +1366,7 @@ export interface components {
         CreateAccountRequest: {
             name: string;
             mode: components["schemas"]["TradingMode"];
+            platform?: components["schemas"]["Platform"];
         };
         RenameAccountRequest: {
             name: string;
@@ -1330,10 +1380,79 @@ export interface components {
             fromEnvironment: boolean;
         };
         SetAccountKeysRequest: {
-            /** @description eToro Public API Key (x-api-key); empty = keep */
+            /** @description eToro Public API Key (x-api-key) or Trading 212 API key; empty = keep */
             apiKey: string;
-            /** @description eToro User Key (x-user-key); empty = keep */
+            /** @description eToro User Key (x-user-key) or Trading 212 API secret; empty = keep */
             userKey: string;
+        };
+        /**
+         * Format: int64
+         * @description An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+         */
+        MinorUnits: number;
+        Holding: {
+            symbol: string;
+            name: string;
+            /** @description the instrument's price currency ("" when unknown) */
+            currency: string;
+            quantity: components["schemas"]["Decimal"];
+            avgPrice: components["schemas"]["Decimal"];
+            currentPrice: components["schemas"]["Decimal"];
+            value: components["schemas"]["MinorUnits"];
+            cost: components["schemas"]["MinorUnits"];
+            pnl: components["schemas"]["MinorUnits"];
+            /** Format: date-time */
+            openedAt?: string;
+            long: boolean;
+            cfd: boolean;
+        };
+        /** @description Amounts are minor units of `currency`, the account's own currency. */
+        Holdings: {
+            platform: components["schemas"]["Platform"];
+            currency: string;
+            cash: components["schemas"]["MinorUnits"];
+            invested: components["schemas"]["MinorUnits"];
+            equity: components["schemas"]["MinorUnits"];
+            unrealisedPnl: components["schemas"]["MinorUnits"];
+            realisedPnl: components["schemas"]["MinorUnits"];
+            positions: components["schemas"]["Holding"][];
+            /** Format: date-time */
+            asOf: string;
+        };
+        AccountHoldings: {
+            account: components["schemas"]["Account"];
+            holdings?: components["schemas"]["Holdings"];
+            /** @description why the account could not be read */
+            error?: string;
+            /** @description the account's keys are not set yet */
+            noKeys: boolean;
+        };
+        CurrencyTotal: {
+            currency: string;
+            accounts: number;
+            cash: components["schemas"]["MinorUnits"];
+            equity: components["schemas"]["MinorUnits"];
+            unrealisedPnl: components["schemas"]["MinorUnits"];
+        };
+        Overview: {
+            accounts: components["schemas"]["AccountHoldings"][];
+            totals: components["schemas"]["CurrencyTotal"][];
+            /** Format: date-time */
+            asOf: string;
+        };
+        EquityPoint: {
+            /** Format: date-time */
+            at: string;
+            cash: components["schemas"]["MinorUnits"];
+            equity: components["schemas"]["MinorUnits"];
+        };
+        EquitySeries: {
+            accountId: string;
+            name: string;
+            platform: components["schemas"]["Platform"];
+            mode: components["schemas"]["TradingMode"];
+            currency: string;
+            points: components["schemas"]["EquityPoint"][];
         };
         AccountShare: {
             userId: string;
@@ -2339,6 +2458,53 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    getOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Overview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Overview"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    getEquityHistory: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One series per account that has snapshots */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquitySeries"][];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
         };
     };
     testBrokerConnection: {

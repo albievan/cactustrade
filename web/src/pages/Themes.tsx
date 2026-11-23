@@ -92,7 +92,7 @@ function ThemeForm({ initial, initialShares, id, industries, llm, onSaved, onCan
     try {
       const res = (await api.searchInstruments(q)).filter((i) => i.market);
       setFound(res.map((i) => ({ instrumentId: i.instrumentId, symbol: i.symbol, name: i.name, market: i.market ?? "" })));
-      if (res.length === 0) setError("No share on LSE or NYSE/NASDAQ matches " + q);
+      if (res.length === 0) setError("No share on LSE, NYSE/NASDAQ or the ASX matches " + q);
     } catch (e) { setError(errorText(e)); }
   }
   async function submit(e: FormEvent) {

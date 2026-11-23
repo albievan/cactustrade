@@ -54,6 +54,9 @@ type Deps struct {
 	Broker   ports.Broker
 	Market   ports.MarketData
 	Calendar ports.MarketCalendar
+	// Holdings are the read-only sources for platforms cactusTrade shows but does not trade
+	// (Trading 212). eToro holdings come from Broker. A missing platform = "unavailable".
+	Holdings map[domain.Platform]ports.Holdings
 	Reviewer ports.Reviewer // the LLM reviewer (nil = not available)
 	Research ports.Research // industries and the screen for the scanner (nil = not available)
 	// Reload re-reads settings that live outside the database (credentials from the

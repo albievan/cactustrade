@@ -1,5 +1,5 @@
-// Package calendar implements ports.MarketCalendar for the London Stock Exchange and the New
-// York markets (NYSE and NASDAQ share hours and holidays). Daylight saving comes from the IANA
+// Package calendar implements ports.MarketCalendar for the London Stock Exchange, the New
+// York markets (NYSE and NASDAQ share hours and holidays) and the ASX (Sydney). Daylight saving comes from the IANA
 // time zone database, embedded in the binary (time/tzdata) so it works in a distroless image
 // and on Windows. Holidays and half days are tables per year; a year without a table is
 // closed (fail closed) and reported with an error, so it must be added before trading.
@@ -10,6 +10,9 @@
 //   - LSE: https://www.londonstockexchange.com/equities-trading/business-days, the Millennium
 //     Exchange business parameters ("Trading Cycles"), and gov.uk bank holidays (England and
 //     Wales) for 2026 dates the exchange no longer lists.
+//   - ASX: https://www.asx.com.au/markets/market-resources/trading-hours-calendar/cash-market-trading-hours
+//     and its trading-calendar page (2026–2027). ANZAC Day 2026 falls on a Saturday with no
+//     substitute; on Monday 26 April 2027 the market is open.
 package calendar
 
 import (
@@ -53,6 +56,10 @@ func New() (*Calendar, error) {
 	if err != nil {
 		return nil, fmt.Errorf("calendar: %w", err)
 	}
+	syd, err := time.LoadLocation("Australia/Sydney")
+	if err != nil {
+		return nil, fmt.Errorf("calendar: %w", err)
+	}
 	return &Calendar{markets: map[domain.Market]market{
 		// Continuous trading 08:00–16:30 London (the closing auction runs to ~16:35; we do
 		// not trade in auctions). Half days: continuous trading to 12:30.
@@ -80,6 +87,22 @@ func New() (*Calendar, error) {
 				2027: {
 					closed: []string{"01-01", "01-18", "02-15", "03-26", "05-31", "06-18", "07-05", "09-06", "11-25", "12-24"},
 					early:  []string{"11-26"},
+				},
+			},
+		},
+		// Normal trading 09:59:45–16:00 Sydney after the opening auction; we use 10:00 and do
+		// not trade in the auctions. The last business day before Christmas and the last of
+		// the year close at 14:10.
+		domain.MarketASX: {
+			loc: syd, open: hm{10, 0}, close: hm{16, 0}, earlyClose: hm{14, 10},
+			years: map[int]yearTable{
+				2026: {
+					closed: []string{"01-01", "01-26", "04-03", "04-06", "06-08", "12-25", "12-28"},
+					early:  []string{"12-24", "12-31"},
+				},
+				2027: {
+					closed: []string{"01-01", "01-26", "03-26", "03-29", "06-14", "12-27", "12-28"},
+					early:  []string{"12-24", "12-31"},
 				},
 			},
 		},

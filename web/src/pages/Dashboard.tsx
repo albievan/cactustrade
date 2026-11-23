@@ -35,7 +35,7 @@ export function Dashboard() {
             <div className="card h-100">
               <div className="card-body">
                 <div className="d-flex justify-content-between">
-                  <span className="fw-semibold">{m.market === "LSE" ? "London (LSE)" : "New York (NYSE / NASDAQ)"}</span>
+                  <span className="fw-semibold">{m.market === "LSE" ? "London (LSE)" : m.market === "ASX" ? "Sydney (ASX)" : "New York (NYSE / NASDAQ)"}</span>
                   <span className={"badge " + (m.open ? "text-bg-success" : "text-bg-secondary")}>{m.open ? "open" : "closed"}</span>
                 </div>
                 <div className="small text-secondary mt-1">

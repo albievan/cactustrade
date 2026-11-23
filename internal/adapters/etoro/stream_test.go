@@ -197,6 +197,22 @@ func TestStreamWaitsForAnAccount(t *testing.T) {
 	}
 }
 
+func TestStreamRefusesOtherPlatforms(t *testing.T) {
+	_, s, conns := newStreamEnv(t)
+	s.Account = func(context.Context) (domain.Account, bool) {
+		return domain.Account{ID: domain.EnvAccountID, Name: "ISA", EnvKeys: true, Platform: domain.PlatformTrading212}, true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	s.Run(ctx)
+	if len(conns) != 0 {
+		t.Fatal("dialled eToro with a Trading 212 account")
+	}
+	if _, msg := s.Status(); !strings.Contains(msg, "not an eToro account") {
+		t.Fatalf("status = %q", msg)
+	}
+}
+
 func TestStreamWaitsForKeys(t *testing.T) {
 	e, s, conns := newStreamEnv(t)
 	_ = e.sec.Delete(context.Background(), domain.CredEtoroDemoAPIKey)

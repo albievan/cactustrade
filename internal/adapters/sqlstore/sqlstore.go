@@ -215,6 +215,9 @@ func (s *Store) PasswordResets() ports.PasswordResets { return passwordResets{s.
 // Accounts returns the eToro accounts repository.
 func (s *Store) Accounts() ports.Accounts { return accounts{s.db} }
 
+// EquitySnapshots returns the equity history.
+func (s *Store) EquitySnapshots() ports.EquitySnapshots { return equitySnapshots{s.db} }
+
 // Events returns the event feed.
 func (s *Store) Events() ports.Events { return events{s.db} }
 

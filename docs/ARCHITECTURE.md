@@ -39,6 +39,8 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `MarketCalendar` | `calendar` (LSE, NYSE/NASDAQ; tables 2026–2027) |
 | `MarketData` | `etoro.Feed` (WebSocket stream, REST fallback) |
 | `Broker` | `etoro.Client` (read-only until phase 4) |
+| `Holdings` | read-only holdings of platforms cactusTrade shows but does not trade: `trading212.Client` (GET account summary and positions only; own allowlist and allowlist test). eToro holdings are built in the app from `Broker.Portfolio` + instrument names |
+| `EquitySnapshots` (repository) | `sqlstore` (`equity_snapshots`, migration 00008): equity every 15 minutes per account, kept 400 days |
 | `SignalModel` | phase 3 |
 | `RiskEngine` | phase 4 |
 | `Reviewer` | `adapters/llm` (Anthropic SDK; OpenAI-compatible for the others); profiles in settings, keys `llm.<id>.api_key` |
@@ -57,6 +59,17 @@ limiter per account (eToro's limits are per key) and refuses calls without an ac
 watchlist, risk limits, agent state and events are per account; system events have no
 account and everyone sees them. The price stream authenticates with any account that has
 keys (market data is the same for all).
+
+## Platforms
+
+An account has a `platform`: `etoro` (default) or `trading212`. Only eToro accounts are traded.
+`app.account(...)` — the one resolver every trading, agent, scanner, watchlist, themes and risk
+use case goes through — refuses any other platform with `domain.ErrViewOnly` (403 "View-only
+account"), and a Trading 212 account can never be the "current" account. Managing an account
+(keys, sharing, rename, delete) and the *Overview* (`app.Overview`, `app.EquityHistory`) work on
+every platform. As defence in depth the eToro client and price stream refuse a non-eToro account
+before any I/O, so a Trading 212 key can never reach eToro. Trading 212 keys are named
+`t212.<id>.api_key` / `t212.<id>.api_secret` (HTTP Basic user and password).
 
 ## Two databases
 

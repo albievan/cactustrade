@@ -205,6 +205,7 @@ func (e LlmTestResultVerdict) Valid() bool {
 
 // Defines values for Market.
 const (
+	ASX   Market = "ASX"
 	Empty Market = ""
 	LSE   Market = "LSE"
 	NYSE  Market = "NYSE"
@@ -213,6 +214,8 @@ const (
 // Valid indicates whether the value is a known member of the Market enum.
 func (e Market) Valid() bool {
 	switch e {
+	case ASX:
+		return true
 	case Empty:
 		return true
 	case LSE:
@@ -236,6 +239,24 @@ func (e MeVia) Valid() bool {
 	case Apikey:
 		return true
 	case Session:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for Platform.
+const (
+	Etoro      Platform = "etoro"
+	Trading212 Platform = "trading212"
+)
+
+// Valid indicates whether the value is a known member of the Platform enum.
+func (e Platform) Valid() bool {
+	switch e {
+	case Etoro:
+		return true
+	case Trading212:
 		return true
 	default:
 		return false
@@ -374,10 +395,27 @@ type Account struct {
 	Name      string      `json:"name"`
 	OwnerId   string      `json:"ownerId"`
 	OwnerName string      `json:"ownerName"`
+
+	// Platform eToro (traded) or Trading 212 (view-only for now)
+	Platform Platform `json:"platform"`
 }
 
 // AccountAccess defines model for Account.Access.
 type AccountAccess string
+
+// AccountHoldings defines model for AccountHoldings.
+type AccountHoldings struct {
+	Account Account `json:"account"`
+
+	// Error why the account could not be read
+	Error *string `json:"error,omitempty"`
+
+	// Holdings Amounts are minor units of `currency`, the account's own currency.
+	Holdings *Holdings `json:"holdings,omitempty"`
+
+	// NoKeys the account's keys are not set yet
+	NoKeys bool `json:"noKeys"`
+}
 
 // AccountKeys defines model for AccountKeys.
 type AccountKeys struct {
@@ -467,6 +505,9 @@ type ChangePasswordRequest struct {
 type CreateAccountRequest struct {
 	Mode TradingMode `json:"mode"`
 	Name string      `json:"name"`
+
+	// Platform eToro (traded) or Trading 212 (view-only for now)
+	Platform *Platform `json:"platform,omitempty"`
 }
 
 // CreateApiKeyRequest defines model for CreateApiKeyRequest.
@@ -510,6 +551,21 @@ type CredentialSource string
 
 // CredentialName defines model for CredentialName.
 type CredentialName string
+
+// CurrencyTotal defines model for CurrencyTotal.
+type CurrencyTotal struct {
+	Accounts int `json:"accounts"`
+
+	// Cash An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Cash     MinorUnits `json:"cash"`
+	Currency string     `json:"currency"`
+
+	// Equity An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Equity MinorUnits `json:"equity"`
+
+	// UnrealisedPnl An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	UnrealisedPnl MinorUnits `json:"unrealisedPnl"`
+}
 
 // Decimal An exact decimal (prices and units, up to 6 places)
 type Decimal = string
@@ -561,6 +617,29 @@ type EmailSetupInput struct {
 // EmailSetupInputTls defines model for EmailSetupInput.Tls.
 type EmailSetupInputTls string
 
+// EquityPoint defines model for EquityPoint.
+type EquityPoint struct {
+	At time.Time `json:"at"`
+
+	// Cash An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Cash MinorUnits `json:"cash"`
+
+	// Equity An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Equity MinorUnits `json:"equity"`
+}
+
+// EquitySeries defines model for EquitySeries.
+type EquitySeries struct {
+	AccountId string      `json:"accountId"`
+	Currency  string      `json:"currency"`
+	Mode      TradingMode `json:"mode"`
+	Name      string      `json:"name"`
+
+	// Platform eToro (traded) or Trading 212 (view-only for now)
+	Platform Platform      `json:"platform"`
+	Points   []EquityPoint `json:"points"`
+}
+
 // Event defines model for Event.
 type Event struct {
 	Actor    string        `json:"actor"`
@@ -590,6 +669,60 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// Holding defines model for Holding.
+type Holding struct {
+	// AvgPrice An exact decimal (prices and units, up to 6 places)
+	AvgPrice Decimal `json:"avgPrice"`
+	Cfd      bool    `json:"cfd"`
+
+	// Cost An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Cost MinorUnits `json:"cost"`
+
+	// Currency the instrument's price currency ("" when unknown)
+	Currency string `json:"currency"`
+
+	// CurrentPrice An exact decimal (prices and units, up to 6 places)
+	CurrentPrice Decimal    `json:"currentPrice"`
+	Long         bool       `json:"long"`
+	Name         string     `json:"name"`
+	OpenedAt     *time.Time `json:"openedAt,omitempty"`
+
+	// Pnl An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Pnl MinorUnits `json:"pnl"`
+
+	// Quantity An exact decimal (prices and units, up to 6 places)
+	Quantity Decimal `json:"quantity"`
+	Symbol   string  `json:"symbol"`
+
+	// Value An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Value MinorUnits `json:"value"`
+}
+
+// Holdings Amounts are minor units of `currency`, the account's own currency.
+type Holdings struct {
+	AsOf time.Time `json:"asOf"`
+
+	// Cash An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Cash     MinorUnits `json:"cash"`
+	Currency string     `json:"currency"`
+
+	// Equity An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Equity MinorUnits `json:"equity"`
+
+	// Invested An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	Invested MinorUnits `json:"invested"`
+
+	// Platform eToro (traded) or Trading 212 (view-only for now)
+	Platform  Platform  `json:"platform"`
+	Positions []Holding `json:"positions"`
+
+	// RealisedPnl An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	RealisedPnl MinorUnits `json:"realisedPnl"`
+
+	// UnrealisedPnl An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	UnrealisedPnl MinorUnits `json:"unrealisedPnl"`
+}
+
 // Industry defines model for Industry.
 type Industry struct {
 	Id   int64  `json:"id"`
@@ -601,7 +734,7 @@ type Instrument struct {
 	ExchangeId   *int64 `json:"exchangeId,omitempty"`
 	InstrumentId int64  `json:"instrumentId"`
 
-	// Market LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+	// Market LSE, NYSE (NYSE and NASDAQ share a calendar), ASX or "" when not tradable here
 	Market Market `json:"market"`
 	Name   string `json:"name"`
 	Symbol string `json:"symbol"`
@@ -689,14 +822,14 @@ type LoginRequest struct {
 	Username string `json:"username"`
 }
 
-// Market LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+// Market LSE, NYSE (NYSE and NASDAQ share a calendar), ASX or "" when not tradable here
 type Market string
 
 // MarketSession defines model for MarketSession.
 type MarketSession struct {
 	Closes *time.Time `json:"closes,omitempty"`
 
-	// Market LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+	// Market LSE, NYSE (NYSE and NASDAQ share a calendar), ASX or "" when not tradable here
 	Market Market  `json:"market"`
 	Note   *string `json:"note,omitempty"`
 
@@ -719,6 +852,9 @@ type Me struct {
 
 // MeVia defines model for Me.Via.
 type MeVia string
+
+// MinorUnits An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+type MinorUnits = int64
 
 // NotifyPrefs defines model for NotifyPrefs.
 type NotifyPrefs struct {
@@ -743,6 +879,13 @@ type OutboxMail struct {
 	To        string     `json:"to"`
 }
 
+// Overview defines model for Overview.
+type Overview struct {
+	Accounts []AccountHoldings `json:"accounts"`
+	AsOf     time.Time         `json:"asOf"`
+	Totals   []CurrencyTotal   `json:"totals"`
+}
+
 // PasswordResetConfirm defines model for PasswordResetConfirm.
 type PasswordResetConfirm struct {
 	Password string `json:"password"`
@@ -753,6 +896,9 @@ type PasswordResetConfirm struct {
 type PasswordResetRequest struct {
 	Username string `json:"username"`
 }
+
+// Platform eToro (traded) or Trading 212 (view-only for now)
+type Platform string
 
 // Portfolio defines model for Portfolio.
 type Portfolio struct {
@@ -910,10 +1056,10 @@ type ScannerSwitch struct {
 
 // SetAccountKeysRequest defines model for SetAccountKeysRequest.
 type SetAccountKeysRequest struct {
-	// ApiKey eToro Public API Key (x-api-key); empty = keep
+	// ApiKey eToro Public API Key (x-api-key) or Trading 212 API key; empty = keep
 	ApiKey string `json:"apiKey"`
 
-	// UserKey eToro User Key (x-user-key); empty = keep
+	// UserKey eToro User Key (x-user-key) or Trading 212 API secret; empty = keep
 	UserKey string `json:"userKey"`
 }
 
@@ -1051,6 +1197,11 @@ type SearchInstrumentsParams struct {
 	Q string `form:"q" json:"q"`
 }
 
+// GetEquityHistoryParams defines parameters for GetEquityHistory.
+type GetEquityHistoryParams struct {
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
 // ListReviewsParams defines parameters for ListReviews.
 type ListReviewsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -1148,10 +1299,10 @@ type ServerInterface interface {
 	// RenameAccount Rename an account (owner)
 	// (PATCH /api/v1/accounts/{accountId})
 	RenameAccount(w http.ResponseWriter, r *http.Request, accountId string)
-	// GetAccountKeys Whether the account's eToro keys are set (never their values)
+	// GetAccountKeys Whether the account's keys are set (never their values)
 	// (GET /api/v1/accounts/{accountId}/keys)
 	GetAccountKeys(w http.ResponseWriter, r *http.Request, accountId string)
-	// SetAccountKeys Store the account's eToro key pair, write-only (owner, web UI); an empty value keeps the stored one
+	// SetAccountKeys Store the account's key pair, write-only (owner, web UI); an empty value keeps the stored one
 	// (PUT /api/v1/accounts/{accountId}/keys)
 	SetAccountKeys(w http.ResponseWriter, r *http.Request, accountId string)
 	// ListAccountShares Who the account is shared with (owner)
@@ -1250,7 +1401,7 @@ type ServerInterface interface {
 	// TestLlmProfile Ask a profile about a made-up trade (admin; nothing is traded)
 	// (POST /api/v1/llm/profiles/{id}/test)
 	TestLlmProfile(w http.ResponseWriter, r *http.Request, id string)
-	// GetMarketStatus Today's sessions for LSE and NYSE/NASDAQ (viewer)
+	// GetMarketStatus Today's sessions for LSE, NYSE/NASDAQ and ASX (viewer)
 	// (GET /api/v1/market/status)
 	GetMarketStatus(w http.ResponseWriter, r *http.Request)
 	// GetMyProfile Your e-mail address and e-mail notification choices
@@ -1259,6 +1410,12 @@ type ServerInterface interface {
 	// SetMyProfile Change your e-mail address and notification choices (web UI)
 	// (PUT /api/v1/me/profile)
 	SetMyProfile(w http.ResponseWriter, r *http.Request)
+	// GetOverview Every account you can view, on every platform — cash, equity, positions (viewer)
+	// (GET /api/v1/overview)
+	GetOverview(w http.ResponseWriter, r *http.Request)
+	// GetEquityHistory Equity over time of every account you can view (snapshots every 15 minutes, kept 400 days)
+	// (GET /api/v1/overview/history)
+	GetEquityHistory(w http.ResponseWriter, r *http.Request, params GetEquityHistoryParams)
 	// RequestPasswordReset E-mail a password-reset link to the user's address (same answer whether or not the user exists)
 	// (POST /api/v1/public/password-reset)
 	RequestPasswordReset(w http.ResponseWriter, r *http.Request)
@@ -2167,6 +2324,53 @@ func (siw *ServerInterfaceWrapper) SetMyProfile(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetOverview operation middleware
+func (siw *ServerInterfaceWrapper) GetOverview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOverview(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEquityHistory operation middleware
+func (siw *ServerInterfaceWrapper) GetEquityHistory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEquityHistoryParams
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEquityHistory(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RequestPasswordReset operation middleware
 func (siw *ServerInterfaceWrapper) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 
@@ -2753,6 +2957,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ListAccountShares)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ShareAccount)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares/{userId}", wrapper.UnshareAccount)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/overview", wrapper.GetOverview)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/overview/history", wrapper.GetEquityHistory)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/broker/test", wrapper.TestBrokerConnection)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/broker/portfolio", wrapper.GetPortfolio)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/market/status", wrapper.GetMarketStatus)

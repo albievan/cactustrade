@@ -67,7 +67,15 @@ linters:
           list-mode: lax
           deny:
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/etoro", desc: "the LLM never calls the broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/trading212", desc: "the LLM never calls a broker" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/secretstore", desc: "the LLM adapter gets its key injected, nothing more" }
+        # The Trading 212 client is read-only and stands alone: it never reaches eToro.
+        trading212:
+          files: ["**/internal/adapters/trading212/**"]
+          list-mode: lax
+          deny:
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/etoro", desc: "Trading 212 keys never go to eToro" }
+            - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
   exclusions:
     generated: lax
     presets: [comments, common-false-positives, legacy, std-error-handling]

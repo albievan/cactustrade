@@ -165,6 +165,9 @@ func (s *Stream) session(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("eToro stream: no account with keys yet: %w: %w", domain.ErrCredentialsMissing, domain.ErrUnavailable)
 	}
+	if !acct.Tradable() { // never authenticate with a Trading 212 account's keys
+		return fmt.Errorf("eToro stream: %s is not an eToro account: %w", acct.Name, domain.ErrUnavailable)
+	}
 	mode := domain.ModeDemo
 	if acct.Mode == domain.ModeReal {
 		mode = domain.ModeReal

@@ -185,6 +185,9 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
+		if !s.marketOpen(it.in.Market) {
+			continue // reviewed when its own market trades, not on stale overnight bars
+		}
 		r := domain.Review{AccountID: v.ID, Instrument: it.in.ID, Symbol: it.in.Symbol, Theme: it.theme, At: s.d.Clock.Now().UTC()}
 		bars, err := s.d.Market.Candles(bctx, it.in.ID, scanInterval, scanBars)
 		if err != nil {
@@ -199,8 +202,7 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 			r.Checks = append(r.Checks, domain.ReviewCheck{Rule: c.Rule, Pass: c.Pass, Detail: c.Detail})
 		}
 		if s.d.Calendar != nil {
-			_, _, trading, cerr := s.d.Calendar.Session(it.in.Market, s.d.Clock.Now())
-			r.Checks = append(r.Checks, domain.ReviewCheck{Rule: string(it.in.Market) + " trades today", Pass: trading && cerr == nil})
+			r.Checks = append(r.Checks, domain.ReviewCheck{Rule: string(it.in.Market) + " is in session", Pass: true})
 		}
 		if d.Candidate == nil {
 			r.Outcome, r.Summary = domain.ReviewNoSignal, d.Reason
@@ -337,6 +339,17 @@ func (s *Service) ScanNow(ctx context.Context, p Principal) (ScanResult, error) 
 	return res, nil
 }
 
+// marketOpen reports whether market m is in its session now. Without a calendar (tests,
+// tools) every market counts as open; an unknown year or market is closed (fail closed).
+func (s *Service) marketOpen(m domain.Market) bool {
+	if s.d.Calendar == nil {
+		return true
+	}
+	now := s.d.Clock.Now()
+	open, closeAt, trading, err := s.d.Calendar.Session(m, now)
+	return err == nil && trading && !now.Before(open) && now.Before(closeAt)
+}
+
 // ScanAll runs the scanner for every account that has it on (the background runner).
 func (s *Service) ScanAll(ctx context.Context) {
 	accts, err := s.d.Store.Accounts().List(ctx)
@@ -345,8 +358,8 @@ func (s *Service) ScanAll(ctx context.Context) {
 		return
 	}
 	for _, a := range accts {
-		if ctx.Err() != nil || !s.ScannerEnabled(ctx, a.ID) {
-			continue
+		if ctx.Err() != nil || !a.Tradable() || !s.ScannerEnabled(ctx, a.ID) {
+			continue // view-only platforms (Trading 212) are never scanned
 		}
 		res, err := s.scan(ctx, domain.AccountView{Account: a, Access: domain.AccessOwner})
 		if err != nil {

@@ -36,9 +36,25 @@ func (s *Service) Accounts(ctx context.Context, p Principal) ([]domain.AccountVi
 	return vs, nil
 }
 
-// account resolves an account for the caller and checks the access it needs. id "" means
-// the caller's current account. An account the caller cannot see is "not found".
+// account resolves an account the caller trades or works on (agent, scanner, watchlist,
+// themes, limits, portfolio, orders) and checks the access it needs. id "" means the
+// caller's current account. An account the caller cannot see is "not found"; an account on a
+// view-only platform (Trading 212) is refused with domain.ErrViewOnly. This is the one place
+// that keeps view-only accounts out of every trading path.
 func (s *Service) account(ctx context.Context, p Principal, id string, need domain.AccountAccess) (domain.AccountView, error) {
+	v, err := s.anyAccount(ctx, p, id, need)
+	if err != nil {
+		return domain.AccountView{}, err
+	}
+	if !v.Tradable() {
+		return domain.AccountView{}, fmt.Errorf("%s: %w", v.Name, domain.ErrViewOnly)
+	}
+	return v, nil
+}
+
+// anyAccount resolves an account on any platform for managing it (rename, keys, sharing,
+// delete) or viewing it in the overview. id "" means the caller's current account.
+func (s *Service) anyAccount(ctx context.Context, p Principal, id string, need domain.AccountAccess) (domain.AccountView, error) {
 	vs, err := s.Accounts(ctx, p)
 	if err != nil {
 		return domain.AccountView{}, err
@@ -51,7 +67,7 @@ func (s *Service) account(ctx context.Context, p Principal, id string, need doma
 	}
 	i := slices.IndexFunc(vs, func(v domain.AccountView) bool { return v.ID == id })
 	if i < 0 {
-		return domain.AccountView{}, fmt.Errorf("eToro account: %w", domain.ErrNotFound)
+		return domain.AccountView{}, fmt.Errorf("account: %w", domain.ErrNotFound)
 	}
 	if !vs[i].Access.AtLeast(need) {
 		return domain.AccountView{}, fmt.Errorf("you need %s access to %s: %w", need, vs[i].Name, domain.ErrForbidden)
@@ -59,7 +75,11 @@ func (s *Service) account(ctx context.Context, p Principal, id string, need doma
 	return vs[i], nil
 }
 
+// currentAccountID is the caller's chosen account, else the first they own, else the first
+// shared with them. Only tradable (eToro) accounts can be current: a Trading 212 account is
+// shown in the overview only.
 func (s *Service) currentAccountID(ctx context.Context, p Principal, vs []domain.AccountView) string {
+	vs = slices.DeleteFunc(slices.Clone(vs), func(v domain.AccountView) bool { return !v.Tradable() })
 	if v, err := s.d.Store.Settings().Get(ctx, currentAccountKey(p.UserID)); err == nil {
 		if slices.ContainsFunc(vs, func(a domain.AccountView) bool { return a.ID == v }) {
 			return v
@@ -101,6 +121,20 @@ func brokerCtx(ctx context.Context, a domain.AccountView) context.Context {
 // CreateAccount adds an eToro account owned by the caller (operator or admin). A real
 // account can be added and its keys stored, but it trades only after the phase-7 gate.
 func (s *Service) CreateAccount(ctx context.Context, p Principal, name string, mode domain.TradingMode) (domain.AccountView, error) {
+	return s.CreateAccountOn(ctx, p, domain.PlatformEtoro, name, mode)
+}
+
+// platformLabel names a platform for people.
+func platformLabel(pl domain.Platform) string {
+	if pl == domain.PlatformTrading212 {
+		return "Trading 212"
+	}
+	return "eToro"
+}
+
+// CreateAccountOn adds an account on a platform ("" = eToro) owned by the caller (operator or
+// admin). A Trading 212 account is view-only: it appears in the overview and nowhere else.
+func (s *Service) CreateAccountOn(ctx context.Context, p Principal, platform domain.Platform, name string, mode domain.TradingMode) (domain.AccountView, error) {
 	if err := s.authorize(p, domain.PermAgentControl); err != nil {
 		return domain.AccountView{}, err
 	}
@@ -111,19 +145,22 @@ func (s *Service) CreateAccount(ctx context.Context, p Principal, name string, m
 	if mode != domain.ModeDemo && mode != domain.ModeReal {
 		return domain.AccountView{}, domain.Invalid("mode", "demo or real")
 	}
+	if platform, err = domain.ParsePlatform(string(platform)); err != nil {
+		return domain.AccountView{}, err
+	}
 	now := s.d.Clock.Now().UTC()
-	a := domain.Account{ID: s.d.Random.ID(), Name: name, OwnerID: p.UserID, OwnerName: p.Username, Mode: mode, CreatedAt: now, UpdatedAt: now}
+	a := domain.Account{ID: s.d.Random.ID(), Name: name, OwnerID: p.UserID, OwnerName: p.Username, Mode: mode, Platform: platform, CreatedAt: now, UpdatedAt: now}
 	if err := s.d.Store.Accounts().Create(ctx, a); err != nil {
 		return domain.AccountView{}, fmt.Errorf("app.CreateAccount: %w", err)
 	}
-	s.audit(ctx, p, "account.create", a.ID, "name="+name+" mode="+string(mode))
-	s.emitFor(ctx, a.ID, p.Username, "account.created", domain.SeverityInfo, "eToro account "+name+" added ("+string(mode)+")", "")
+	s.audit(ctx, p, "account.create", a.ID, "name="+name+" mode="+string(mode)+" platform="+string(platform))
+	s.emitFor(ctx, a.ID, p.Username, "account.created", domain.SeverityInfo, platformLabel(platform)+" account "+name+" added ("+string(mode)+")", "")
 	return domain.AccountView{Account: a, Access: domain.AccessOwner}, nil
 }
 
 // RenameAccount changes an account's name (owner).
 func (s *Service) RenameAccount(ctx context.Context, p Principal, id, name string) (domain.AccountView, error) {
-	v, err := s.account(ctx, p, id, domain.AccessOwner)
+	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
 	if err != nil {
 		return domain.AccountView{}, err
 	}
@@ -141,7 +178,7 @@ func (s *Service) RenameAccount(ctx context.Context, p Principal, id, name strin
 // DeleteAccount removes an account, its keys, shares and watchlist (owner, web session).
 // The environment account comes back on the next start while its variables are set.
 func (s *Service) DeleteAccount(ctx context.Context, p Principal, id string) error {
-	v, err := s.account(ctx, p, id, domain.AccessOwner)
+	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
 	if err != nil {
 		return err
 	}
@@ -163,7 +200,7 @@ func (s *Service) DeleteAccount(ctx context.Context, p Principal, id string) err
 		return fmt.Errorf("app.DeleteAccount: %w", err)
 	}
 	s.audit(ctx, p, "account.delete", v.ID, "name="+v.Name)
-	s.emit(ctx, p.Username, "account.deleted", domain.SeverityWarning, "eToro account "+v.Name+" deleted", "")
+	s.emit(ctx, p.Username, "account.deleted", domain.SeverityWarning, platformLabel(v.OnPlatform())+" account "+v.Name+" deleted", "")
 	return nil
 }
 
@@ -175,7 +212,7 @@ type AccountKeys struct {
 
 // AccountKeysStatus reports the key pair's state (view).
 func (s *Service) AccountKeysStatus(ctx context.Context, p Principal, id string) (AccountKeys, error) {
-	v, err := s.account(ctx, p, id, domain.AccessView)
+	v, err := s.anyAccount(ctx, p, id, domain.AccessView)
 	if err != nil {
 		return AccountKeys{}, err
 	}
@@ -189,10 +226,11 @@ func (s *Service) AccountKeysStatus(ctx context.Context, p Principal, id string)
 	return AccountKeys{APIKeySet: aok, UserKeySet: uok, FromEnvironment: a.Source == ports.SourceEnv || u.Source == ports.SourceEnv}, nil
 }
 
-// SetAccountKeys stores an account's eToro key pair, write-only (owner, web session).
-// Either value may be empty to keep the stored one.
+// SetAccountKeys stores an account's key pair, write-only (owner, web session): for eToro the
+// API key and the user key, for Trading 212 the API key and the API secret (userKey). Either
+// value may be empty to keep the stored one.
 func (s *Service) SetAccountKeys(ctx context.Context, p Principal, id, apiKey, userKey string) error {
-	v, err := s.account(ctx, p, id, domain.AccessOwner)
+	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
 	if err != nil {
 		return err
 	}
@@ -221,7 +259,7 @@ func (s *Service) SetAccountKeys(ctx context.Context, p Principal, id, apiKey, u
 
 // AccountShares lists who an account is shared with (owner).
 func (s *Service) AccountShares(ctx context.Context, p Principal, id string) ([]domain.AccountShare, error) {
-	v, err := s.account(ctx, p, id, domain.AccessOwner)
+	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +268,7 @@ func (s *Service) AccountShares(ctx context.Context, p Principal, id string) ([]
 
 // ShareAccount gives another user view or trade access (owner, web session).
 func (s *Service) ShareAccount(ctx context.Context, p Principal, id, username string, access domain.AccountAccess) error {
-	v, err := s.account(ctx, p, id, domain.AccessOwner)
+	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
 	if err != nil {
 		return err
 	}
@@ -260,7 +298,7 @@ func (s *Service) ShareAccount(ctx context.Context, p Principal, id, username st
 
 // UnshareAccount removes a user's access (owner, web session).
 func (s *Service) UnshareAccount(ctx context.Context, p Principal, id, userID string) error {
-	v, err := s.account(ctx, p, id, domain.AccessOwner)
+	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,7 @@ import (
 func toAccount(v domain.AccountView) Account {
 	return Account{
 		Id: v.ID, Name: v.Name, OwnerId: v.OwnerID, OwnerName: v.OwnerName, Mode: TradingMode(v.Mode),
-		EnvKeys: v.EnvKeys, Access: AccountAccess(v.Access), CreatedAt: v.CreatedAt,
+		Platform: Platform(v.OnPlatform()), EnvKeys: v.EnvKeys, Access: AccountAccess(v.Access), CreatedAt: v.CreatedAt,
 	}
 }
 
@@ -33,7 +33,11 @@ func (s *Server) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	v, err := s.svc.CreateAccount(r.Context(), state(r).principal, req.Name, domain.TradingMode(req.Mode))
+	platform := domain.PlatformEtoro
+	if req.Platform != nil {
+		platform = domain.Platform(*req.Platform)
+	}
+	v, err := s.svc.CreateAccountOn(r.Context(), state(r).principal, platform, req.Name, domain.TradingMode(req.Mode))
 	if err != nil {
 		s.fail(w, r, err)
 		return

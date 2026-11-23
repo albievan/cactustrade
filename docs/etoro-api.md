@@ -100,8 +100,13 @@ to be transferred from the account balance into the position margin." cactusTrad
   entry has `settlementType: real`, `direction: long|buy`, `1` in `leverageValues` and
   `isPotential: false`. The meaning of `isPotential` is not documented, so it counts as
   "not offered" (fail closed) until checked live (2.7).
-- **Market** is inferred from the symbol: `XXX.L` = LSE; plain tickers and US share-class
-  suffixes (`BRK.B`) = NYSE/NASDAQ; any other suffix is unsupported. The exchanges endpoint
+- **Market** is inferred from the symbol: `XXX.L` = LSE; `XXX.ASX` = ASX (eToro lists e.g.
+  `CBA.ASX`, priced in AUD — etoro.com/markets/cba.asx, 2026-11-23; whether a given ASX share is
+  offered as a real share long x1 is left to the eligibility check, so a CFD-only listing is
+  refused); plain tickers and US share-class suffixes (`BRK.B`) = NYSE/NASDAQ; any other
+  suffix is unsupported. Orders are sized by stop distance as a fraction of the price, so a
+  quote currency other than USD (GBX/GBP, AUD) does not change the size; P&L and amounts
+  are in the account's USD as eToro reports them. The exchanges endpoint
   has no documented response schema, so exchange ids are stored but not relied on.
 - **Errors**: gateway `{errorCode, errorMessage}`, API `{success:false, error:{code,message}}`
   and RFC 7807 problem details are all parsed. 404 → not found; anything else → unavailable

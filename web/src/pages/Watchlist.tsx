@@ -45,7 +45,7 @@ export function Watchlist() {
     <>
       <h1 className="h3">Watchlist</h1>
       <p className="text-secondary">
-        Shares the agent may trade: London (LSE) and New York (NYSE / NASDAQ) only, bought as the real share at leverage 1.
+        Shares the agent may trade: London (LSE), New York (NYSE / NASDAQ) and Sydney (ASX; search e.g. “CBA.ASX”) only, bought as the real share at leverage 1.
       </p>
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
       {admin && <AddInstrument onAdded={load} />}

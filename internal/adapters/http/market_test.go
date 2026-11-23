@@ -75,7 +75,7 @@ func TestBrokerAndMarketEndpoints(t *testing.T) {
 		t.Fatalf("portfolio %d %v", code, m)
 	}
 	var sessions []map[string]any
-	if code := x.getJSON("/api/v1/market/status", &sessions); code != 200 || len(sessions) != 2 || sessions[0]["open"] != true || sessions[1]["trading"] != false {
+	if code := x.getJSON("/api/v1/market/status", &sessions); code != 200 || len(sessions) != 3 || sessions[2]["market"] != "ASX" || sessions[0]["open"] != true || sessions[1]["trading"] != false {
 		t.Fatalf("market status %d %v", code, sessions)
 	}
 	var found []map[string]any

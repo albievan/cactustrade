@@ -22,6 +22,13 @@ func (fixedCalendar) Session(m domain.Market, at time.Time) (time.Time, time.Tim
 	return time.Date(y, mo, d, 8, 0, 0, 0, time.UTC), time.Date(y, mo, d, 16, 30, 0, 0, time.UTC), true, nil
 }
 
+// openCalendar: every market trades around the clock (scanner tests).
+type openCalendar struct{}
+
+func (openCalendar) Session(_ domain.Market, at time.Time) (time.Time, time.Time, bool, error) {
+	return at.Add(-time.Hour), at.Add(time.Hour), true, nil
+}
+
 func withBroker(t *testing.T) (*env, *fakes.Broker) {
 	t.Helper()
 	e := newEnv(t)
@@ -131,7 +138,7 @@ func TestPortfolioAndMarketStatus(t *testing.T) {
 	}
 	e.clock.T = time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
 	ms, err := e.svc.MarketStatus(ctx, viewer)
-	if err != nil || len(ms) != 2 {
+	if err != nil || len(ms) != 3 || ms[2].Market != domain.MarketASX {
 		t.Fatalf("status = %+v %v", ms, err)
 	}
 	if !ms[0].Trading || !ms[0].Open || ms[0].Market != domain.MarketLSE {
