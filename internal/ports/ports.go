@@ -76,6 +76,22 @@ type Settings interface {
 	Set(ctx context.Context, key, value string, at time.Time) error
 }
 
+// Instruments caches eToro instrument metadata with the last eligibility check.
+type Instruments interface {
+	// Upsert stores the instrument and its eligibility (el.Instrument must equal in.ID).
+	Upsert(ctx context.Context, in domain.Instrument, el domain.Eligibility, at time.Time) error
+	Get(ctx context.Context, id domain.InstrumentID) (domain.Instrument, domain.Eligibility, error)
+}
+
+// Watchlist holds the instruments the agent may trade.
+type Watchlist interface {
+	// Add puts a cached instrument on the list: ErrConflict when already there, ErrNotFound
+	// when the instrument is not cached.
+	Add(ctx context.Context, id domain.InstrumentID, addedBy string, at time.Time) error
+	Remove(ctx context.Context, id domain.InstrumentID) error
+	List(ctx context.Context) ([]domain.WatchItem, error) // by symbol
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -84,6 +100,8 @@ type Store interface {
 	Secrets() Secrets
 	Audit() Audit
 	Settings() Settings
+	Instruments() Instruments
+	Watchlist() Watchlist
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
@@ -151,20 +169,25 @@ type MarketCalendar interface {
 // Trading. Implemented from phase 2 on.
 // ---------------------------------------------------------------------------------------
 
-// MarketData reads prices (eToro REST/WebSocket).
+// MarketData reads prices and instrument metadata (eToro REST/WebSocket).
 type MarketData interface {
 	Quotes(ctx context.Context, ids []domain.InstrumentID) ([]domain.Quote, error)
+	// Candles returns up to count bars of the given interval, oldest first.
 	Candles(ctx context.Context, id domain.InstrumentID, interval time.Duration, count int) ([]domain.Candle, error)
 	Search(ctx context.Context, query string) ([]domain.Instrument, error)
+	Instruments(ctx context.Context, ids []domain.InstrumentID) ([]domain.Instrument, error)
 }
 
 // Broker is the only door to the eToro account. It exposes no money-movement operation by
 // design, and its open order takes no leverage, direction or settlement parameter.
 type Broker interface {
 	Portfolio(ctx context.Context) (domain.Portfolio, error)
-	// EligibleRealLong reports whether the instrument can be bought as a real share at
-	// leverage 1.
-	EligibleRealLong(ctx context.Context, id domain.InstrumentID) (bool, error)
+	// Eligibility reports, per instrument, whether it can be bought as a real share, long,
+	// at leverage 1 (checked before the first trade in an instrument).
+	Eligibility(ctx context.Context, ids []domain.InstrumentID) ([]domain.Eligibility, error)
+	// Costs is eToro's cost breakdown (spread, markup, fees, tax) for buying amount of id.
+	Costs(ctx context.Context, id domain.InstrumentID, amount domain.Cents) ([]domain.CostItem, error)
+	TradeHistory(ctx context.Context, since time.Time) ([]domain.ClosedTrade, error)
 	Open(ctx context.Context, o domain.OrderIntent) (domain.OrderStatus, error)
 	Lookup(ctx context.Context, requestID string) (domain.OrderStatus, error)
 	Cancel(ctx context.Context, orderID int64) error

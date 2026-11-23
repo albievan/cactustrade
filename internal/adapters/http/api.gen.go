@@ -101,6 +101,27 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for Market.
+const (
+	Empty Market = ""
+	LSE   Market = "LSE"
+	NYSE  Market = "NYSE"
+)
+
+// Valid indicates whether the value is a known member of the Market enum.
+func (e Market) Valid() bool {
+	switch e {
+	case Empty:
+		return true
+	case LSE:
+		return true
+	case NYSE:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MeVia.
 const (
 	Apikey  MeVia = "apikey"
@@ -176,6 +197,11 @@ func (e TradingMode) Valid() bool {
 	}
 }
 
+// AddWatchRequest defines model for AddWatchRequest.
+type AddWatchRequest struct {
+	InstrumentId int64 `json:"instrumentId"`
+}
+
 // AgentState defines model for AgentState.
 type AgentState string
 
@@ -201,6 +227,30 @@ type AuditEntry struct {
 	RemoteIp string    `json:"remoteIp"`
 	Target   string    `json:"target"`
 }
+
+// BrokerCheck defines model for BrokerCheck.
+type BrokerCheck struct {
+	// AvailableCashCents US dollars in cents (the eToro account currency is USD)
+	AvailableCashCents *Cents    `json:"availableCashCents,omitempty"`
+	CheckedAt          time.Time `json:"checkedAt"`
+
+	// ConfiguredKeys false when the mode's key pair is not set
+	ConfiguredKeys bool `json:"configuredKeys"`
+
+	// EquityCents US dollars in cents (the eToro account currency is USD)
+	EquityCents *Cents      `json:"equityCents,omitempty"`
+	Error       *string     `json:"error,omitempty"`
+	LatencyMs   int64       `json:"latencyMs"`
+	Mode        TradingMode `json:"mode"`
+
+	// NonConforming positions that are not real shares
+	NonConforming *int `json:"nonConforming,omitempty"`
+	Ok            bool `json:"ok"`
+	Positions     *int `json:"positions,omitempty"`
+}
+
+// Cents US dollars in cents (the eToro account currency is USD)
+type Cents = int64
 
 // ChangePasswordRequest defines model for ChangePasswordRequest.
 type ChangePasswordRequest struct {
@@ -250,6 +300,21 @@ type CredentialSource string
 // CredentialName defines model for CredentialName.
 type CredentialName string
 
+// Decimal An exact decimal (prices and units, up to 6 places)
+type Decimal = string
+
+// Eligibility defines model for Eligibility.
+type Eligibility struct {
+	CheckedAt *time.Time `json:"checkedAt,omitempty"`
+
+	// MinPositionCents US dollars in cents (the eToro account currency is USD)
+	MinPositionCents *Cents `json:"minPositionCents,omitempty"`
+
+	// RealLong can be bought as a real share
+	RealLong bool    `json:"realLong"`
+	Reason   *string `json:"reason,omitempty"`
+}
+
 // Health defines model for Health.
 type Health struct {
 	Detail *string      `json:"detail,omitempty"`
@@ -259,10 +324,41 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// Instrument defines model for Instrument.
+type Instrument struct {
+	ExchangeId   *int64 `json:"exchangeId,omitempty"`
+	InstrumentId int64  `json:"instrumentId"`
+
+	// Market LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+	Market Market `json:"market"`
+	Name   string `json:"name"`
+	Symbol string `json:"symbol"`
+	Type   string `json:"type"`
+}
+
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
+}
+
+// Market LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+type Market string
+
+// MarketSession defines model for MarketSession.
+type MarketSession struct {
+	Closes *time.Time `json:"closes,omitempty"`
+
+	// Market LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+	Market Market  `json:"market"`
+	Note   *string `json:"note,omitempty"`
+
+	// Open in its trading session right now
+	Open  bool       `json:"open"`
+	Opens *time.Time `json:"opens,omitempty"`
+
+	// Trading the market trades today (its local date)
+	Trading bool `json:"trading"`
 }
 
 // Me defines model for Me.
@@ -276,6 +372,49 @@ type Me struct {
 
 // MeVia defines model for Me.Via.
 type MeVia string
+
+// Portfolio defines model for Portfolio.
+type Portfolio struct {
+	AsOf time.Time `json:"asOf"`
+
+	// AvailableCashCents US dollars in cents (the eToro account currency is USD)
+	AvailableCashCents Cents `json:"availableCashCents"`
+
+	// EquityCents US dollars in cents (the eToro account currency is USD)
+	EquityCents Cents       `json:"equityCents"`
+	Mode        TradingMode `json:"mode"`
+
+	// PendingOpenCents US dollars in cents (the eToro account currency is USD)
+	PendingOpenCents Cents      `json:"pendingOpenCents"`
+	Positions        []Position `json:"positions"`
+}
+
+// Position defines model for Position.
+type Position struct {
+	// AmountCents US dollars in cents (the eToro account currency is USD)
+	AmountCents  Cents `json:"amountCents"`
+	InstrumentId int64 `json:"instrumentId"`
+	Leverage     int   `json:"leverage"`
+	Long         bool  `json:"long"`
+
+	// OpenRate An exact decimal (prices and units, up to 6 places)
+	OpenRate   Decimal   `json:"openRate"`
+	OpenedAt   time.Time `json:"openedAt"`
+	PositionId int64     `json:"positionId"`
+	RealAsset  bool      `json:"realAsset"`
+
+	// StopLossRate An exact decimal (prices and units, up to 6 places)
+	StopLossRate *Decimal `json:"stopLossRate,omitempty"`
+
+	// TakeProfitRate An exact decimal (prices and units, up to 6 places)
+	TakeProfitRate *Decimal `json:"takeProfitRate,omitempty"`
+
+	// Units An exact decimal (prices and units, up to 6 places)
+	Units Decimal `json:"units"`
+
+	// UnrealisedPnlCents US dollars in cents (the eToro account currency is USD)
+	UnrealisedPnlCents Cents `json:"unrealisedPnlCents"`
+}
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -291,6 +430,18 @@ type Problem struct {
 // PublicStatus defines model for PublicStatus.
 type PublicStatus struct {
 	Version string `json:"version"`
+}
+
+// Quote defines model for Quote.
+type Quote struct {
+	// Ask An exact decimal (prices and units, up to 6 places)
+	Ask Decimal   `json:"ask"`
+	At  time.Time `json:"at"`
+
+	// Bid An exact decimal (prices and units, up to 6 places)
+	Bid          Decimal `json:"bid"`
+	Delayed      bool    `json:"delayed"`
+	InstrumentId int64   `json:"instrumentId"`
 }
 
 // Role defines model for Role.
@@ -341,9 +492,22 @@ type User struct {
 	Username           string    `json:"username"`
 }
 
+// WatchItem defines model for WatchItem.
+type WatchItem struct {
+	AddedAt     time.Time   `json:"addedAt"`
+	AddedBy     string      `json:"addedBy"`
+	Eligibility Eligibility `json:"eligibility"`
+	Instrument  Instrument  `json:"instrument"`
+}
+
 // ListAuditParams defines parameters for ListAudit.
 type ListAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// SearchInstrumentsParams defines parameters for SearchInstruments.
+type SearchInstrumentsParams struct {
+	Q string `form:"q" json:"q"`
 }
 
 // CreateApiKeyJSONRequestBody defines body for CreateApiKey for application/json ContentType.
@@ -363,6 +527,9 @@ type CreateUserJSONRequestBody = CreateUserRequest
 
 // UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
 type UpdateUserJSONRequestBody = UpdateUserRequest
+
+// AddToWatchlistJSONRequestBody defines body for AddToWatchlist for application/json ContentType.
+type AddToWatchlistJSONRequestBody = AddWatchRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -390,6 +557,12 @@ type ServerInterface interface {
 	// ChangePassword Change your own password (ends your other sessions)
 	// (POST /api/v1/auth/password)
 	ChangePassword(w http.ResponseWriter, r *http.Request)
+	// GetPortfolio The eToro account now — cash, positions, pending orders (viewer)
+	// (GET /api/v1/broker/portfolio)
+	GetPortfolio(w http.ResponseWriter, r *http.Request)
+	// TestBrokerConnection Test the eToro connection with the current mode's keys (admin; one read-only call)
+	// (POST /api/v1/broker/test)
+	TestBrokerConnection(w http.ResponseWriter, r *http.Request)
 	// ListCredentials Which credentials are set (never their values)
 	// (GET /api/v1/credentials)
 	ListCredentials(w http.ResponseWriter, r *http.Request)
@@ -399,6 +572,12 @@ type ServerInterface interface {
 	// SetCredential Set a credential (admin, web UI session only); write-only
 	// (PUT /api/v1/credentials/{name})
 	SetCredential(w http.ResponseWriter, r *http.Request, name CredentialName)
+	// SearchInstruments Search eToro instruments by name or symbol (admin)
+	// (GET /api/v1/instruments/search)
+	SearchInstruments(w http.ResponseWriter, r *http.Request, params SearchInstrumentsParams)
+	// GetMarketStatus Today's sessions for LSE and NYSE/NASDAQ (viewer)
+	// (GET /api/v1/market/status)
+	GetMarketStatus(w http.ResponseWriter, r *http.Request)
 	// GetPublicStatus What the sign-in page needs before anyone is signed in
 	// (GET /api/v1/public/status)
 	GetPublicStatus(w http.ResponseWriter, r *http.Request)
@@ -417,6 +596,18 @@ type ServerInterface interface {
 	// UpdateUser Change a user's role, enabled state or password (admin)
 	// (PATCH /api/v1/users/{userId})
 	UpdateUser(w http.ResponseWriter, r *http.Request, userId string)
+	// ListWatchlist The instruments the agent may trade (viewer)
+	// (GET /api/v1/watchlist)
+	ListWatchlist(w http.ResponseWriter, r *http.Request)
+	// AddToWatchlist Add a share after eToro confirms it can be bought as a real share at leverage 1 (admin)
+	// (POST /api/v1/watchlist)
+	AddToWatchlist(w http.ResponseWriter, r *http.Request)
+	// ListWatchlistQuotes Current bid/ask of the watchlist (viewer)
+	// (GET /api/v1/watchlist/quotes)
+	ListWatchlistQuotes(w http.ResponseWriter, r *http.Request)
+	// RemoveFromWatchlist Remove an instrument (admin)
+	// (DELETE /api/v1/watchlist/{instrumentId})
+	RemoveFromWatchlist(w http.ResponseWriter, r *http.Request, instrumentId int64)
 	// Healthz Liveness (the process is serving)
 	// (GET /healthz)
 	Healthz(w http.ResponseWriter, r *http.Request)
@@ -577,6 +768,34 @@ func (siw *ServerInterfaceWrapper) ChangePassword(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetPortfolio operation middleware
+func (siw *ServerInterfaceWrapper) GetPortfolio(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPortfolio(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestBrokerConnection operation middleware
+func (siw *ServerInterfaceWrapper) TestBrokerConnection(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestBrokerConnection(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListCredentials operation middleware
 func (siw *ServerInterfaceWrapper) ListCredentials(w http.ResponseWriter, r *http.Request) {
 
@@ -634,6 +853,53 @@ func (siw *ServerInterfaceWrapper) SetCredential(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetCredential(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SearchInstruments operation middleware
+func (siw *ServerInterfaceWrapper) SearchInstruments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchInstrumentsParams
+
+	// ------------- Required query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchInstruments(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMarketStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetMarketStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMarketStatus(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -742,6 +1008,74 @@ func (siw *ServerInterfaceWrapper) UpdateUser(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateUser(w, r, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWatchlist operation middleware
+func (siw *ServerInterfaceWrapper) ListWatchlist(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWatchlist(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddToWatchlist operation middleware
+func (siw *ServerInterfaceWrapper) AddToWatchlist(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddToWatchlist(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWatchlistQuotes operation middleware
+func (siw *ServerInterfaceWrapper) ListWatchlistQuotes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWatchlistQuotes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveFromWatchlist operation middleware
+func (siw *ServerInterfaceWrapper) RemoveFromWatchlist(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "instrumentId" -------------
+	var instrumentId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "instrumentId", r.PathValue("instrumentId"), &instrumentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "instrumentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveFromWatchlist(w, r, instrumentId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -917,6 +1251,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/credentials", wrapper.ListCredentials)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/credentials/{name}", wrapper.DeleteCredential)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/credentials/{name}", wrapper.SetCredential)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/broker/test", wrapper.TestBrokerConnection)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/broker/portfolio", wrapper.GetPortfolio)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/market/status", wrapper.GetMarketStatus)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/instruments/search", wrapper.SearchInstruments)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist", wrapper.ListWatchlist)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist", wrapper.AddToWatchlist)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/quotes", wrapper.ListWatchlistQuotes)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/watchlist/{instrumentId}", wrapper.RemoveFromWatchlist)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.ListAudit)
 
 	return m

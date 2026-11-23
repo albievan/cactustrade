@@ -22,6 +22,9 @@ var (
 	// ErrPasswordChangeRequired means the account still has the default password: it may
 	// only change it or sign out.
 	ErrPasswordChangeRequired = errors.New("password change required")
+	// ErrCredentialsMissing means a needed credential (e.g. the eToro key pair of the
+	// current mode) is not set. It always comes wrapped together with ErrUnavailable.
+	ErrCredentialsMissing = errors.New("credentials not set")
 	// ErrInvalid is wrapped by every ValidationError.
 	ErrInvalid = errors.New("invalid input")
 	// ErrUnavailable means a dependency (secret store, master key…) is not usable now.

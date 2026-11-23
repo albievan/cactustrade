@@ -286,4 +286,66 @@ func Run(t *testing.T, s ports.Store) {
 			t.Error("Delete missing")
 		}
 	})
+
+	t.Run("instruments_watchlist", func(t *testing.T) {
+		ir, wl := s.Instruments(), s.Watchlist()
+		aapl := domain.Instrument{ID: 1001, Symbol: "AAPL", Name: "Apple", Type: "Stocks", ExchangeID: 4, Market: domain.MarketNYSE, Currency: "USD"}
+		aplEl := domain.Eligibility{Instrument: 1001, Symbol: "AAPL", RealLong: true, MinPositionAmount: 1000, CheckedAt: t0}
+		barc := domain.Instrument{ID: 2002, Symbol: "BARC.L", Name: "Barclays", Type: "Stocks", Market: domain.MarketLSE}
+		barcEl := domain.Eligibility{Instrument: 2002, Symbol: "BARC.L", Reason: "not offered as a real share"}
+		if _, _, err := ir.Get(ctx, 1001); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("Get missing instrument")
+		}
+		if err := wl.Add(ctx, 1001, "admin", t0); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("Add of an uncached instrument: %v", err)
+		}
+		for range 2 { // insert, then update with identical values
+			if err := ir.Upsert(ctx, aapl, aplEl, t0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := ir.Upsert(ctx, barc, barcEl, t0); err != nil {
+			t.Fatal(err)
+		}
+		if err := ir.Upsert(ctx, aapl, barcEl, t0); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatal("mismatched eligibility accepted")
+		}
+		in, el, err := ir.Get(ctx, 1001)
+		if err != nil || in != aapl || el != aplEl {
+			t.Fatalf("Get = %+v %+v %v", in, el, err)
+		}
+		if _, el, _ := ir.Get(ctx, 2002); !el.CheckedAt.IsZero() || el.RealLong || el.Reason == "" {
+			t.Fatalf("never-checked eligibility = %+v", el)
+		}
+		aplEl.RealLong, aplEl.Reason = false, "suspended"
+		if err := ir.Upsert(ctx, aapl, aplEl, t0.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if _, el, _ := ir.Get(ctx, 1001); el.RealLong || el.Reason != "suspended" {
+			t.Fatalf("update = %+v", el)
+		}
+		if err := wl.Add(ctx, 2002, "admin", t0); err != nil {
+			t.Fatal(err)
+		}
+		if err := wl.Add(ctx, 1001, "olivia", t0.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if err := wl.Add(ctx, 1001, "olivia", t0); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("duplicate Add: %v", err)
+		}
+		items, err := wl.List(ctx)
+		if err != nil || len(items) != 2 || items[0].Instrument.Symbol != "AAPL" || items[1].Instrument != barc ||
+			items[0].AddedBy != "olivia" || !items[0].AddedAt.Equal(t0.Add(time.Second)) || items[0].Eligibility.Reason != "suspended" {
+			t.Fatalf("List = %+v %v", items, err)
+		}
+		if err := wl.Remove(ctx, 2002); err != nil {
+			t.Fatal(err)
+		}
+		if err := wl.Remove(ctx, 2002); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("Remove missing")
+		}
+		if items, _ := wl.List(ctx); len(items) != 1 {
+			t.Fatalf("after Remove = %+v", items)
+		}
+	})
 }

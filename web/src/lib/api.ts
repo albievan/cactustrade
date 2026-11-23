@@ -13,6 +13,12 @@ export type SystemStatus = components["schemas"]["SystemStatus"];
 export type PublicStatus = components["schemas"]["PublicStatus"];
 export type AuditEntry = components["schemas"]["AuditEntry"];
 export type Problem = components["schemas"]["Problem"];
+export type BrokerCheck = components["schemas"]["BrokerCheck"];
+export type Portfolio = components["schemas"]["Portfolio"];
+export type MarketSession = components["schemas"]["MarketSession"];
+export type Instrument = components["schemas"]["Instrument"];
+export type WatchItem = components["schemas"]["WatchItem"];
+export type Quote = components["schemas"]["Quote"];
 
 export class ApiError extends Error {
   constructor(
@@ -85,7 +91,21 @@ export const api = {
     request<void>("PUT", `/api/v1/credentials/${encodeURIComponent(name)}`, { value }),
   deleteCredential: (name: string) => request<void>("DELETE", `/api/v1/credentials/${encodeURIComponent(name)}`),
   audit: (limit = 100) => request<AuditEntry[]>("GET", `/api/v1/audit?limit=${limit}`),
+  testBroker: () => request<BrokerCheck>("POST", "/api/v1/broker/test"),
+  portfolio: () => request<Portfolio>("GET", "/api/v1/broker/portfolio"),
+  marketStatus: () => request<MarketSession[]>("GET", "/api/v1/market/status"),
+  searchInstruments: (q: string) => request<Instrument[]>("GET", `/api/v1/instruments/search?q=${encodeURIComponent(q)}`),
+  watchlist: () => request<WatchItem[]>("GET", "/api/v1/watchlist"),
+  addToWatchlist: (instrumentId: number) => request<WatchItem>("POST", "/api/v1/watchlist", { instrumentId }),
+  removeFromWatchlist: (instrumentId: number) => request<void>("DELETE", `/api/v1/watchlist/${instrumentId}`),
+  watchlistQuotes: () => request<Quote[]>("GET", "/api/v1/watchlist/quotes"),
 };
+
+// usd formats US-dollar cents, e.g. 123456 → "$1,234.56".
+export function usd(cents: number | undefined): string {
+  if (cents === undefined) return "—";
+  return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
 
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) return e.message;

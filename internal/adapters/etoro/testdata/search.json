@@ -1,0 +1,6 @@
+{"results":[
+ {"instrumentId":1001,"displayName":"Example Corp","type":"Stocks","symbol":"EXMP","exchangeId":5,"multiplier":null,"image":{"uri":"https://example.invalid/1.png"}},
+ {"instrumentId":2002,"displayName":"Example plc","type":"Stocks","symbol":"EXM.L","exchangeId":7},
+ {"instrumentId":4004,"displayName":"Example AG","type":"Stocks","symbol":"EXA.DE","exchangeId":6},
+ {"instrumentId":5005,"displayName":"Example Index","type":"Indices","symbol":"EXMPIDX","exchangeId":2}
+]}

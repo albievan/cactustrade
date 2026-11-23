@@ -71,7 +71,7 @@ func TestMigrateAndTLS(t *testing.T) {
 			t.Fatalf("%v: %v", args, err)
 		}
 	}
-	if !strings.HasPrefix(out.String(), "schema 0, newest 2") {
+	if st := out.String(); !strings.HasPrefix(st, "schema 0, newest ") || strings.HasPrefix(st, "schema 0, newest 0") || !strings.Contains(st, "database sqlite") {
 		t.Fatalf("status %q", out.String())
 	}
 	for _, args := range [][]string{{"migrate"}, {"migrate", "sideways"}, {"migrate", "down-to", "x"}} {

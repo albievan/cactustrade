@@ -113,22 +113,17 @@ setup → login → write-only credentials page → users/API keys work for the 
 | 1.12 | Dockerfile (distroless, non-root, read-only), `docker-compose.yml` (app + MariaDB), `deploy/k8s/cactustrade.yaml`, `.env`, `deploy.sh` | `--install --dockerdesktop` healthy | done |
 | 1.13 | README (setup, risk warning, eToro keys), ADR-001…006 | reviewed | done |
 
-## Phase 2 — eToro adapter (read-only) and market calendar — `todo`
+## Phase 2 — eToro adapter (read-only) and market calendar — `in progress`
 
-- 2.1 HTTP client: auth headers from `SecretStore`, `x-request-id` per call, per-quota-group
-  token-bucket limiter (market data 120, portfolio 60, default 60, eligibility 20, costs 20,
-  execution 20), `Retry-After`, exponential backoff with jitter, timeouts.
-- 2.2 Read operations: search, instruments, exchanges, rates, candles, eligibility, costs, pnl,
-  orders:lookup, trade history. Recorded JSON fixtures (sanitised) + `httptest` tests.
-- 2.3 Instrument cache (metadata, eligibility) in the repository; watchlist table.
-- 2.4 WebSocket price feed (`instrument:<id>`) with snapshot, reconnect, staleness tracking;
-  REST polling fallback within quota.
-- 2.5 "Test connection" (read-only PnL call) in UI/API.
-- 2.6 `MarketCalendar`: LSE 08:00–16:30 Europe/London, NYSE/NASDAQ 09:30–16:00
-  America/New_York, DST via `time.LoadLocation` (tzdata embedded), holiday + half-day tables
-  per year (2026–2027) checked against the exchanges' published calendars; unknown year =
-  closed (fail closed).
-- 2.7 Answer Q1 (LSE quote units, real settlement availability).
+| Step | What | Status |
+|---|---|---|
+| 2.1 | HTTP client (`internal/adapters/etoro/client.go`): keys from `SecretStore` per mode, new `x-request-id` per attempt, sliding-window limiter per quota group (`limiter.go`), 429 `Retry-After` pauses the group, jittered exponential backoff for reads, 15 s per attempt, 8 MiB response cap, errors never contain keys. **Mutating operations are refused before any I/O** (`ErrNotEnabled`) until phase 4. | done |
+| 2.2 | Read operations: search (v2 free text), instruments, rates, candles, eligibility, costs (body built only from the guardrail constants), portfolio/PnL, orders:lookup, trade history. Spec-shaped synthetic fixtures in `testdata/` + `httptest` (92 % coverage). | done |
+| 2.3 | Instrument cache + watchlist (migration 00003, both dialects, shared repository suite). Adding asks eToro: share on LSE/NYSE/NASDAQ and eligible as a real share, long, x1 — or refused with the reason. UI page *Watchlist* (search, add, remove, quotes every 15 s). | done |
+| 2.4 | WebSocket price feed (`instrument:<id>`), snapshot, reconnect, staleness; REST polling fallback within quota. | todo |
+| 2.5 | Test connection (`POST /api/v1/broker/test`, admin; one read-only PnL call) on the Credentials page; dashboard shows cash, equity, positions and market sessions. | done |
+| 2.6 | `MarketCalendar` (`internal/adapters/calendar`): LSE 08:00–16:30 London, NYSE/NASDAQ 09:30–16:00 New York, DST from the embedded tz database, 2026–2027 holidays and half days verified against nyse.com, nasdaq.com, londonstockexchange.com and gov.uk (2026-11-23). Unknown year = closed + start-up warning. | done |
+| 2.7 | Answer Q1 (LSE quote units, real settlement availability, `isPotential`) with the owner's demo keys; replace the synthetic fixtures with sanitised recordings. | blocked: needs the demo keys set |
 
 ## Phase 3 — regime model, playbooks, backtester — `todo`
 

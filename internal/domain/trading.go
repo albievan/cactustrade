@@ -2,6 +2,7 @@ package domain
 
 import (
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,22 @@ func (c Cents) String() string {
 // fractional units need more precision than cents.
 type Micros int64
 
+// String formats m as an exact decimal without trailing zeros, e.g. "189.1", "-0.000001".
+func (m Micros) String() string {
+	sign := ""
+	v := int64(m)
+	if v < 0 {
+		sign, v = "-", -v
+	}
+	whole := strconv.FormatInt(v/1_000_000, 10)
+	frac := strconv.FormatInt(v%1_000_000, 10)
+	frac = strings.TrimRight(strings.Repeat("0", 6-len(frac))+frac, "0")
+	if frac == "" {
+		return sign + whole
+	}
+	return sign + whole + "." + frac
+}
+
 // InstrumentID is eToro's instrument identifier.
 type InstrumentID int64
 
@@ -40,11 +57,81 @@ const (
 
 // Instrument is a tradable share.
 type Instrument struct {
-	ID       InstrumentID
-	Symbol   string
-	Name     string
-	Market   Market
-	Currency string // quote currency as eToro reports it
+	ID         InstrumentID
+	Symbol     string
+	Name       string
+	Type       string // eToro instrument type, e.g. "Stocks"
+	ExchangeID int64
+	Market     Market // "" when the instrument is not on a supported market
+	Currency   string // quote currency as eToro reports it ("" until known)
+}
+
+// MarketForSymbol infers the market from an eToro symbol: "BARC.L" is London; a plain
+// ticker ("AAPL") or a US share-class suffix ("BRK.B") is New York (NYSE or NASDAQ, same
+// calendar). Any other suffix ("SAP.DE", "MC.PA") is an unsupported market (ok=false).
+func MarketForSymbol(symbol string) (Market, bool) {
+	s := strings.ToUpper(strings.TrimSpace(symbol))
+	base, suffix, dotted := strings.Cut(s, ".")
+	switch {
+	case s == "" || base == "":
+		return "", false
+	case !dotted:
+		return MarketNYSE, true
+	case suffix == "L":
+		return MarketLSE, true
+	case len(suffix) == 1 && suffix[0] >= 'A' && suffix[0] <= 'Z':
+		return MarketNYSE, true
+	}
+	return "", false
+}
+
+// IsShare reports whether an eToro instrument type is a share (cactusTrade trades nothing
+// else: no CFDs on indices, no FX, commodities or crypto).
+func IsShare(instrumentType string) bool {
+	switch strings.ToLower(strings.TrimSpace(instrumentType)) {
+	case "stocks", "stock":
+		return true
+	}
+	return false
+}
+
+// Eligibility is what eToro says about opening a real, unleveraged long position.
+type Eligibility struct {
+	Instrument InstrumentID
+	Symbol     string
+	// RealLong: open allowed with settlement "real", direction long and leverage 1 offered.
+	RealLong          bool
+	Reason            string // why not, when RealLong is false
+	MinPositionAmount Cents  // for real/long/leverage 1, when eToro states it
+	CheckedAt         time.Time
+}
+
+// WatchItem is an instrument on the watchlist with its cached eligibility.
+type WatchItem struct {
+	Instrument  Instrument
+	Eligibility Eligibility
+	AddedBy     string
+	AddedAt     time.Time
+}
+
+// CostItem is one line of eToro's cost breakdown for a hypothetical order.
+type CostItem struct {
+	Type     string // markup, marketSpread, transactionFee, overnightFee, overWeekendFee, sdrt
+	Value    Micros
+	Currency string
+}
+
+// ClosedTrade is a position eToro reports as closed (trade history).
+type ClosedTrade struct {
+	PositionID int64
+	Instrument InstrumentID
+	OpenedAt   time.Time
+	ClosedAt   time.Time
+	OpenRate   Micros
+	CloseRate  Micros
+	NetProfit  Cents
+	Long       bool
+	Leverage   int
 }
 
 // Quote is a bid/ask snapshot.
@@ -74,7 +161,13 @@ type Position struct {
 	StopLossRate   Micros
 	TakeProfitRate Micros
 	RealAsset      bool // settlementTypeID == 1; anything else is closed at once
+	Long           bool // isBuy
+	Leverage       int
 }
+
+// Conforms reports whether the position is one cactusTrade may hold: a real share, long,
+// leverage 1. Anything else found on the account is closed at once (phase 4).
+func (p Position) Conforms() bool { return p.RealAsset && p.Long && p.Leverage == 1 }
 
 // Portfolio is the account as eToro reports it.
 type Portfolio struct {

@@ -1,0 +1,4 @@
+{"interval":"OneMinute","candles":[{"instrumentId":1001,"candles":[
+ {"instrumentID":1001,"fromDate":"2026-11-23T15:01:00Z","open":189.2,"high":189.3,"low":189.1,"close":189.25,"volume":1500.0},
+ {"instrumentID":1001,"fromDate":"2026-11-23T15:00:00Z","open":189.0,"high":189.2,"low":188.9,"close":189.2,"volume":1200.4}
+],"rangeOpen":189.0,"rangeClose":189.25,"rangeHigh":189.3,"rangeLow":188.9,"volume":2700.4}]}

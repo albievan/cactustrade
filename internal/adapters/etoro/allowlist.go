@@ -1,4 +1,4 @@
-// Package etoro will hold the eToro Public API client (phase 2). This file is its
+// Package etoro is the eToro Public API client. This file is its
 // allowlist: the ONLY eToro paths the client may call (CLAUDE.md §2.1). Each operation has a
 // demo and a real path, because eToro does not put the "demo" segment in the same place for
 // every endpoint. allowlist_test.go fails the build when any other /api/ path appears in this
@@ -90,7 +90,8 @@ func (e Endpoint) Path(m domain.TradingMode) string {
 
 // Allowlist is the complete set of eToro endpoints the client may call.
 var Allowlist = map[Op]Endpoint{
-	OpSearch:      {Method: "GET", Demo: "/api/v1/market-data/search", Real: "/api/v1/market-data/search", Quota: QuotaMarketData},
+	// Free-text search by name or symbol (v2; same market-data quota as the v1 field search).
+	OpSearch:      {Method: "GET", Demo: "/api/v2/market-data/instruments/search", Real: "/api/v2/market-data/instruments/search", Quota: QuotaMarketData},
 	OpInstruments: {Method: "GET", Demo: "/api/v2/market-data/instruments", Real: "/api/v2/market-data/instruments", Quota: QuotaMarketData},
 	OpExchanges:   {Method: "GET", Demo: "/api/v1/market-data/exchanges", Real: "/api/v1/market-data/exchanges", Quota: QuotaMarketData},
 	OpRates:       {Method: "GET", Demo: "/api/v2/market-data/rates", Real: "/api/v2/market-data/rates", Quota: QuotaMarketData},

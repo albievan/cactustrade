@@ -31,7 +31,7 @@ explicit demo/real path pair per operation in `allowlist.go`; the mode is chosen
 
 | Operation | Demo | Real | Quota |
 |---|---|---|---|
-| Instrument search | `GET /api/v1/market-data/search` | same | market data 120/60s |
+| Instrument search (free text, ≤50) | `GET /api/v2/market-data/instruments/search` | same | market data 120/60s |
 | Instrument metadata | `GET /api/v2/market-data/instruments` | same | market data |
 | Exchanges | `GET /api/v1/market-data/exchanges` | same | market data |
 | Bid/ask rates (≤1000 ids) | `GET /api/v2/market-data/rates` | same | market data |
@@ -73,6 +73,29 @@ the instrument is blocked (fail closed).
 The spec says: "deepening a stop loss beyond the allowed maximum stop loss will cause funds
 to be transferred from the account balance into the position margin." cactusTrade only ever
 **tightens** a long stop (raises it), never deepens it.
+
+## How the phase-2 client reads the answers (2026-11-23, spec v1.419.0)
+
+- **Ids in queries** (`rates.instrumentIds`, `instruments.instrumentsIds`) are `style: form,
+  explode: false`: one comma-separated value.
+- **Rates**: `bid`, `ask` and `date` are nullable; an instrument without all three is left
+  out (callers treat a missing quote as stale). `quoteType` is `realtime` or `delayed`.
+- **Candles**: requested `desc` (newest N) and sorted oldest-first by the client.
+- **Portfolio**: `credit` is the available cash (missing → error, fail closed). Money committed
+  to pending orders is `ordersForOpen[].amount` + `orders[].amount` (entry orders). A
+  position's `amount` is USD; `openRate` is in the **instrument's currency**
+  (`openConversionRate` converts to USD) — for LSE that is GBP or GBX (open question Q1).
+- **Eligibility** is "real long x1" only when `allowOpenPosition` and a `leverageConfigs`
+  entry has `settlementType: real`, `direction: long|buy`, `1` in `leverageValues` and
+  `isPotential: false`. The meaning of `isPotential` is not documented, so it counts as
+  "not offered" (fail closed) until checked live (2.7).
+- **Market** is inferred from the symbol: `XXX.L` = LSE; plain tickers and US share-class
+  suffixes (`BRK.B`) = NYSE/NASDAQ; any other suffix is unsupported. The exchanges endpoint
+  has no documented response schema, so exchange ids are stored but not relied on.
+- **Errors**: gateway `{errorCode, errorMessage}`, API `{success:false, error:{code,message}}`
+  and RFC 7807 problem details are all parsed. 404 → not found; anything else → unavailable
+  (fail closed). 429 and 5xx are retried (reads only) with `Retry-After` / jittered backoff;
+  a 429 also pauses that quota group in the client-side limiter.
 
 ## Rate limits
 

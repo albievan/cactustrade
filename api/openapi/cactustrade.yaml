@@ -27,6 +27,8 @@ tags:
   - name: users
   - name: apikeys
   - name: credentials
+  - name: broker
+  - name: market
   - name: audit
 security:
   - sessionCookie: []
@@ -280,6 +282,132 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/broker/test:
+    post:
+      tags: [broker]
+      operationId: testBrokerConnection
+      summary: Test the eToro connection with the current mode's keys (admin; one read-only call)
+      description: |
+        Calls eToro's portfolio endpoint once. An eToro failure is reported in the body
+        (`ok: false`, `error`), not as an HTTP error.
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerCheck" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/broker/portfolio:
+    get:
+      tags: [broker]
+      operationId: getPortfolio
+      summary: The eToro account now — cash, positions, pending orders (viewer)
+      responses:
+        "200":
+          description: Portfolio
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Portfolio" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/market/status:
+    get:
+      tags: [market]
+      operationId: getMarketStatus
+      summary: Today's sessions for LSE and NYSE/NASDAQ (viewer)
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MarketSession" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/instruments/search:
+    get:
+      tags: [market]
+      operationId: searchInstruments
+      summary: Search eToro instruments by name or symbol (admin)
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 100 } }
+      responses:
+        "200":
+          description: Up to 20 matches; `market` is empty for anything cactusTrade cannot trade
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Instrument" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist:
+    get:
+      tags: [market]
+      operationId: listWatchlist
+      summary: The instruments the agent may trade (viewer)
+      responses:
+        "200":
+          description: Watchlist, by symbol
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WatchItem" }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [market]
+      operationId: addToWatchlist
+      summary: Add a share after eToro confirms it can be bought as a real share at leverage 1 (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddWatchRequest" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WatchItem" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/quotes:
+    get:
+      tags: [market]
+      operationId: listWatchlistQuotes
+      summary: Current bid/ask of the watchlist (viewer)
+      responses:
+        "200":
+          description: Quotes (instruments without a price are left out)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Quote" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/{instrumentId}:
+    parameters:
+      - { name: instrumentId, in: path, required: true, schema: { type: integer, format: int64, minimum: 1 } }
+    delete:
+      tags: [market]
+      operationId: removeFromWatchlist
+      summary: Remove an instrument (admin)
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /api/v1/audit:
     get:
       tags: [audit]
@@ -454,6 +582,110 @@ components:
       required: [value]
       properties:
         value: { type: string, maxLength: 4096, description: "Write-only: never returned" }
+    Cents:
+      type: integer
+      format: int64
+      description: US dollars in cents (the eToro account currency is USD)
+    Decimal:
+      type: string
+      pattern: '^-?[0-9]+(\.[0-9]{1,6})?$'
+      description: An exact decimal (prices and units, up to 6 places)
+    Market:
+      type: string
+      enum: ["", LSE, NYSE]
+      description: LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+    BrokerCheck:
+      type: object
+      required: [mode, ok, latencyMs, checkedAt, configuredKeys]
+      properties:
+        mode: { $ref: "#/components/schemas/TradingMode" }
+        ok: { type: boolean }
+        error: { type: string }
+        configuredKeys: { type: boolean, description: false when the mode's key pair is not set }
+        latencyMs: { type: integer, format: int64 }
+        availableCashCents: { $ref: "#/components/schemas/Cents" }
+        equityCents: { $ref: "#/components/schemas/Cents" }
+        positions: { type: integer }
+        nonConforming: { type: integer, description: positions that are not real shares, long, leverage 1 }
+        checkedAt: { type: string, format: date-time }
+    Position:
+      type: object
+      required: [positionId, instrumentId, openedAt, openRate, units, amountCents, unrealisedPnlCents, realAsset, long, leverage]
+      properties:
+        positionId: { type: integer, format: int64 }
+        instrumentId: { type: integer, format: int64 }
+        openedAt: { type: string, format: date-time }
+        openRate: { $ref: "#/components/schemas/Decimal" }
+        units: { $ref: "#/components/schemas/Decimal" }
+        amountCents: { $ref: "#/components/schemas/Cents" }
+        unrealisedPnlCents: { $ref: "#/components/schemas/Cents" }
+        stopLossRate: { $ref: "#/components/schemas/Decimal" }
+        takeProfitRate: { $ref: "#/components/schemas/Decimal" }
+        realAsset: { type: boolean }
+        long: { type: boolean }
+        leverage: { type: integer }
+    Portfolio:
+      type: object
+      required: [mode, availableCashCents, pendingOpenCents, equityCents, positions, asOf]
+      properties:
+        mode: { $ref: "#/components/schemas/TradingMode" }
+        availableCashCents: { $ref: "#/components/schemas/Cents" }
+        pendingOpenCents: { $ref: "#/components/schemas/Cents" }
+        equityCents: { $ref: "#/components/schemas/Cents" }
+        positions:
+          type: array
+          items: { $ref: "#/components/schemas/Position" }
+        asOf: { type: string, format: date-time }
+    MarketSession:
+      type: object
+      required: [market, trading, open]
+      properties:
+        market: { $ref: "#/components/schemas/Market" }
+        trading: { type: boolean, description: the market trades today (its local date) }
+        open: { type: boolean, description: in its trading session right now }
+        opens: { type: string, format: date-time }
+        closes: { type: string, format: date-time }
+        note: { type: string }
+    Instrument:
+      type: object
+      required: [instrumentId, symbol, name, type, market]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string }
+        name: { type: string }
+        type: { type: string }
+        exchangeId: { type: integer, format: int64 }
+        market: { $ref: "#/components/schemas/Market" }
+    Eligibility:
+      type: object
+      required: [realLong]
+      properties:
+        realLong: { type: boolean, description: can be bought as a real share, long, leverage 1 }
+        reason: { type: string }
+        minPositionCents: { $ref: "#/components/schemas/Cents" }
+        checkedAt: { type: string, format: date-time }
+    WatchItem:
+      type: object
+      required: [instrument, eligibility, addedBy, addedAt]
+      properties:
+        instrument: { $ref: "#/components/schemas/Instrument" }
+        eligibility: { $ref: "#/components/schemas/Eligibility" }
+        addedBy: { type: string }
+        addedAt: { type: string, format: date-time }
+    AddWatchRequest:
+      type: object
+      required: [instrumentId]
+      properties:
+        instrumentId: { type: integer, format: int64, minimum: 1 }
+    Quote:
+      type: object
+      required: [instrumentId, bid, ask, at, delayed]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        bid: { $ref: "#/components/schemas/Decimal" }
+        ask: { $ref: "#/components/schemas/Decimal" }
+        at: { type: string, format: date-time }
+        delayed: { type: boolean }
     AuditEntry:
       type: object
       required: [id, at, actor, action, target, details, remoteIp]

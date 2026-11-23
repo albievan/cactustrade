@@ -134,7 +134,14 @@ type Store struct {
 	secrets  map[string]ports.SecretRecord
 	audit    []domain.AuditEntry
 	settings map[string]string
+	instr    map[domain.InstrumentID]instrRec
+	watch    map[domain.InstrumentID]domain.WatchItem
 	PingErr  error
+}
+
+type instrRec struct {
+	in domain.Instrument
+	el domain.Eligibility
 }
 
 // NewStore returns an empty store.
@@ -142,7 +149,8 @@ func NewStore() *Store {
 	return &Store{
 		users: map[string]domain.User{}, sessions: map[string]domain.Session{},
 		keys: map[string]domain.APIKey{}, secrets: map[string]ports.SecretRecord{},
-		settings: map[string]string{},
+		settings: map[string]string{}, instr: map[domain.InstrumentID]instrRec{},
+		watch: map[domain.InstrumentID]domain.WatchItem{},
 	}
 }
 
@@ -165,6 +173,12 @@ func (s *Store) Audit() ports.Audit { return audit{s} }
 
 // Settings returns the settings repository.
 func (s *Store) Settings() ports.Settings { return settings{s} }
+
+// Instruments returns the instrument cache.
+func (s *Store) Instruments() ports.Instruments { return instrRepo{s} }
+
+// Watchlist returns the watchlist.
+func (s *Store) Watchlist() ports.Watchlist { return watchRepo{s} }
 
 // Ping returns PingErr.
 func (s *Store) Ping(context.Context) error { return s.PingErr }
@@ -480,4 +494,65 @@ func (r settings) Set(_ context.Context, k, v string, _ time.Time) error {
 	defer r.s.mu.Unlock()
 	r.s.settings[k] = v
 	return nil
+}
+
+type instrRepo struct{ s *Store }
+
+func (r instrRepo) Upsert(_ context.Context, in domain.Instrument, el domain.Eligibility, _ time.Time) error {
+	if el.Instrument != in.ID {
+		return domain.ErrInvalid
+	}
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	r.s.instr[in.ID] = instrRec{in, el}
+	return nil
+}
+
+func (r instrRepo) Get(_ context.Context, id domain.InstrumentID) (domain.Instrument, domain.Eligibility, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	x, ok := r.s.instr[id]
+	if !ok {
+		return domain.Instrument{}, domain.Eligibility{}, domain.ErrNotFound
+	}
+	return x.in, x.el, nil
+}
+
+type watchRepo struct{ s *Store }
+
+func (r watchRepo) Add(_ context.Context, id domain.InstrumentID, by string, at time.Time) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	x, ok := r.s.instr[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if _, dup := r.s.watch[id]; dup {
+		return domain.ErrConflict
+	}
+	r.s.watch[id] = domain.WatchItem{Instrument: x.in, AddedBy: by, AddedAt: at}
+	return nil
+}
+
+func (r watchRepo) Remove(_ context.Context, id domain.InstrumentID) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if _, ok := r.s.watch[id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(r.s.watch, id)
+	return nil
+}
+
+func (r watchRepo) List(context.Context) ([]domain.WatchItem, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	out := make([]domain.WatchItem, 0, len(r.s.watch))
+	for id, w := range r.s.watch {
+		x := r.s.instr[id]
+		w.Instrument, w.Eligibility = x.in, x.el
+		out = append(out, w)
+	}
+	slices.SortFunc(out, func(a, b domain.WatchItem) int { return strings.Compare(a.Instrument.Symbol, b.Instrument.Symbol) })
+	return out, nil
 }

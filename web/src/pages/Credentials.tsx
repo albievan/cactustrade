@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, type Credential } from "../lib/api";
 import { useSession } from "../lib/session";
+import { BrokerTest } from "../components/BrokerTest";
 
 // Credentials are write-only: the page shows whether each is set, never its value.
 export function Credentials() {
@@ -22,6 +23,7 @@ export function Credentials() {
         “API key”, the <em>User Key</em> in “user key”.
       </p>
       {error && <div className="alert alert-danger">{error}</div>}
+      {can("credentials.write") && <BrokerTest />}
       <div className="list-group">
         {creds.map((c) => (
           <CredentialRow key={c.name} cred={c} editable={editable} onChange={load} />

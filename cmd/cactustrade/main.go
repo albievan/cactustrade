@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,11 +32,14 @@ import (
 
 	"github.com/albievan/cactustrade/api"
 	"github.com/albievan/cactustrade/internal/adapters/argon2"
+	"github.com/albievan/cactustrade/internal/adapters/calendar"
+	"github.com/albievan/cactustrade/internal/adapters/etoro"
 	httpapi "github.com/albievan/cactustrade/internal/adapters/http"
 	"github.com/albievan/cactustrade/internal/adapters/secretstore"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
 	"github.com/albievan/cactustrade/internal/adapters/system"
 	"github.com/albievan/cactustrade/internal/app"
+	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/web"
 )
 
@@ -135,12 +139,30 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		log.Info("credential provided by the environment", "credential", string(n))
 	}
 
-	svc, err := app.New(app.Deps{
+	cal, err := calendar.New()
+	if err != nil {
+		return err
+	}
+	// The eToro client asks the service for the mode on every call (demo unless the gated
+	// switch set real); svc is assigned just below, before the server takes any request.
+	var svc *app.Service
+	broker, err := etoro.New(etoro.Config{
+		HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Random: system.Random{}, Log: log,
+		Mode: func(ctx context.Context) domain.TradingMode { return svc.Mode(ctx) },
+	})
+	if err != nil {
+		return err
+	}
+	svc, err = app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
+		Broker: broker, Market: broker, Calendar: cal,
 	}, app.Config{Version: version, Build: build})
 	if err != nil {
 		return err
+	}
+	if y := time.Now().Year(); !slices.Contains(cal.Years(domain.MarketLSE), y) || !slices.Contains(cal.Years(domain.MarketNYSE), y) {
+		log.Warn("the market calendar has no holiday table for this year: markets are treated as closed", "year", y)
 	}
 	mode := svc.Mode(ctx)
 	log = log.With("mode", string(mode))

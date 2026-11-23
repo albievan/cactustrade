@@ -252,6 +252,132 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/broker/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the eToro connection with the current mode's keys (admin; one read-only call)
+         * @description Calls eToro's portfolio endpoint once. An eToro failure is reported in the body
+         *     (`ok: false`, `error`), not as an HTTP error.
+         */
+        post: operations["testBrokerConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/broker/portfolio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The eToro account now — cash, positions, pending orders (viewer) */
+        get: operations["getPortfolio"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/market/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Today's sessions for LSE and NYSE/NASDAQ (viewer) */
+        get: operations["getMarketStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instruments/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search eToro instruments by name or symbol (admin) */
+        get: operations["searchInstruments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The instruments the agent may trade (viewer) */
+        get: operations["listWatchlist"];
+        put?: never;
+        /** Add a share after eToro confirms it can be bought as a real share at leverage 1 (admin) */
+        post: operations["addToWatchlist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlist/quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Current bid/ask of the watchlist (viewer) */
+        get: operations["listWatchlistQuotes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlist/{instrumentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instrumentId: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove an instrument (admin) */
+        delete: operations["removeFromWatchlist"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -391,6 +517,110 @@ export interface components {
         SetCredentialRequest: {
             /** @description Write-only: never returned */
             value: string;
+        };
+        /**
+         * Format: int64
+         * @description US dollars in cents (the eToro account currency is USD)
+         */
+        Cents: number;
+        /** @description An exact decimal (prices and units, up to 6 places) */
+        Decimal: string;
+        /**
+         * @description LSE, NYSE (NYSE and NASDAQ share a calendar) or "" when not tradable here
+         * @enum {string}
+         */
+        Market: "" | "LSE" | "NYSE";
+        BrokerCheck: {
+            mode: components["schemas"]["TradingMode"];
+            ok: boolean;
+            error?: string;
+            /** @description false when the mode's key pair is not set */
+            configuredKeys: boolean;
+            /** Format: int64 */
+            latencyMs: number;
+            availableCashCents?: components["schemas"]["Cents"];
+            equityCents?: components["schemas"]["Cents"];
+            positions?: number;
+            /** @description positions that are not real shares */
+            nonConforming?: number;
+            /** Format: date-time */
+            checkedAt: string;
+        };
+        Position: {
+            /** Format: int64 */
+            positionId: number;
+            /** Format: int64 */
+            instrumentId: number;
+            /** Format: date-time */
+            openedAt: string;
+            openRate: components["schemas"]["Decimal"];
+            units: components["schemas"]["Decimal"];
+            amountCents: components["schemas"]["Cents"];
+            unrealisedPnlCents: components["schemas"]["Cents"];
+            stopLossRate?: components["schemas"]["Decimal"];
+            takeProfitRate?: components["schemas"]["Decimal"];
+            realAsset: boolean;
+            long: boolean;
+            leverage: number;
+        };
+        Portfolio: {
+            mode: components["schemas"]["TradingMode"];
+            availableCashCents: components["schemas"]["Cents"];
+            pendingOpenCents: components["schemas"]["Cents"];
+            equityCents: components["schemas"]["Cents"];
+            positions: components["schemas"]["Position"][];
+            /** Format: date-time */
+            asOf: string;
+        };
+        MarketSession: {
+            market: components["schemas"]["Market"];
+            /** @description the market trades today (its local date) */
+            trading: boolean;
+            /** @description in its trading session right now */
+            open: boolean;
+            /** Format: date-time */
+            opens?: string;
+            /** Format: date-time */
+            closes?: string;
+            note?: string;
+        };
+        Instrument: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            name: string;
+            type: string;
+            /** Format: int64 */
+            exchangeId?: number;
+            market: components["schemas"]["Market"];
+        };
+        Eligibility: {
+            /** @description can be bought as a real share */
+            realLong: boolean;
+            reason?: string;
+            minPositionCents?: components["schemas"]["Cents"];
+            /** Format: date-time */
+            checkedAt?: string;
+        };
+        WatchItem: {
+            instrument: components["schemas"]["Instrument"];
+            eligibility: components["schemas"]["Eligibility"];
+            addedBy: string;
+            /** Format: date-time */
+            addedAt: string;
+        };
+        AddWatchRequest: {
+            /** Format: int64 */
+            instrumentId: number;
+        };
+        Quote: {
+            /** Format: int64 */
+            instrumentId: number;
+            bid: components["schemas"]["Decimal"];
+            ask: components["schemas"]["Decimal"];
+            /** Format: date-time */
+            at: string;
+            delayed: boolean;
         };
         AuditEntry: {
             /** Format: int64 */
@@ -835,6 +1065,195 @@ export interface operations {
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
             409: components["responses"]["Problem"];
+        };
+    };
+    testBrokerConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrokerCheck"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getPortfolio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Portfolio */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Portfolio"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getMarketStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sessions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarketSession"][];
+                };
+            };
+            401: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    searchInstruments: {
+        parameters: {
+            query: {
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Up to 20 matches; `market` is empty for anything cactusTrade cannot trade */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Instrument"][];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    listWatchlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Watchlist, by symbol */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchItem"][];
+                };
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    addToWatchlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddWatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchItem"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    listWatchlistQuotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Quotes (instruments without a price are left out) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Quote"][];
+                };
+            };
+            401: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    removeFromWatchlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instrumentId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
         };
     };
     listAudit: {

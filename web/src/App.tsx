@@ -8,6 +8,7 @@ import { Credentials } from "./pages/Credentials";
 import { Users } from "./pages/Users";
 import { ApiKeys } from "./pages/ApiKeys";
 import { Audit } from "./pages/Audit";
+import { Watchlist } from "./pages/Watchlist";
 import { Account } from "./pages/Account";
 
 export function App() {
@@ -20,6 +21,7 @@ export function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
+        <Route path="watchlist" element={<Watchlist />} />
         <Route path="credentials" element={<Credentials />} />
         <Route path="users" element={<Users />} />
         <Route path="api-keys" element={<ApiKeys />} />

@@ -1,0 +1,5 @@
+{"results":[
+ {"rate":{"instrumentId":1001,"bid":189.1,"ask":189.2,"date":"2026-11-23T15:00:00Z","quoteType":"realtime"}},
+ {"rate":{"instrumentId":2002,"bid":215.5,"ask":215.9,"date":"2026-11-23T15:00:01Z","quoteType":"delayed"}},
+ {"rate":{"instrumentId":3003,"bid":null,"ask":null,"date":null,"quoteType":"delayed"}}
+]}

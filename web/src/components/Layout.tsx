@@ -26,6 +26,7 @@ export function Layout() {
           )}
           <ul className="navbar-nav me-auto">
             <li className="nav-item"><NavLink className={link} to="/" end>Dashboard</NavLink></li>
+            <li className="nav-item"><NavLink className={link} to="/watchlist">Watchlist</NavLink></li>
             <li className="nav-item"><NavLink className={link} to="/credentials">Credentials</NavLink></li>
             {can("users.manage") && <li className="nav-item"><NavLink className={link} to="/users">Users</NavLink></li>}
             <li className="nav-item"><NavLink className={link} to="/api-keys">API keys</NavLink></li>

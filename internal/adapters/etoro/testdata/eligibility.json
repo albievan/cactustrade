@@ -1,0 +1,11 @@
+{"currency":"USD","eligibilities":[
+ {"instrumentId":1001,"symbol":"EXMP","allowOpenPosition":true,"leverageConfigs":[
+   {"settlementType":"cfd","direction":"short","leverageValues":[1,2],"isPotential":false,"minPositionAmount":50},
+   {"settlementType":"real","direction":"long","leverageValues":[1],"isPotential":false,"minPositionAmount":10}]},
+ {"instrumentId":2002,"symbol":"EXM.L","allowOpenPosition":true,"leverageConfigs":[
+   {"settlementType":"cfd","direction":"long","leverageValues":[1,5],"isPotential":false,"minPositionAmount":50}]},
+ {"instrumentId":3003,"symbol":"EXP","allowOpenPosition":true,"leverageConfigs":[
+   {"settlementType":"real","direction":"long","leverageValues":[1],"isPotential":true,"minPositionAmount":10}]},
+ {"instrumentId":6006,"symbol":"HALT","allowOpenPosition":false,"leverageConfigs":[
+   {"settlementType":"real","direction":"long","leverageValues":[1],"isPotential":false,"minPositionAmount":10}]}
+],"notFoundInstrumentIds":[9999],"notFoundSymbols":[]}

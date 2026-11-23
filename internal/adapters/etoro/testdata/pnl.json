@@ -1,0 +1,8 @@
+{"clientPortfolio":{"credit":1234.56,"bonusCredit":0,"unrealizedPnL":12.5,"accountCurrencyId":1,
+ "positions":[
+  {"positionID":1001,"openDateTime":"2026-11-20T14:35:00Z","openRate":189.123456,"instrumentID":1001,"isBuy":true,"takeProfitRate":210,"stopLossRate":180.5,"amount":500,"leverage":1,"units":2.643793,"settlementTypeID":1,"unrealizedPnL":{"pnL":10.25,"pnlAssetCurrency":10.25}},
+  {"positionID":1002,"openDateTime":"2026-11-21T09:00:00Z","openRate":2.15,"instrumentID":2002,"isBuy":true,"takeProfitRate":0,"stopLossRate":0,"amount":100,"leverage":2,"units":46.5,"settlementTypeID":0,"unrealizedPnL":null}
+ ],
+ "orders":[{"orderId":7,"amount":25}],
+ "ordersForOpen":[{"orderId":8,"amount":50.5}],
+ "mirrors":[]}}

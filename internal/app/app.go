@@ -48,6 +48,11 @@ type Deps struct {
 	Random  ports.Random
 	Clock   ports.Clock
 	Log     *slog.Logger
+	// Broker, Market and Calendar are the eToro adapter and the market calendar (phase 2).
+	// When nil, the features that need them answer "unavailable".
+	Broker   ports.Broker
+	Market   ports.MarketData
+	Calendar ports.MarketCalendar
 }
 
 // Config holds use-case settings.

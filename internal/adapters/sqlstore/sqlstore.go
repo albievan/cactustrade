@@ -197,6 +197,12 @@ func mustAffect(res sql.Result, err error) error {
 	return nil
 }
 
+// Instruments returns the instrument cache.
+func (s *Store) Instruments() ports.Instruments { return instruments{s.db} }
+
+// Watchlist returns the watchlist repository.
+func (s *Store) Watchlist() ports.Watchlist { return watchlist{s.db} }
+
 // Users returns the user repository.
 func (s *Store) Users() ports.Users { return users{s.db} }
 
