@@ -4,17 +4,44 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-// Themes lists the current account's themes (view).
-func (s *Service) Themes(ctx context.Context, p Principal) ([]domain.Theme, error) {
+// ThemeView is a theme with its picked shares looked up (symbol and name).
+type ThemeView struct {
+	domain.Theme
+	Shares []domain.Instrument
+}
+
+func (s *Service) themeView(ctx context.Context, t domain.Theme) ThemeView {
+	out := ThemeView{Theme: t, Shares: make([]domain.Instrument, 0, len(t.Instruments))}
+	for _, id := range t.Instruments {
+		in, _, err := s.d.Store.Instruments().Get(ctx, id)
+		if err != nil {
+			in = domain.Instrument{ID: id, Symbol: "#" + strconv.FormatInt(int64(id), 10)}
+		}
+		out.Shares = append(out.Shares, in)
+	}
+	return out
+}
+
+// Themes lists the current account's themes with their picked shares (view).
+func (s *Service) Themes(ctx context.Context, p Principal) ([]ThemeView, error) {
 	v, err := s.account(ctx, p, "", domain.AccessView)
 	if err != nil {
 		return nil, err
 	}
-	return s.d.Store.Themes().List(ctx, v.ID)
+	ts, err := s.d.Store.Themes().List(ctx, v.ID)
+	if err != nil {
+		return nil, fmt.Errorf("app.Themes: %w", err)
+	}
+	out := make([]ThemeView, 0, len(ts))
+	for _, t := range ts {
+		out = append(out, s.themeView(ctx, t))
+	}
+	return out, nil
 }
 
 // cachePicked makes sure every picked share is in the instrument cache (eligibility is
@@ -53,13 +80,30 @@ func (s *Service) cachePicked(ctx context.Context, v domain.AccountView, ids []d
 }
 
 // SaveTheme creates (ID "") or updates a theme of the current account (trade access).
-func (s *Service) SaveTheme(ctx context.Context, p Principal, t domain.Theme) (domain.Theme, error) {
+func (s *Service) SaveTheme(ctx context.Context, p Principal, t domain.Theme) (ThemeView, error) {
+	saved, err := s.saveTheme(ctx, p, t)
+	if err != nil {
+		return ThemeView{}, err
+	}
+	return s.themeView(ctx, saved), nil
+}
+
+func (s *Service) saveTheme(ctx context.Context, p Principal, t domain.Theme) (domain.Theme, error) {
 	v, err := s.account(ctx, p, "", domain.AccessTrade)
 	if err != nil {
 		return domain.Theme{}, err
 	}
 	if t, err = domain.NormalizeTheme(t); err != nil {
 		return domain.Theme{}, err
+	}
+	if t.LLMProfileID != "" {
+		_, ps, err := s.loadLLM(ctx)
+		if err != nil {
+			return domain.Theme{}, fmt.Errorf("app.SaveTheme: %w", err)
+		}
+		if !slices.ContainsFunc(ps, func(x domain.LLMProfile) bool { return x.ID == t.LLMProfileID }) {
+			return domain.Theme{}, domain.Invalid("llmProfileId", "no such LLM reviewer profile")
+		}
 	}
 	if err := s.cachePicked(ctx, v, t.Instruments); err != nil {
 		return domain.Theme{}, err

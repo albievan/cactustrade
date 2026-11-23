@@ -3,52 +3,113 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-func toLlmConfig(c domain.LLMConfig) LlmConfig {
-	return LlmConfig{Enabled: c.Enabled, Provider: string(c.Provider), Model: c.Model, BaseUrl: c.BaseURL, TimeoutSeconds: c.TimeoutSeconds}
+func toLlmProfile(p app.LLMProfileView) LlmProfile {
+	return LlmProfile{
+		Id: p.ID, Name: p.Name, Provider: string(p.Provider), Model: p.Model, BaseUrl: p.BaseURL,
+		TimeoutSeconds: p.TimeoutSeconds, KeySet: p.KeySet,
+	}
 }
 
-func fromLlmConfig(c LlmConfig) domain.LLMConfig {
-	return domain.LLMConfig{Enabled: c.Enabled, Provider: domain.LLMProviderID(c.Provider), Model: c.Model, BaseURL: c.BaseUrl, TimeoutSeconds: c.TimeoutSeconds}
+func fromLlmProfileInput(id string, in LlmProfileInput) domain.LLMProfile {
+	return domain.LLMProfile{ID: id, Name: in.Name, LLMConfig: domain.LLMConfig{
+		Provider: domain.LLMProviderID(in.Provider), Model: in.Model, BaseURL: in.BaseUrl, TimeoutSeconds: in.TimeoutSeconds,
+	}}
 }
 
-// GetLlmSetup returns the reviewer's setup and the provider list.
+func toLlmSetup(st app.LLMSetup) LlmSetup {
+	out := LlmSetup{
+		Settings:              LlmSettings{Enabled: st.Settings.Enabled, ActiveProfileId: st.Settings.Active},
+		Profiles:              make([]LlmProfile, 0, len(st.Profiles)),
+		DefaultAnthropicModel: domain.DefaultAnthropicModel,
+	}
+	for _, p := range st.Profiles {
+		out.Profiles = append(out.Profiles, toLlmProfile(p))
+	}
+	for _, p := range domain.LLMProviders {
+		out.Providers = append(out.Providers, LlmProvider{Id: string(p.ID), Label: p.Label, DefaultBaseUrl: p.DefaultBaseURL, KeyRequired: p.KeyRequired, Note: p.Note})
+	}
+	return out
+}
+
+// GetLlmSetup returns the reviewer's profiles and the provider list.
 func (s *Server) GetLlmSetup(w http.ResponseWriter, r *http.Request) {
 	st, err := s.svc.LLMSetup(r.Context(), state(r).principal)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	out := LlmSetup{Config: toLlmConfig(st.Config), KeySet: st.KeySet, DefaultAnthropicModel: domain.DefaultAnthropicModel}
-	for _, p := range domain.LLMProviders {
-		out.Providers = append(out.Providers, LlmProvider{Id: string(p.ID), Label: p.Label, DefaultBaseUrl: p.DefaultBaseURL, KeyRequired: p.KeyRequired, Note: p.Note})
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, toLlmSetup(st))
 }
 
-// SetLlmConfig stores the reviewer's setup.
-func (s *Server) SetLlmConfig(w http.ResponseWriter, r *http.Request) {
-	var req LlmConfig
+// SetLlmSettings switches reviewing on or off and picks the default profile.
+func (s *Server) SetLlmSettings(w http.ResponseWriter, r *http.Request) {
+	var req LlmSettings
 	if !decode(w, r, &req) {
 		return
 	}
-	c, err := s.svc.SetLLMConfig(r.Context(), state(r).principal, fromLlmConfig(req))
+	st, err := s.svc.SetLLMSettings(r.Context(), state(r).principal, domain.LLMSettings{Enabled: req.Enabled, Active: req.ActiveProfileId})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toLlmConfig(c))
+	writeJSON(w, http.StatusOK, toLlmSetup(st))
+}
+
+// CreateLlmProfile adds a profile.
+func (s *Server) CreateLlmProfile(w http.ResponseWriter, r *http.Request) {
+	var req LlmProfileInput
+	if !decode(w, r, &req) {
+		return
+	}
+	p, err := s.svc.SaveLLMProfile(r.Context(), state(r).principal, fromLlmProfileInput("", req), req.ApiKey)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toLlmProfile(p))
+}
+
+// UpdateLlmProfile changes a profile.
+func (s *Server) UpdateLlmProfile(w http.ResponseWriter, r *http.Request, id string) {
+	var req LlmProfileInput
+	if !decode(w, r, &req) {
+		return
+	}
+	p, err := s.svc.SaveLLMProfile(r.Context(), state(r).principal, fromLlmProfileInput(id, req), req.ApiKey)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toLlmProfile(p))
+}
+
+// DeleteLlmProfile removes a profile.
+func (s *Server) DeleteLlmProfile(w http.ResponseWriter, r *http.Request, id string) {
+	if err := s.svc.DeleteLLMProfile(r.Context(), state(r).principal, id); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ListLlmModels lists a provider's models.
 func (s *Server) ListLlmModels(w http.ResponseWriter, r *http.Request) {
-	var req LlmConfig
+	var req LlmModelsRequest
 	if !decode(w, r, &req) {
 		return
 	}
-	ms, err := s.svc.LLMModels(r.Context(), state(r).principal, fromLlmConfig(req))
+	in := app.LLMModelsRequest{Config: domain.LLMConfig{Provider: domain.LLMProviderID(req.Provider), BaseURL: req.BaseUrl}}
+	if req.ApiKey != nil {
+		in.Key = *req.ApiKey
+	}
+	if req.ProfileId != nil {
+		in.ProfileID = *req.ProfileId
+	}
+	ms, err := s.svc.LLMModels(r.Context(), state(r).principal, in)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -59,9 +120,9 @@ func (s *Server) ListLlmModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ms)
 }
 
-// TestLlm reviews a made-up trade.
-func (s *Server) TestLlm(w http.ResponseWriter, r *http.Request) {
-	res, err := s.svc.TestLLM(r.Context(), state(r).principal)
+// TestLlmProfile reviews a made-up trade with one profile.
+func (s *Server) TestLlmProfile(w http.ResponseWriter, r *http.Request, id string) {
+	res, err := s.svc.TestLLM(r.Context(), state(r).principal, id)
 	if err != nil {
 		s.fail(w, r, err)
 		return

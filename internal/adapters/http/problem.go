@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
@@ -43,8 +44,14 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "sign in or send a valid API key", "")
 	case errors.Is(err, domain.ErrForbidden):
 		writeProblem(w, r, http.StatusForbidden, "Forbidden", detail(err, domain.ErrForbidden), "")
+	case errors.As(err, new(*app.MailError)):
+		s.log.WarnContext(r.Context(), "mail server refused", "path", r.URL.Path, "err", err)
+		writeProblem(w, r, http.StatusBadGateway, "The mail server refused", err.Error(), "")
+	case errors.Is(err, domain.ErrNoAccount):
+		writeProblem(w, r, http.StatusNotFound, "No eToro account",
+			"you have no eToro account yet: add one under eToro accounts, or ask an account owner to share theirs", "")
 	case errors.Is(err, domain.ErrNotFound):
-		writeProblem(w, r, http.StatusNotFound, "Not found", "", "")
+		writeProblem(w, r, http.StatusNotFound, "Not found", detail(err, domain.ErrNotFound), "")
 	case errors.Is(err, domain.ErrPasswordChangeRequired):
 		writeProblem(w, r, http.StatusForbidden, "Password change required", "change the default password first", "")
 	case errors.Is(err, domain.ErrConflict):

@@ -34,6 +34,7 @@ tags:
   - name: risk
   - name: research
   - name: llm
+  - name: email
   - name: audit
 security:
   - sessionCookie: []
@@ -108,6 +109,130 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Me" }
         "401": { $ref: "#/components/responses/Problem" }
+  /api/v1/public/password-reset:
+    post:
+      tags: [auth]
+      operationId: requestPasswordReset
+      summary: E-mail a password-reset link to the user's address (same answer whether or not the user exists)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordResetRequest" }
+      responses:
+        "202": { description: If the user exists and has an e-mail address, a link is on its way }
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/public/password-reset/confirm:
+    post:
+      tags: [auth]
+      operationId: confirmPasswordReset
+      summary: Choose a new password with the link's token (ends every session of the user)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordResetConfirm" }
+      responses:
+        "204": { description: Changed; sign in with the new password }
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/profile:
+    get:
+      tags: [auth]
+      operationId: getMyProfile
+      summary: Your e-mail address and e-mail notification choices
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "401": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [auth]
+      operationId: setMyProfile
+      summary: Change your e-mail address and notification choices (web UI)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Profile" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/email:
+    get:
+      tags: [email]
+      operationId: getEmailSetup
+      summary: The outgoing mail server (admin; never the password)
+      responses:
+        "200":
+          description: Setup
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmailSetup" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [email]
+      operationId: setEmailSetup
+      summary: Change the outgoing mail server (admin, web UI). password absent keeps the stored one, "" removes it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailSetupInput" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmailSetup" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/email/test:
+    post:
+      tags: [email]
+      operationId: sendTestEmail
+      summary: Send a test e-mail now through the saved server (admin, web UI)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TestEmailRequest" }
+      responses:
+        "204": { description: The server accepted the message }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/email/outbox:
+    get:
+      tags: [email]
+      operationId: listOutbox
+      summary: The newest e-mails, sent or waiting (admin)
+      responses:
+        "200":
+          description: Mail
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/OutboxMail" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
   /api/v1/auth/password:
     post:
       tags: [auth]
@@ -800,7 +925,7 @@ paths:
     get:
       tags: [llm]
       operationId: getLlmSetup
-      summary: The LLM reviewer's setup and the providers to choose from (viewer; never the key)
+      summary: The LLM reviewer's profiles, the active one and the providers to choose from (viewer; never a key)
       responses:
         "200":
           description: Setup
@@ -810,32 +935,100 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
     put:
       tags: [llm]
-      operationId: setLlmConfig
-      summary: Change the LLM reviewer's setup (admin, web UI). The API key is set on the credentials endpoint (llm_api_key).
+      operationId: setLlmSettings
+      summary: Switch reviewing on or off and choose the active profile (admin, web UI)
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/LlmConfig" }
+            schema: { $ref: "#/components/schemas/LlmSettings" }
       responses:
         "200":
           description: Stored
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LlmConfig" }
+              schema: { $ref: "#/components/schemas/LlmSetup" }
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
-  /api/v1/llm/models:
+  /api/v1/llm/profiles:
     post:
       tags: [llm]
-      operationId: listLlmModels
-      summary: List the models a provider offers with the stored key (admin)
+      operationId: createLlmProfile
+      summary: Add a reviewer profile (admin, web UI)
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/LlmConfig" }
+            schema: { $ref: "#/components/schemas/LlmProfileInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmProfile" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/llm/profiles/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    put:
+      tags: [llm]
+      operationId: updateLlmProfile
+      summary: Change a reviewer profile (admin, web UI). apiKey absent keeps the stored key, "" removes it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LlmProfileInput" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmProfile" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [llm]
+      operationId: deleteLlmProfile
+      summary: Delete a reviewer profile and its key (admin, web UI); deleting the active one switches reviewing off
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/llm/profiles/{id}/test:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [llm]
+      operationId: testLlmProfile
+      summary: Ask a profile about a made-up trade (admin; nothing is traded)
+      responses:
+        "200":
+          description: Result (a provider failure is ok=false with the reason)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmTestResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/llm/models:
+    post:
+      tags: [llm]
+      operationId: listLlmModels
+      summary: List the models a provider offers, with the key typed in or a profile's stored key (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LlmModelsRequest" }
       responses:
         "200":
           description: Model ids
@@ -847,20 +1040,7 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
-        "503": { $ref: "#/components/responses/Problem" }
-  /api/v1/llm/test:
-    post:
-      tags: [llm]
-      operationId: testLlm
-      summary: Ask the reviewer about a made-up trade (admin; nothing is traded)
-      responses:
-        "200":
-          description: Result (a provider failure is ok=false with the reason)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/LlmTestResult" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
   /api/v1/audit:
     get:
@@ -927,9 +1107,84 @@ components:
       enum: [stopped, running, paused, killed]
     PublicStatus:
       type: object
-      required: [version]
+      required: [version, passwordResetAvailable]
       properties:
         version: { type: string }
+        passwordResetAvailable: { type: boolean, description: "\"Forgot password\" works (mail server and public address set)" }
+    PasswordResetRequest:
+      type: object
+      required: [username]
+      properties:
+        username: { type: string, maxLength: 64 }
+    PasswordResetConfirm:
+      type: object
+      required: [token, password]
+      properties:
+        token: { type: string, maxLength: 256 }
+        password: { type: string, maxLength: 512 }
+    NotifyPrefs:
+      type: object
+      required: [trades, watchlist, alerts]
+      properties:
+        trades: { type: boolean, description: "orders, fills and closes (buy, sell, short)" }
+        watchlist: { type: boolean, description: "shares added to or removed from a watchlist" }
+        alerts: { type: boolean, description: "warnings and errors: kill switch, limits, failures" }
+    Profile:
+      type: object
+      required: [email, notify]
+      properties:
+        email: { type: string, maxLength: 254, description: "empty = no e-mail" }
+        notify: { $ref: "#/components/schemas/NotifyPrefs" }
+    SmtpPreset:
+      type: object
+      required: [id, label, host, port, tls]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        host: { type: string }
+        port: { type: integer }
+        tls: { type: string }
+    EmailSetupInput:
+      type: object
+      required: [enabled, host, port, username, from, tls]
+      properties:
+        enabled: { type: boolean, description: "use this server for all e-mail" }
+        host: { type: string, maxLength: 255 }
+        port: { type: integer, minimum: 0, maximum: 65535 }
+        username: { type: string, maxLength: 254 }
+        from: { type: string, maxLength: 320, description: "Send as: Name <address>; empty = the user name" }
+        tls: { type: string, enum: [starttls, tls, none] }
+        password: { type: string, maxLength: 1024, description: "write-only; absent = keep, empty = remove" }
+    EmailSetup:
+      type: object
+      required: [enabled, host, port, username, from, tls, passwordSet, warnings, fallback, presets]
+      properties:
+        enabled: { type: boolean }
+        host: { type: string }
+        port: { type: integer }
+        username: { type: string }
+        from: { type: string }
+        tls: { type: string }
+        passwordSet: { type: boolean }
+        warnings: { type: array, items: { type: string } }
+        fallback: { type: string, description: "the deployment's server, used while this one is off (empty = none)" }
+        presets: { type: array, items: { $ref: "#/components/schemas/SmtpPreset" } }
+    TestEmailRequest:
+      type: object
+      required: [to]
+      properties:
+        to: { type: string, maxLength: 254 }
+    OutboxMail:
+      type: object
+      required: [id, to, subject, createdAt, attempts, lastError]
+      properties:
+        id: { type: string }
+        to: { type: string }
+        subject: { type: string }
+        createdAt: { type: string, format: date-time }
+        sentAt: { type: string, format: date-time }
+        attempts: { type: integer }
+        lastError: { type: string }
     SystemStatus:
       type: object
       required: [version, build, mode, agentState, database, startedAt, now]
@@ -1021,7 +1276,7 @@ components:
         secret: { type: string, description: "Bearer value; shown once, never again" }
     CredentialName:
       type: string
-      enum: [etoro_demo_api_key, etoro_demo_user_key, etoro_real_api_key, etoro_real_user_key, llm_api_key]
+      enum: [etoro_demo_api_key, etoro_demo_user_key, etoro_real_api_key, etoro_real_user_key]
     Credential:
       type: object
       required: [name, label, set]
@@ -1183,21 +1438,49 @@ components:
         defaultBaseUrl: { type: string }
         keyRequired: { type: boolean }
         note: { type: string }
-    LlmConfig:
+    LlmProfile:
       type: object
-      required: [enabled, provider, model, baseUrl, timeoutSeconds]
+      required: [id, name, provider, model, baseUrl, timeoutSeconds, keySet]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        provider: { type: string }
+        model: { type: string, description: "empty = the provider's default (Anthropic: claude-opus-5-5)" }
+        baseUrl: { type: string, description: "empty = the provider's address" }
+        timeoutSeconds: { type: integer }
+        keySet: { type: boolean }
+    LlmProfileInput:
+      type: object
+      required: [name, provider, model, baseUrl, timeoutSeconds]
+      properties:
+        name: { type: string, maxLength: 80, description: "empty = provider and model" }
+        provider: { type: string, maxLength: 32 }
+        model: { type: string, maxLength: 200 }
+        baseUrl: { type: string, maxLength: 500 }
+        timeoutSeconds: { type: integer, minimum: 0, maximum: 600 }
+        apiKey: { type: string, maxLength: 4096, description: "write-only; absent = keep the stored key, empty = remove it" }
+    LlmSettings:
+      type: object
+      required: [enabled, activeProfileId]
       properties:
         enabled: { type: boolean, description: "review every proposed trade (any reviewer failure rejects the trade)" }
+        activeProfileId: { type: string, maxLength: 64, description: "the profile reviews use (empty = none)" }
+    LlmModelsRequest:
+      type: object
+      required: [provider, baseUrl]
+      properties:
         provider: { type: string, maxLength: 32 }
-        model: { type: string, maxLength: 200, description: "empty = the provider's default (Anthropic: claude-opus-5-5)" }
-        baseUrl: { type: string, maxLength: 500, description: "empty = the provider's address" }
-        timeoutSeconds: { type: integer, minimum: 0, maximum: 600 }
+        baseUrl: { type: string, maxLength: 500 }
+        apiKey: { type: string, maxLength: 4096, description: "the key typed on the page; absent = the stored key of profileId" }
+        profileId: { type: string, maxLength: 64 }
     LlmSetup:
       type: object
-      required: [config, keySet, providers, defaultAnthropicModel]
+      required: [settings, profiles, providers, defaultAnthropicModel]
       properties:
-        config: { $ref: "#/components/schemas/LlmConfig" }
-        keySet: { type: boolean }
+        settings: { $ref: "#/components/schemas/LlmSettings" }
+        profiles:
+          type: array
+          items: { $ref: "#/components/schemas/LlmProfile" }
         defaultAnthropicModel: { type: string }
         providers:
           type: array
@@ -1276,13 +1559,26 @@ components:
         industryId: { type: integer, format: int64, minimum: 0, description: "0 = none" }
         enabled: { type: boolean }
         instruments: { type: array, maxItems: 50, items: { type: integer, format: int64 } }
+        llmProfileId: { type: string, maxLength: 64, description: "the LLM reviewer profile for this theme's candidates (empty = the default profile)" }
+    ThemeShare:
+      type: object
+      required: [instrumentId, symbol, name, market]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string }
+        name: { type: string }
+        market: { type: string }
     Theme:
       allOf:
         - $ref: "#/components/schemas/ThemeInput"
         - type: object
-          required: [id, createdAt, updatedAt]
+          required: [id, shares, createdAt, updatedAt]
           properties:
             id: { type: string }
+            shares:
+              type: array
+              description: the picked shares with their symbols
+              items: { $ref: "#/components/schemas/ThemeShare" }
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
     Industry:

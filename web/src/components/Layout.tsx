@@ -19,6 +19,7 @@ const sections: { title: string; items: Item[] }[] = [
   { title: "Setup", items: [
     { to: "/accounts", icon: "bi-wallet2", label: "eToro accounts" },
     { to: "/llm", icon: "bi-robot", label: "LLM reviewer" },
+    { to: "/email", icon: "bi-envelope", label: "E-mail", perm: "settings.write" },
     { to: "/api-keys", icon: "bi-plug", label: "API keys" },
   ] },
   { title: "Admin", items: [

@@ -110,6 +110,20 @@ banner on every page.
 | `CACTUSTRADE_TRUSTED_PROXIES` | — | CIDRs allowed to set `X-Forwarded-For` |
 | `CACTUSTRADE_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (JSON logs) |
 | `ETORO_DEMO_PUB` / `ETORO_DEMO_PK` (`_FILE`) | — | eToro demo key pair |
+| `CACTUSTRADE_PUBLIC_URL` | Docker: `https://<LAN address>:${HTTPS_PORT}` | The address in e-mailed links; empty = no password reset by e-mail |
+| `CACTUSTRADE_SMTP_HOST`, `_PORT`, `_TLS`, `_USER`, `_FROM` | Docker: `mailpit`, `1025`, `none` | The fallback mail server, used while none is switched on under *Setup → E-mail*; empty host = none |
+| `CACTUSTRADE_SMTP_PASSWORD` / `_FILE` | `${SECRETS_DIR}/smtp_password` | Its password (never in `.env`) |
+| `COMPOSE_PROFILES`, `MAILPIT_PORT` | `mailpit`, `8035` | Docker: the Mailpit test mailbox at `http://localhost:8035` (this machine only, no sign-in) |
+
+### E-mail
+
+Set the real mail server in the app under **Setup → E-mail** (Gmail by default: turn on
+2-Step Verification, create an *app password*, paste it; the page has a step-by-step guide
+for Gmail, Microsoft 365 and other providers, and a test button). Until then, Docker installs
+send through the bundled Mailpit test mailbox, so nothing leaves the machine. Each user sets
+an address and chooses what to be e-mailed about (trades, watchlist changes, alerts) under
+**Your account**; the same address receives password-reset links ("Forgot password?" on the
+sign-in page). Mail waits in an outbox and is retried; the outbox is on the E-mail page.
 
 ## API
 

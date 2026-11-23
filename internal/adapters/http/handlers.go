@@ -50,8 +50,8 @@ func (s *Server) Readyz(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetPublicStatus gives the sign-in page the version.
-func (s *Server) GetPublicStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, PublicStatus{Version: s.svc.Version()})
+func (s *Server) GetPublicStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, PublicStatus{Version: s.svc.Version(), PasswordResetAvailable: s.svc.PasswordResetAvailable(r.Context())})
 }
 
 func tooMany(w http.ResponseWriter, r *http.Request, wait time.Duration) {

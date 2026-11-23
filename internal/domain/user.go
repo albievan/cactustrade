@@ -17,8 +17,10 @@ type User struct {
 	// MustChangePassword is set on the built-in default administrator (admin/admin): until
 	// the password is changed, the account can do nothing but change it or sign out.
 	MustChangePassword bool
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// Email is where notifications and password-reset links go ("" = none).
+	Email     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Password length bounds. Long passphrases are encouraged; the upper bound only stops

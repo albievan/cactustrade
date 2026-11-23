@@ -3,10 +3,11 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-func toTheme(t domain.Theme) Theme {
+func toTheme(t app.ThemeView) Theme {
 	ids := make([]int64, len(t.Instruments))
 	for i, id := range t.Instruments {
 		ids[i] = int64(id)
@@ -15,7 +16,14 @@ func toTheme(t domain.Theme) Theme {
 	if kws == nil {
 		kws = []string{}
 	}
-	return Theme{Id: t.ID, Name: t.Name, Keywords: kws, IndustryId: t.IndustryID, Enabled: t.Enabled, Instruments: ids, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt}
+	shares := make([]ThemeShare, 0, len(t.Shares))
+	for _, in := range t.Shares {
+		shares = append(shares, ThemeShare{InstrumentId: int64(in.ID), Symbol: in.Symbol, Name: in.Name, Market: string(in.Market)})
+	}
+	return Theme{
+		Id: t.ID, Name: t.Name, Keywords: kws, IndustryId: t.IndustryID, Enabled: t.Enabled, Instruments: ids,
+		LlmProfileId: ptr(t.LLMProfileID), Shares: shares, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+	}
 }
 
 func fromThemeInput(id string, in ThemeInput) domain.Theme {
@@ -23,7 +31,11 @@ func fromThemeInput(id string, in ThemeInput) domain.Theme {
 	for i, x := range in.Instruments {
 		ids[i] = domain.InstrumentID(x)
 	}
-	return domain.Theme{ID: id, Name: in.Name, Keywords: in.Keywords, IndustryID: in.IndustryId, Enabled: in.Enabled, Instruments: ids}
+	t := domain.Theme{ID: id, Name: in.Name, Keywords: in.Keywords, IndustryID: in.IndustryId, Enabled: in.Enabled, Instruments: ids}
+	if in.LlmProfileId != nil {
+		t.LLMProfileID = *in.LlmProfileId
+	}
+	return t
 }
 
 // ListThemes lists the current account's themes.

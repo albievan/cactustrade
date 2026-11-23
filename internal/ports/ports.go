@@ -134,6 +134,29 @@ type Reviews interface {
 	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
+// Outbox stores mail waiting to be sent and mail sent.
+type Outbox interface {
+	Enqueue(ctx context.Context, m domain.OutboxMail) error
+	// Due returns unsent mail whose next attempt is due and that has not been given up
+	// (attempts < domain.MaxMailAttempts), oldest first.
+	Due(ctx context.Context, now time.Time, limit int) ([]domain.OutboxMail, error)
+	MarkSent(ctx context.Context, id string, at time.Time) error
+	MarkFailed(ctx context.Context, id string, attempts int, next time.Time, lastErr string) error
+	List(ctx context.Context, limit int) ([]domain.OutboxMail, error) // newest first
+	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
+}
+
+// PasswordResets stores password-reset links by token hash.
+type PasswordResets interface {
+	Create(ctx context.Context, r domain.PasswordReset) error
+	Get(ctx context.Context, tokenHash string) (domain.PasswordReset, error)
+	// Use marks an unused link used; a used or unknown link is domain.ErrNotFound.
+	Use(ctx context.Context, tokenHash string, at time.Time) error
+	CountSince(ctx context.Context, userID string, since time.Time) (int, error)
+	DeleteForUser(ctx context.Context, userID string) error
+	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -148,6 +171,8 @@ type Store interface {
 	Accounts() Accounts
 	Themes() Themes
 	Reviews() Reviews
+	Outbox() Outbox
+	PasswordResets() PasswordResets
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
@@ -287,4 +312,10 @@ type EventBus interface {
 	Publish(e Event)
 	// Subscribe returns a channel of events and a cancel function that closes it.
 	Subscribe(buffer int) (<-chan Event, func())
+}
+
+// Mailer delivers one message through the given server. A nil error means the server
+// accepted the message (it must then never be sent again).
+type Mailer interface {
+	Send(ctx context.Context, server domain.SMTPSettings, password string, m domain.Mail) error
 }

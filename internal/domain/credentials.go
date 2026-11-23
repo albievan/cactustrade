@@ -24,7 +24,7 @@ const (
 	CredEtoroDemoUserKey CredentialName = "etoro_demo_user_key"
 	CredEtoroRealAPIKey  CredentialName = "etoro_real_api_key"
 	CredEtoroRealUserKey CredentialName = "etoro_real_user_key"
-	CredLLMAPIKey        CredentialName = "llm_api_key"
+	CredLLMAPIKey        CredentialName = "llm_api_key" // before LLM profiles; migrated by app.MigrateLLMSetup
 )
 
 // CredentialInfo describes a credential for the UI (never its value).
@@ -39,7 +39,6 @@ var Credentials = []CredentialInfo{
 	{CredEtoroDemoUserKey, "eToro demo — user key (x-user-key)"},
 	{CredEtoroRealAPIKey, "eToro real — API key (x-api-key)"},
 	{CredEtoroRealUserKey, "eToro real — user key (x-user-key)"},
-	{CredLLMAPIKey, "LLM reviewer — API key"},
 }
 
 // CredentialEnv maps credentials that may come from the environment to their variable.

@@ -11,6 +11,9 @@ import (
 var (
 	// ErrNotFound means the thing asked for does not exist (or is not visible to the caller).
 	ErrNotFound = errors.New("not found")
+	// ErrNoAccount means the caller has no eToro account yet (none owned, none shared); it
+	// wraps ErrNotFound.
+	ErrNoAccount = fmt.Errorf("no eToro account: %w", ErrNotFound)
 	// ErrConflict means the request clashes with the current state (duplicate, last admin…).
 	ErrConflict = errors.New("conflict")
 	// ErrUnauthenticated means no valid credentials were presented.

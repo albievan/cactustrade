@@ -17,8 +17,10 @@ type Theme struct {
 	IndustryID  int64    // 0 = none; else one of eToro's stock industries
 	Enabled     bool
 	Instruments []InstrumentID // picked by hand
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// LLMProfileID is the reviewer profile for this theme's candidates ("" = the default).
+	LLMProfileID string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Theme limits.

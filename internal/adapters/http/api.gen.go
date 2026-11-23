@@ -101,7 +101,6 @@ const (
 	EtoroDemoUserKey CredentialName = "etoro_demo_user_key"
 	EtoroRealApiKey  CredentialName = "etoro_real_api_key"
 	EtoroRealUserKey CredentialName = "etoro_real_user_key"
-	LlmApiKey        CredentialName = "llm_api_key"
 )
 
 // Valid indicates whether the value is a known member of the CredentialName enum.
@@ -115,7 +114,26 @@ func (e CredentialName) Valid() bool {
 		return true
 	case EtoroRealUserKey:
 		return true
-	case LlmApiKey:
+	default:
+		return false
+	}
+}
+
+// Defines values for EmailSetupInputTls.
+const (
+	None     EmailSetupInputTls = "none"
+	Starttls EmailSetupInputTls = "starttls"
+	Tls      EmailSetupInputTls = "tls"
+)
+
+// Valid indicates whether the value is a known member of the EmailSetupInputTls enum.
+func (e EmailSetupInputTls) Valid() bool {
+	switch e {
+	case None:
+		return true
+	case Starttls:
+		return true
+	case Tls:
 		return true
 	default:
 		return false
@@ -508,6 +526,41 @@ type Eligibility struct {
 	Reason   *string `json:"reason,omitempty"`
 }
 
+// EmailSetup defines model for EmailSetup.
+type EmailSetup struct {
+	Enabled bool `json:"enabled"`
+
+	// Fallback the deployment's server, used while this one is off (empty = none)
+	Fallback    string       `json:"fallback"`
+	From        string       `json:"from"`
+	Host        string       `json:"host"`
+	PasswordSet bool         `json:"passwordSet"`
+	Port        int          `json:"port"`
+	Presets     []SmtpPreset `json:"presets"`
+	Tls         string       `json:"tls"`
+	Username    string       `json:"username"`
+	Warnings    []string     `json:"warnings"`
+}
+
+// EmailSetupInput defines model for EmailSetupInput.
+type EmailSetupInput struct {
+	// Enabled use this server for all e-mail
+	Enabled bool `json:"enabled"`
+
+	// From Send as: Name <address>; empty = the user name
+	From string `json:"from"`
+	Host string `json:"host"`
+
+	// Password write-only; absent = keep, empty = remove
+	Password *string            `json:"password,omitempty"`
+	Port     int                `json:"port"`
+	Tls      EmailSetupInputTls `json:"tls"`
+	Username string             `json:"username"`
+}
+
+// EmailSetupInputTls defines model for EmailSetupInput.Tls.
+type EmailSetupInputTls string
+
 // Event defines model for Event.
 type Event struct {
 	Actor    string        `json:"actor"`
@@ -555,16 +608,38 @@ type Instrument struct {
 	Type   string `json:"type"`
 }
 
-// LlmConfig defines model for LlmConfig.
-type LlmConfig struct {
+// LlmModelsRequest defines model for LlmModelsRequest.
+type LlmModelsRequest struct {
+	// ApiKey the key typed on the page; absent = the stored key of profileId
+	ApiKey    *string `json:"apiKey,omitempty"`
+	BaseUrl   string  `json:"baseUrl"`
+	ProfileId *string `json:"profileId,omitempty"`
+	Provider  string  `json:"provider"`
+}
+
+// LlmProfile defines model for LlmProfile.
+type LlmProfile struct {
 	// BaseUrl empty = the provider's address
 	BaseUrl string `json:"baseUrl"`
-
-	// Enabled review every proposed trade (any reviewer failure rejects the trade)
-	Enabled bool `json:"enabled"`
+	Id      string `json:"id"`
+	KeySet  bool   `json:"keySet"`
 
 	// Model empty = the provider's default (Anthropic: claude-opus-5-5)
 	Model          string `json:"model"`
+	Name           string `json:"name"`
+	Provider       string `json:"provider"`
+	TimeoutSeconds int    `json:"timeoutSeconds"`
+}
+
+// LlmProfileInput defines model for LlmProfileInput.
+type LlmProfileInput struct {
+	// ApiKey write-only; absent = keep the stored key, empty = remove it
+	ApiKey  *string `json:"apiKey,omitempty"`
+	BaseUrl string  `json:"baseUrl"`
+	Model   string  `json:"model"`
+
+	// Name empty = provider and model
+	Name           string `json:"name"`
 	Provider       string `json:"provider"`
 	TimeoutSeconds int    `json:"timeoutSeconds"`
 }
@@ -578,12 +653,21 @@ type LlmProvider struct {
 	Note           string `json:"note"`
 }
 
+// LlmSettings defines model for LlmSettings.
+type LlmSettings struct {
+	// ActiveProfileId the profile reviews use (empty = none)
+	ActiveProfileId string `json:"activeProfileId"`
+
+	// Enabled review every proposed trade (any reviewer failure rejects the trade)
+	Enabled bool `json:"enabled"`
+}
+
 // LlmSetup defines model for LlmSetup.
 type LlmSetup struct {
-	Config                LlmConfig     `json:"config"`
 	DefaultAnthropicModel string        `json:"defaultAnthropicModel"`
-	KeySet                bool          `json:"keySet"`
+	Profiles              []LlmProfile  `json:"profiles"`
 	Providers             []LlmProvider `json:"providers"`
+	Settings              LlmSettings   `json:"settings"`
 }
 
 // LlmTestResult defines model for LlmTestResult.
@@ -635,6 +719,40 @@ type Me struct {
 
 // MeVia defines model for Me.Via.
 type MeVia string
+
+// NotifyPrefs defines model for NotifyPrefs.
+type NotifyPrefs struct {
+	// Alerts warnings and errors: kill switch, limits, failures
+	Alerts bool `json:"alerts"`
+
+	// Trades orders, fills and closes (buy, sell, short)
+	Trades bool `json:"trades"`
+
+	// Watchlist shares added to or removed from a watchlist
+	Watchlist bool `json:"watchlist"`
+}
+
+// OutboxMail defines model for OutboxMail.
+type OutboxMail struct {
+	Attempts  int        `json:"attempts"`
+	CreatedAt time.Time  `json:"createdAt"`
+	Id        string     `json:"id"`
+	LastError string     `json:"lastError"`
+	SentAt    *time.Time `json:"sentAt,omitempty"`
+	Subject   string     `json:"subject"`
+	To        string     `json:"to"`
+}
+
+// PasswordResetConfirm defines model for PasswordResetConfirm.
+type PasswordResetConfirm struct {
+	Password string `json:"password"`
+	Token    string `json:"token"`
+}
+
+// PasswordResetRequest defines model for PasswordResetRequest.
+type PasswordResetRequest struct {
+	Username string `json:"username"`
+}
 
 // Portfolio defines model for Portfolio.
 type Portfolio struct {
@@ -690,9 +808,18 @@ type Problem struct {
 	Type   *string `json:"type,omitempty"`
 }
 
+// Profile defines model for Profile.
+type Profile struct {
+	// Email empty = no e-mail
+	Email  string      `json:"email"`
+	Notify NotifyPrefs `json:"notify"`
+}
+
 // PublicStatus defines model for PublicStatus.
 type PublicStatus struct {
-	Version string `json:"version"`
+	// PasswordResetAvailable "Forgot password" works (mail server and public address set)
+	PasswordResetAvailable bool   `json:"passwordResetAvailable"`
+	Version                string `json:"version"`
 }
 
 // Quote defines model for Quote.
@@ -805,6 +932,15 @@ type ShareAccountRequest struct {
 // ShareAccountRequestAccess defines model for ShareAccountRequest.Access.
 type ShareAccountRequestAccess string
 
+// SmtpPreset defines model for SmtpPreset.
+type SmtpPreset struct {
+	Host  string `json:"host"`
+	Id    string `json:"id"`
+	Label string `json:"label"`
+	Port  int    `json:"port"`
+	Tls   string `json:"tls"`
+}
+
 // SystemStatus defines model for SystemStatus.
 type SystemStatus struct {
 	Account    *Account             `json:"account,omitempty"`
@@ -820,6 +956,11 @@ type SystemStatus struct {
 // SystemStatusDatabase defines model for SystemStatus.Database.
 type SystemStatusDatabase string
 
+// TestEmailRequest defines model for TestEmailRequest.
+type TestEmailRequest struct {
+	To string `json:"to"`
+}
+
 // Theme defines model for Theme.
 type Theme struct {
 	CreatedAt time.Time `json:"createdAt"`
@@ -827,11 +968,17 @@ type Theme struct {
 	Id        string    `json:"id"`
 
 	// IndustryId 0 = none
-	IndustryId  int64     `json:"industryId"`
-	Instruments []int64   `json:"instruments"`
-	Keywords    []string  `json:"keywords"`
-	Name        string    `json:"name"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	IndustryId  int64    `json:"industryId"`
+	Instruments []int64  `json:"instruments"`
+	Keywords    []string `json:"keywords"`
+
+	// LlmProfileId the LLM reviewer profile for this theme's candidates (empty = the default profile)
+	LlmProfileId *string `json:"llmProfileId,omitempty"`
+	Name         string  `json:"name"`
+
+	// Shares the picked shares with their symbols
+	Shares    []ThemeShare `json:"shares"`
+	UpdatedAt time.Time    `json:"updatedAt"`
 }
 
 // ThemeInput defines model for ThemeInput.
@@ -842,7 +989,18 @@ type ThemeInput struct {
 	IndustryId  int64    `json:"industryId"`
 	Instruments []int64  `json:"instruments"`
 	Keywords    []string `json:"keywords"`
-	Name        string   `json:"name"`
+
+	// LlmProfileId the LLM reviewer profile for this theme's candidates (empty = the default profile)
+	LlmProfileId *string `json:"llmProfileId,omitempty"`
+	Name         string  `json:"name"`
+}
+
+// ThemeShare defines model for ThemeShare.
+type ThemeShare struct {
+	InstrumentId int64  `json:"instrumentId"`
+	Market       string `json:"market"`
+	Name         string `json:"name"`
+	Symbol       string `json:"symbol"`
 }
 
 // TradingMode defines model for TradingMode.
@@ -925,11 +1083,32 @@ type ChangePasswordJSONRequestBody = ChangePasswordRequest
 // SetCredentialJSONRequestBody defines body for SetCredential for application/json ContentType.
 type SetCredentialJSONRequestBody = SetCredentialRequest
 
-// SetLlmConfigJSONRequestBody defines body for SetLlmConfig for application/json ContentType.
-type SetLlmConfigJSONRequestBody = LlmConfig
+// SetEmailSetupJSONRequestBody defines body for SetEmailSetup for application/json ContentType.
+type SetEmailSetupJSONRequestBody = EmailSetupInput
+
+// SendTestEmailJSONRequestBody defines body for SendTestEmail for application/json ContentType.
+type SendTestEmailJSONRequestBody = TestEmailRequest
+
+// SetLlmSettingsJSONRequestBody defines body for SetLlmSettings for application/json ContentType.
+type SetLlmSettingsJSONRequestBody = LlmSettings
 
 // ListLlmModelsJSONRequestBody defines body for ListLlmModels for application/json ContentType.
-type ListLlmModelsJSONRequestBody = LlmConfig
+type ListLlmModelsJSONRequestBody = LlmModelsRequest
+
+// CreateLlmProfileJSONRequestBody defines body for CreateLlmProfile for application/json ContentType.
+type CreateLlmProfileJSONRequestBody = LlmProfileInput
+
+// UpdateLlmProfileJSONRequestBody defines body for UpdateLlmProfile for application/json ContentType.
+type UpdateLlmProfileJSONRequestBody = LlmProfileInput
+
+// SetMyProfileJSONRequestBody defines body for SetMyProfile for application/json ContentType.
+type SetMyProfileJSONRequestBody = Profile
+
+// RequestPasswordResetJSONRequestBody defines body for RequestPasswordReset for application/json ContentType.
+type RequestPasswordResetJSONRequestBody = PasswordResetRequest
+
+// ConfirmPasswordResetJSONRequestBody defines body for ConfirmPasswordReset for application/json ContentType.
+type ConfirmPasswordResetJSONRequestBody = PasswordResetConfirm
 
 // SetRiskLimitsJSONRequestBody defines body for SetRiskLimits for application/json ContentType.
 type SetRiskLimitsJSONRequestBody = RiskLimits
@@ -1026,6 +1205,18 @@ type ServerInterface interface {
 	// SetCredential Set a credential (admin, web UI session only); write-only
 	// (PUT /api/v1/credentials/{name})
 	SetCredential(w http.ResponseWriter, r *http.Request, name CredentialName)
+	// GetEmailSetup The outgoing mail server (admin; never the password)
+	// (GET /api/v1/email)
+	GetEmailSetup(w http.ResponseWriter, r *http.Request)
+	// SetEmailSetup Change the outgoing mail server (admin, web UI). password absent keeps the stored one, "" removes it.
+	// (PUT /api/v1/email)
+	SetEmailSetup(w http.ResponseWriter, r *http.Request)
+	// ListOutbox The newest e-mails, sent or waiting (admin)
+	// (GET /api/v1/email/outbox)
+	ListOutbox(w http.ResponseWriter, r *http.Request)
+	// SendTestEmail Send a test e-mail now through the saved server (admin, web UI)
+	// (POST /api/v1/email/test)
+	SendTestEmail(w http.ResponseWriter, r *http.Request)
 	// ListEvents The newest events and the caller's unread count (viewer)
 	// (GET /api/v1/events)
 	ListEvents(w http.ResponseWriter, r *http.Request, params ListEventsParams)
@@ -1038,21 +1229,42 @@ type ServerInterface interface {
 	// SearchInstruments Search eToro instruments by name or symbol (admin)
 	// (GET /api/v1/instruments/search)
 	SearchInstruments(w http.ResponseWriter, r *http.Request, params SearchInstrumentsParams)
-	// GetLlmSetup The LLM reviewer's setup and the providers to choose from (viewer; never the key)
+	// GetLlmSetup The LLM reviewer's profiles, the active one and the providers to choose from (viewer; never a key)
 	// (GET /api/v1/llm)
 	GetLlmSetup(w http.ResponseWriter, r *http.Request)
-	// SetLlmConfig Change the LLM reviewer's setup (admin, web UI). The API key is set on the credentials endpoint (llm_api_key).
+	// SetLlmSettings Switch reviewing on or off and choose the active profile (admin, web UI)
 	// (PUT /api/v1/llm)
-	SetLlmConfig(w http.ResponseWriter, r *http.Request)
-	// ListLlmModels List the models a provider offers with the stored key (admin)
+	SetLlmSettings(w http.ResponseWriter, r *http.Request)
+	// ListLlmModels List the models a provider offers, with the key typed in or a profile's stored key (admin)
 	// (POST /api/v1/llm/models)
 	ListLlmModels(w http.ResponseWriter, r *http.Request)
-	// TestLlm Ask the reviewer about a made-up trade (admin; nothing is traded)
-	// (POST /api/v1/llm/test)
-	TestLlm(w http.ResponseWriter, r *http.Request)
+	// CreateLlmProfile Add a reviewer profile (admin, web UI)
+	// (POST /api/v1/llm/profiles)
+	CreateLlmProfile(w http.ResponseWriter, r *http.Request)
+	// DeleteLlmProfile Delete a reviewer profile and its key (admin, web UI); deleting the active one switches reviewing off
+	// (DELETE /api/v1/llm/profiles/{id})
+	DeleteLlmProfile(w http.ResponseWriter, r *http.Request, id string)
+	// UpdateLlmProfile Change a reviewer profile (admin, web UI). apiKey absent keeps the stored key, "" removes it.
+	// (PUT /api/v1/llm/profiles/{id})
+	UpdateLlmProfile(w http.ResponseWriter, r *http.Request, id string)
+	// TestLlmProfile Ask a profile about a made-up trade (admin; nothing is traded)
+	// (POST /api/v1/llm/profiles/{id}/test)
+	TestLlmProfile(w http.ResponseWriter, r *http.Request, id string)
 	// GetMarketStatus Today's sessions for LSE and NYSE/NASDAQ (viewer)
 	// (GET /api/v1/market/status)
 	GetMarketStatus(w http.ResponseWriter, r *http.Request)
+	// GetMyProfile Your e-mail address and e-mail notification choices
+	// (GET /api/v1/me/profile)
+	GetMyProfile(w http.ResponseWriter, r *http.Request)
+	// SetMyProfile Change your e-mail address and notification choices (web UI)
+	// (PUT /api/v1/me/profile)
+	SetMyProfile(w http.ResponseWriter, r *http.Request)
+	// RequestPasswordReset E-mail a password-reset link to the user's address (same answer whether or not the user exists)
+	// (POST /api/v1/public/password-reset)
+	RequestPasswordReset(w http.ResponseWriter, r *http.Request)
+	// ConfirmPasswordReset Choose a new password with the link's token (ends every session of the user)
+	// (POST /api/v1/public/password-reset/confirm)
+	ConfirmPasswordReset(w http.ResponseWriter, r *http.Request)
 	// GetPublicStatus What the sign-in page needs before anyone is signed in
 	// (GET /api/v1/public/status)
 	GetPublicStatus(w http.ResponseWriter, r *http.Request)
@@ -1629,6 +1841,62 @@ func (siw *ServerInterfaceWrapper) SetCredential(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetEmailSetup operation middleware
+func (siw *ServerInterfaceWrapper) GetEmailSetup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEmailSetup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetEmailSetup operation middleware
+func (siw *ServerInterfaceWrapper) SetEmailSetup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetEmailSetup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOutbox operation middleware
+func (siw *ServerInterfaceWrapper) ListOutbox(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOutbox(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SendTestEmail operation middleware
+func (siw *ServerInterfaceWrapper) SendTestEmail(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SendTestEmail(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListEvents operation middleware
 func (siw *ServerInterfaceWrapper) ListEvents(w http.ResponseWriter, r *http.Request) {
 
@@ -1737,11 +2005,11 @@ func (siw *ServerInterfaceWrapper) GetLlmSetup(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// SetLlmConfig operation middleware
-func (siw *ServerInterfaceWrapper) SetLlmConfig(w http.ResponseWriter, r *http.Request) {
+// SetLlmSettings operation middleware
+func (siw *ServerInterfaceWrapper) SetLlmSettings(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SetLlmConfig(w, r)
+		siw.Handler.SetLlmSettings(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1765,11 +2033,89 @@ func (siw *ServerInterfaceWrapper) ListLlmModels(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
-// TestLlm operation middleware
-func (siw *ServerInterfaceWrapper) TestLlm(w http.ResponseWriter, r *http.Request) {
+// CreateLlmProfile operation middleware
+func (siw *ServerInterfaceWrapper) CreateLlmProfile(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.TestLlm(w, r)
+		siw.Handler.CreateLlmProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteLlmProfile operation middleware
+func (siw *ServerInterfaceWrapper) DeleteLlmProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteLlmProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateLlmProfile operation middleware
+func (siw *ServerInterfaceWrapper) UpdateLlmProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateLlmProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestLlmProfile operation middleware
+func (siw *ServerInterfaceWrapper) TestLlmProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestLlmProfile(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1784,6 +2130,62 @@ func (siw *ServerInterfaceWrapper) GetMarketStatus(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMarketStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMyProfile operation middleware
+func (siw *ServerInterfaceWrapper) GetMyProfile(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMyProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetMyProfile operation middleware
+func (siw *ServerInterfaceWrapper) SetMyProfile(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetMyProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RequestPasswordReset operation middleware
+func (siw *ServerInterfaceWrapper) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RequestPasswordReset(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmPasswordReset operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmPasswordReset(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmPasswordReset(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2320,6 +2722,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/me", wrapper.GetMe)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/public/password-reset", wrapper.RequestPasswordReset)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/public/password-reset/confirm", wrapper.ConfirmPasswordReset)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/me/profile", wrapper.GetMyProfile)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/me/profile", wrapper.SetMyProfile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/email", wrapper.GetEmailSetup)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/email", wrapper.SetEmailSetup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/email/test", wrapper.SendTestEmail)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/email/outbox", wrapper.ListOutbox)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/password", wrapper.ChangePassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/system/status", wrapper.GetSystemStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users", wrapper.ListUsers)
@@ -2366,9 +2776,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/scanner", wrapper.SetScanner)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/scanner/run", wrapper.RunScanner)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/llm", wrapper.GetLlmSetup)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/llm", wrapper.SetLlmConfig)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/llm", wrapper.SetLlmSettings)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/profiles", wrapper.CreateLlmProfile)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/llm/profiles/{id}", wrapper.DeleteLlmProfile)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/llm/profiles/{id}", wrapper.UpdateLlmProfile)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/profiles/{id}/test", wrapper.TestLlmProfile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/models", wrapper.ListLlmModels)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/test", wrapper.TestLlm)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.ListAudit)
 
 	return m

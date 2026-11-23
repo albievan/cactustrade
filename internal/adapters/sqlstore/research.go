@@ -15,13 +15,13 @@ import (
 
 type themes struct{ db *sql.DB }
 
-const themeCols = "id, account_id, name, keywords, industry_id, enabled, created_at, updated_at"
+const themeCols = "id, account_id, name, keywords, industry_id, enabled, llm_profile_id, created_at, updated_at"
 
 func (r themes) scan(ctx context.Context, row interface{ Scan(...any) error }) (domain.Theme, error) {
 	var t domain.Theme
 	var kws string
 	var c, u int64
-	if err := row.Scan(&t.ID, &t.AccountID, &t.Name, &kws, &t.IndustryID, &t.Enabled, &c, &u); err != nil {
+	if err := row.Scan(&t.ID, &t.AccountID, &t.Name, &kws, &t.IndustryID, &t.Enabled, &t.LLMProfileID, &c, &u); err != nil {
 		return domain.Theme{}, notFound(err)
 	}
 	if kws != "" {
@@ -85,8 +85,8 @@ func (r themes) inTx(ctx context.Context, f func(tx *sql.Tx) error) (err error) 
 
 func (r themes) Create(ctx context.Context, t domain.Theme) error {
 	err := r.inTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO themes ("+themeCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-			t.ID, t.AccountID, t.Name, strings.Join(t.Keywords, "\n"), t.IndustryID, t.Enabled, us(t.CreatedAt), us(t.UpdatedAt))
+		_, err := tx.ExecContext(ctx, "INSERT INTO themes ("+themeCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			t.ID, t.AccountID, t.Name, strings.Join(t.Keywords, "\n"), t.IndustryID, t.Enabled, t.LLMProfileID, us(t.CreatedAt), us(t.UpdatedAt))
 		if isDuplicate(err) {
 			return domain.ErrConflict
 		}
@@ -144,8 +144,8 @@ func (r themes) List(ctx context.Context, accountID string) ([]domain.Theme, err
 
 func (r themes) Update(ctx context.Context, t domain.Theme) error {
 	err := r.inTx(ctx, func(tx *sql.Tx) error {
-		if err := mustAffect(tx.ExecContext(ctx, "UPDATE themes SET name = ?, keywords = ?, industry_id = ?, enabled = ?, updated_at = ? WHERE id = ?",
-			t.Name, strings.Join(t.Keywords, "\n"), t.IndustryID, t.Enabled, us(t.UpdatedAt), t.ID)); err != nil {
+		if err := mustAffect(tx.ExecContext(ctx, "UPDATE themes SET name = ?, keywords = ?, industry_id = ?, enabled = ?, llm_profile_id = ?, updated_at = ? WHERE id = ?",
+			t.Name, strings.Join(t.Keywords, "\n"), t.IndustryID, t.Enabled, t.LLMProfileID, us(t.UpdatedAt), t.ID)); err != nil {
 			return err
 		}
 		return r.setInstruments(ctx, tx, t)

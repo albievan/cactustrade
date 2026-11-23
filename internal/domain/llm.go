@@ -108,3 +108,49 @@ func ClampVerdict(v Verdict) Verdict {
 	}
 	return v
 }
+
+// LLMProfile is one named reviewer setup (provider, model, address, time limit) with its own
+// write-only key (LLMKeyName). Several can be set up; the reviewer uses the active one.
+type LLMProfile struct {
+	ID   string
+	Name string
+	LLMConfig
+}
+
+// MaxLLMProfiles bounds how many reviewer setups can be stored.
+const MaxLLMProfiles = 20
+
+// LLMKeyName is the secret holding a profile's API key.
+func LLMKeyName(profileID string) CredentialName {
+	return CredentialName("llm." + profileID + ".api_key")
+}
+
+// Normalize trims the profile's text fields.
+func (p LLMProfile) Normalize() LLMProfile {
+	p.Name = strings.TrimSpace(p.Name)
+	p.Model = strings.TrimSpace(p.Model)
+	p.BaseURL = strings.TrimSpace(p.BaseURL)
+	if p.Name == "" {
+		if pr, ok := LLMProviderByID(p.Provider); ok {
+			p.Name = pr.Label
+			if p.Model != "" {
+				p.Name += " · " + p.Model
+			}
+		}
+	}
+	return p
+}
+
+// Validate checks a normalised profile.
+func (p LLMProfile) Validate() error {
+	if p.Name == "" || len(p.Name) > 80 || strings.ContainsFunc(p.Name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return Invalid("name", "1-80 characters, no control characters")
+	}
+	return p.LLMConfig.Validate()
+}
+
+// LLMSettings are the reviewer's switch and the chosen profile.
+type LLMSettings struct {
+	Enabled bool   // review every proposed trade
+	Active  string // the profile in use ("" = none)
+}

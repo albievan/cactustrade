@@ -45,7 +45,7 @@ func TestThemes(t *testing.T) {
 		t.Fatal("picked share not cached")
 	}
 	space.Enabled = false
-	if s2, err := e.svc.SaveTheme(ctx, e.admin, space); err != nil || s2.Enabled || !s2.CreatedAt.Equal(space.CreatedAt) {
+	if s2, err := e.svc.SaveTheme(ctx, e.admin, space.Theme); err != nil || s2.Enabled || !s2.CreatedAt.Equal(space.CreatedAt) {
 		t.Fatalf("update = %+v %v", s2, err)
 	}
 	if _, err := e.svc.SaveTheme(ctx, e.admin, domain.Theme{ID: "nope", Name: "x", Keywords: []string{"a"}}); !errors.Is(err, domain.ErrNotFound) {

@@ -257,6 +257,7 @@ ensure_secrets_dir() {
   for s in db_password db_root_password metrics_token; do
     [[ -s "$SECRETS_DIR/$s" ]] || { random_secret >"$SECRETS_DIR/$s"; ok "generated $SECRETS_DIR/$s"; }
   done
+  [[ -f "$SECRETS_DIR/smtp_password" ]] || : >"$SECRETS_DIR/smtp_password" # the fallback mail server's (empty = none)
   if [[ ! -s "$SECRETS_DIR/master_key" ]]; then
     NEW_INSTALL=1
     random_key >"$SECRETS_DIR/master_key"
@@ -309,7 +310,8 @@ docker_install() {
   ensure_secrets_dir
   info "building cactusTrade ${CACTUSTRADE_VERSION} (build ${CACTUSTRADE_BUILD})"
   compose build app
-  info "starting cactusTrade (MariaDB + app)"
+  export CACTUSTRADE_PUBLIC_URL="${CACTUSTRADE_PUBLIC_URL:-https://$(lan_address):${HTTPS_PORT}}"
+  info "starting cactusTrade (MariaDB + app${COMPOSE_PROFILES:+ + $COMPOSE_PROFILES})"
   compose up -d --remove-orphans
   info "waiting for the app to become healthy"
   local id state
@@ -319,6 +321,7 @@ docker_install() {
     if [[ "$state" == healthy ]]; then
       ok "cactusTrade is running at https://$(lan_address):${HTTPS_PORT} (also https://localhost:${HTTPS_PORT})"
       echo "    certificate:   self-signed unless you set your own; accept the browser warning once"
+      [[ ",${COMPOSE_PROFILES:-}," == *",mailpit,"* ]] && echo "    test mailbox:  http://localhost:${MAILPIT_PORT} (every e-mail the app sends, until a real server is set under E-mail)"
       [[ $NEW_INSTALL -eq 1 ]] && echo "$FIRST_RUN_NOTE"
       echo "    master_key:    keep a copy of $(abs_dir "$SECRETS_DIR")/master_key OFF this machine"
       return 0
@@ -481,6 +484,7 @@ stringData:
   metrics_token: "$(random_secret)"
   etoro_demo_pub: ""
   etoro_demo_pk: ""
+  smtp_password: ""
 YAML
     NEW_INSTALL=1
     ok "generated the passwords and the master key in secret cactustrade-secrets"
@@ -491,6 +495,8 @@ YAML
     if [[ -n "$v" ]]; then secret_patch "$s" "$v"; ok "eToro demo key $s taken from the environment"
     elif ! kc -n "$K8S_NAMESPACE" get secret cactustrade-secrets -o "jsonpath={.data}" </dev/null | grep -q "\"$s\""; then secret_patch "$s" ""; fi
   done
+  # installs from before e-mail support have no smtp_password key yet
+  kc -n "$K8S_NAMESPACE" get secret cactustrade-secrets -o "jsonpath={.data}" </dev/null | grep -q '"smtp_password"' || secret_patch smtp_password ""
 }
 
 k8s_https() {
@@ -550,6 +556,12 @@ k8s_install() {
   info "applying manifests to namespace ${K8S_NAMESPACE}"
   kc create namespace "$K8S_NAMESPACE" --dry-run=client -o yaml | kc apply -f - >/dev/null
   k8s_secrets
+  # no Mailpit in the cluster: without a real fallback server mail waits for Setup → E-mail
+  [[ "${CACTUSTRADE_SMTP_HOST:-}" == mailpit ]] && export CACTUSTRADE_SMTP_HOST=""
+  if [[ -z "${CACTUSTRADE_PUBLIC_URL:-}" && "${K8S_HTTPS:-false}" == true && -n "${K8S_HTTPS_HOST:-}" ]]; then
+    export CACTUSTRADE_PUBLIC_URL="https://${K8S_HTTPS_HOST}"
+  fi
+  export CACTUSTRADE_PUBLIC_URL="${CACTUSTRADE_PUBLIC_URL:-}" CACTUSTRADE_SMTP_HOST="${CACTUSTRADE_SMTP_HOST:-}"
   render | kc apply -f -
   k8s_https
   info "waiting for the rollout"

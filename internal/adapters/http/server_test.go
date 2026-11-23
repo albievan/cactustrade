@@ -233,7 +233,7 @@ func TestDefaultAdminLoginCSRFAndRBAC(t *testing.T) {
 	}
 
 	// credentials: write-only
-	if code, _, _ := x.do("PUT", "/api/v1/credentials/llm_api_key", `{"value":"top-secret"}`, "X-CSRF-Token", x.csrf); code != 204 {
+	if code, _, _ := x.do("PUT", "/api/v1/credentials/etoro_real_api_key", `{"value":"top-secret"}`, "X-CSRF-Token", x.csrf); code != 204 {
 		t.Fatal("set credential")
 	}
 	if code, _, _ := x.do("PUT", "/api/v1/credentials/aws", `{"value":"x"}`, "X-CSRF-Token", x.csrf); code != 400 {
@@ -246,10 +246,10 @@ func TestDefaultAdminLoginCSRFAndRBAC(t *testing.T) {
 	if strings.Contains(string(b), "top-secret") || !strings.Contains(string(b), `"set":true`) {
 		t.Fatalf("credentials leak or missing: %s", b)
 	}
-	if code, _, _ := x.do("DELETE", "/api/v1/credentials/llm_api_key", "", "X-CSRF-Token", x.csrf); code != 204 {
+	if code, _, _ := x.do("DELETE", "/api/v1/credentials/etoro_real_api_key", "", "X-CSRF-Token", x.csrf); code != 204 {
 		t.Fatal("delete credential")
 	}
-	if code, _, _ := x.do("DELETE", "/api/v1/credentials/llm_api_key", "", "X-CSRF-Token", x.csrf); code != 404 {
+	if code, _, _ := x.do("DELETE", "/api/v1/credentials/etoro_real_api_key", "", "X-CSRF-Token", x.csrf); code != 404 {
 		t.Fatal("delete missing credential")
 	}
 	for _, a := range x.store.AuditEntries() {

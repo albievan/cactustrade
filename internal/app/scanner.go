@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 	"github.com/albievan/cactustrade/internal/strategy"
 )
 
@@ -52,6 +53,7 @@ func (s *Service) SetScanner(ctx context.Context, p Principal, on bool) error {
 type universeItem struct {
 	in    domain.Instrument
 	theme string
+	llm   string // the theme's reviewer profile ("" = the default)
 }
 
 // universe is the stocks the scanner reviews for an account: the watchlist, then the enabled
@@ -60,19 +62,19 @@ func (s *Service) universe(ctx context.Context, v domain.AccountView) ([]univers
 	bctx := brokerCtx(ctx, v)
 	var out []universeItem
 	seen := map[domain.InstrumentID]bool{}
-	add := func(in domain.Instrument, theme string) {
+	add := func(in domain.Instrument, theme, llm string) {
 		if len(out) >= scanMax || seen[in.ID] || in.ID <= 0 || in.Market == "" || !domain.IsShare(in.Type) {
 			return
 		}
 		seen[in.ID] = true
-		out = append(out, universeItem{in: in, theme: theme})
+		out = append(out, universeItem{in: in, theme: theme, llm: llm})
 	}
 	wl, err := s.d.Store.Watchlist().List(ctx, v.ID)
 	if err != nil {
 		return nil, err
 	}
 	for _, w := range wl {
-		add(w.Instrument, "watchlist")
+		add(w.Instrument, "watchlist", "")
 	}
 	themes, err := s.d.Store.Themes().List(ctx, v.ID)
 	if err != nil {
@@ -84,7 +86,7 @@ func (s *Service) universe(ctx context.Context, v domain.AccountView) ([]univers
 		}
 		for _, id := range t.Instruments {
 			if in, _, err := s.d.Store.Instruments().Get(ctx, id); err == nil {
-				add(in, t.Name)
+				add(in, t.Name, t.LLMProfileID)
 			}
 		}
 		for _, kw := range t.Keywords {
@@ -94,7 +96,7 @@ func (s *Service) universe(ctx context.Context, v domain.AccountView) ([]univers
 				continue
 			}
 			for _, in := range res {
-				add(in, t.Name)
+				add(in, t.Name, t.LLMProfileID)
 			}
 		}
 		if t.IndustryID > 0 && s.d.Research != nil {
@@ -104,7 +106,7 @@ func (s *Service) universe(ctx context.Context, v domain.AccountView) ([]univers
 				continue
 			}
 			for _, in := range res {
-				add(in, t.Name)
+				add(in, t.Name, t.LLMProfileID)
 			}
 		}
 	}
@@ -216,6 +218,13 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 			case len(onList) >= watchlistCap:
 				r.Outcome, r.Summary = domain.ReviewSkipped, c.Playbook+" passed, but the watchlist is full ("+strconv.Itoa(watchlistCap)+")"
 			default:
+				if rc, ok := s.llmCheck(ctx, it.llm, *c, bars); ok {
+					r.Checks = append(r.Checks, rc)
+					if !rc.Pass {
+						r.Outcome, r.Summary = domain.ReviewSkipped, c.Playbook+" passed, but the LLM reviewer said no: "+rc.Detail
+						break
+					}
+				}
 				if err := s.d.Store.Watchlist().Add(ctx, v.ID, it.in.ID, "scanner", r.At); err != nil && !errors.Is(err, domain.ErrConflict) {
 					r.Outcome, r.Summary = domain.ReviewError, "adding to the watchlist failed: "+err.Error()
 					break
@@ -232,6 +241,64 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 		res.Reviewed++
 	}
 	return res, nil
+}
+
+// reviewerFor picks the reviewer for a theme: its own profile when set and present, else the
+// default (active) one. ok is false when reviewing is switched off.
+func (s *Service) reviewerFor(ctx context.Context, profileID string) (domain.LLMProfile, string, bool, error) {
+	st, ps, err := s.loadLLM(ctx)
+	if err != nil {
+		return domain.LLMProfile{}, "", true, err
+	}
+	if !st.Enabled {
+		return domain.LLMProfile{}, "", false, nil
+	}
+	i := slices.IndexFunc(ps, func(x domain.LLMProfile) bool { return x.ID == profileID && profileID != "" })
+	if i < 0 {
+		i = slices.IndexFunc(ps, func(x domain.LLMProfile) bool { return x.ID == st.Active })
+	}
+	if i < 0 {
+		return domain.LLMProfile{}, "", true, errors.New("no reviewer profile is chosen")
+	}
+	key, err := s.llmKey(ctx, ps[i].ID)
+	return ps[i], key, true, err
+}
+
+// llmCheck asks the theme's (or the default) reviewer about a candidate before the scanner
+// adds it to the watchlist. ok is false when reviewing is off. Any failure is a "no"
+// (fail closed); the reviewer can only agree or refuse, never add anything.
+func (s *Service) llmCheck(ctx context.Context, profileID string, c domain.Candidate, bars []domain.Candle) (domain.ReviewCheck, bool) {
+	if s.d.Reviewer == nil {
+		return domain.ReviewCheck{}, false
+	}
+	pr, key, on, err := s.reviewerFor(ctx, profileID)
+	if !on {
+		return domain.ReviewCheck{}, false
+	}
+	rule := "LLM reviewer agrees"
+	if err != nil {
+		return domain.ReviewCheck{Rule: rule, Detail: "unusable: " + err.Error()}, true
+	}
+	rule += " (" + pr.Name + ")"
+	if err := pr.Validate(); err != nil {
+		return domain.ReviewCheck{Rule: rule, Detail: "setup: " + err.Error()}, true
+	}
+	recent := bars
+	if len(recent) > 30 {
+		recent = recent[len(recent)-30:]
+	}
+	timeout := time.Duration(pr.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	rctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	v, err := s.d.Reviewer.Review(rctx, pr.LLMConfig, key, ports.ReviewInput{Candidate: c, RecentCandles: recent})
+	if err != nil {
+		return domain.ReviewCheck{Rule: rule, Detail: "no usable answer: " + err.Error()}, true
+	}
+	v = domain.ClampVerdict(v)
+	return domain.ReviewCheck{Rule: rule, Pass: v.Kind != domain.VerdictReject, Detail: string(v.Kind) + ": " + v.Reason}, true
 }
 
 // evaluate runs the strategy on one stock's bars (tests replace it with evalOverride).

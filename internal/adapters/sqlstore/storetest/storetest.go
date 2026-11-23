@@ -493,7 +493,7 @@ func Run(t *testing.T, s ports.Store) {
 		th, rv := s.Themes(), s.Reviews()
 		space := domain.Theme{
 			ID: "th-1", AccountID: "acc-1", Name: "Space", Keywords: []string{"rocket", "satellite"}, Enabled: true,
-			Instruments: []domain.InstrumentID{1001}, CreatedAt: t0, UpdatedAt: t0,
+			Instruments: []domain.InstrumentID{1001}, LLMProfileID: "llm-1", CreatedAt: t0, UpdatedAt: t0,
 		}
 		if err := th.Create(ctx, space); err != nil {
 			t.Fatal(err)
@@ -514,18 +514,18 @@ func Run(t *testing.T, s ports.Store) {
 			t.Fatal(err)
 		}
 		got, err := th.Get(ctx, "th-1")
-		if err != nil || got.Name != "Space" || len(got.Keywords) != 2 || got.Keywords[1] != "satellite" || len(got.Instruments) != 1 || !got.Enabled {
+		if err != nil || got.Name != "Space" || got.LLMProfileID != "llm-1" || len(got.Keywords) != 2 || got.Keywords[1] != "satellite" || len(got.Instruments) != 1 || !got.Enabled {
 			t.Fatalf("Get = %+v %v", got, err)
 		}
 		list, err := th.List(ctx, "acc-1")
 		if err != nil || len(list) != 2 || list[0].Name != "Semiconductors" || list[0].Keywords != nil || list[1].Instruments[0] != 1001 {
 			t.Fatalf("List = %+v %v", list, err)
 		}
-		space.Enabled, space.Keywords, space.Instruments, space.UpdatedAt = false, nil, nil, t0.Add(time.Minute)
+		space.Enabled, space.Keywords, space.Instruments, space.UpdatedAt, space.LLMProfileID = false, nil, nil, t0.Add(time.Minute), ""
 		if err := th.Update(ctx, space); err != nil {
 			t.Fatal(err)
 		}
-		if g, _ := th.Get(ctx, "th-1"); g.Enabled || len(g.Keywords) != 0 || len(g.Instruments) != 0 {
+		if g, _ := th.Get(ctx, "th-1"); g.Enabled || g.LLMProfileID != "" || len(g.Keywords) != 0 || len(g.Instruments) != 0 {
 			t.Fatalf("after Update = %+v", g)
 		}
 		if err := th.Update(ctx, domain.Theme{ID: "nope", Name: "x"}); !errors.Is(err, domain.ErrNotFound) {
@@ -572,6 +572,109 @@ func Run(t *testing.T, s ports.Store) {
 		}
 		if rs, _ := rv.List(ctx, "acc-1", 10); len(rs) != 0 {
 			t.Fatal("reviews survived their account")
+		}
+	})
+
+	t.Run("user_email", func(t *testing.T) {
+		u, err := s.Users().GetByUsername(ctx, admin.Username)
+		if err != nil || u.Email != "" {
+			t.Fatalf("no e-mail yet = %+v %v", u, err)
+		}
+		u.Email = "admin@example.com"
+		if err := s.Users().Update(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		if g, _ := s.Users().Get(ctx, u.ID); g.Email != "admin@example.com" {
+			t.Fatalf("e-mail = %q", g.Email)
+		}
+	})
+
+	t.Run("outbox", func(t *testing.T) {
+		o := s.Outbox()
+		m := func(id string, at time.Time) domain.OutboxMail {
+			return domain.OutboxMail{Mail: domain.Mail{ID: id, To: "a@example.com", Subject: "s " + id, Body: "body\nline"}, CreatedAt: at, NextAt: at}
+		}
+		for i, id := range []string{"m1", "m2", "m3"} {
+			if err := o.Enqueue(ctx, m(id, t0.Add(time.Duration(i)*time.Second))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := o.Enqueue(ctx, m("m1", t0)); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("duplicate: %v", err)
+		}
+		due, err := o.Due(ctx, t0.Add(time.Second), 10)
+		if err != nil || len(due) != 2 || due[0].ID != "m1" || due[0].Body != "body\nline" {
+			t.Fatalf("Due = %+v %v", due, err)
+		}
+		if err := o.MarkSent(ctx, "m1", t0.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		long := strings.Repeat("e", 700)
+		if err := o.MarkFailed(ctx, "m2", 1, t0.Add(time.Hour), long); err != nil {
+			t.Fatal(err)
+		}
+		if err := o.MarkFailed(ctx, "m1", 1, t0, "late failure"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("failure recorded on sent mail: %v", err)
+		}
+		if err := o.MarkSent(ctx, "nope", t0); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("MarkSent unknown: %v", err)
+		}
+		due, _ = o.Due(ctx, t0.Add(time.Minute), 10)
+		if len(due) != 1 || due[0].ID != "m3" {
+			t.Fatalf("Due after send/fail = %+v", due)
+		}
+		_ = o.MarkFailed(ctx, "m3", domain.MaxMailAttempts, t0, "gave up")
+		if due, _ := o.Due(ctx, t0.Add(48*time.Hour), 10); len(due) != 1 || due[0].ID != "m2" || due[0].Attempts != 1 || len(due[0].LastError) != 500 {
+			t.Fatalf("Due later = %+v", due)
+		}
+		all, err := o.List(ctx, 10)
+		if err != nil || len(all) != 3 || all[0].ID != "m3" || all[2].SentAt.IsZero() || all[2].Attempts != 1 {
+			t.Fatalf("List = %+v %v", all, err)
+		}
+		if n, err := o.DeleteBefore(ctx, t0.Add(1500*time.Millisecond)); err != nil || n != 2 {
+			t.Fatalf("DeleteBefore = %d %v", n, err)
+		}
+	})
+
+	t.Run("password_resets", func(t *testing.T) {
+		pr := s.PasswordResets()
+		r := domain.PasswordReset{TokenHash: strings.Repeat("a", 64), UserID: admin.ID, CreatedAt: t0, ExpiresAt: t0.Add(30 * time.Minute)}
+		if err := pr.Create(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if err := pr.Create(ctx, r); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("duplicate: %v", err)
+		}
+		if err := pr.Create(ctx, domain.PasswordReset{TokenHash: strings.Repeat("b", 64), UserID: admin.ID, CreatedAt: t0.Add(time.Minute), ExpiresAt: t0.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		g, err := pr.Get(ctx, r.TokenHash)
+		if err != nil || g.UserID != admin.ID || !g.ExpiresAt.Equal(r.ExpiresAt) || !g.UsedAt.IsZero() {
+			t.Fatalf("Get = %+v %v", g, err)
+		}
+		if _, err := pr.Get(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("Get unknown")
+		}
+		if n, err := pr.CountSince(ctx, admin.ID, t0.Add(30*time.Second)); err != nil || n != 1 {
+			t.Fatalf("CountSince = %d %v", n, err)
+		}
+		if err := pr.Use(ctx, r.TokenHash, t0.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if err := pr.Use(ctx, r.TokenHash, t0.Add(time.Minute)); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("used twice: %v", err)
+		}
+		if g, _ := pr.Get(ctx, r.TokenHash); g.UsedAt.IsZero() {
+			t.Fatal("UsedAt not stored")
+		}
+		if n, err := pr.DeleteBefore(ctx, t0.Add(45*time.Minute)); err != nil || n != 1 {
+			t.Fatalf("DeleteBefore = %d %v", n, err)
+		}
+		if err := pr.DeleteForUser(ctx, admin.ID); err != nil {
+			t.Fatal(err)
+		}
+		if n, _ := pr.CountSince(ctx, admin.ID, t0); n != 0 {
+			t.Fatal("DeleteForUser left links")
 		}
 	})
 }

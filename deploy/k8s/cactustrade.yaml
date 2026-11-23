@@ -29,6 +29,13 @@ data:
   CACTUSTRADE_TRUSTED_PROXIES: "10.42.0.0/16"
   ETORO_DEMO_PUB_FILE: /run/secrets/etoro_demo_pub
   ETORO_DEMO_PK_FILE: /run/secrets/etoro_demo_pk
+  CACTUSTRADE_PUBLIC_URL: "${CACTUSTRADE_PUBLIC_URL}"
+  CACTUSTRADE_SMTP_HOST: "${CACTUSTRADE_SMTP_HOST}"
+  CACTUSTRADE_SMTP_PORT: "${CACTUSTRADE_SMTP_PORT}"
+  CACTUSTRADE_SMTP_TLS: "${CACTUSTRADE_SMTP_TLS}"
+  CACTUSTRADE_SMTP_USER: "${CACTUSTRADE_SMTP_USER}"
+  CACTUSTRADE_SMTP_FROM: "${CACTUSTRADE_SMTP_FROM}"
+  CACTUSTRADE_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -151,6 +158,7 @@ spec:
               - { key: metrics_token, path: metrics_token }
               - { key: etoro_demo_pub, path: etoro_demo_pub }
               - { key: etoro_demo_pk, path: etoro_demo_pk }
+              - { key: smtp_password, path: smtp_password }
 ---
 apiVersion: v1
 kind: Service

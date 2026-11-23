@@ -197,6 +197,11 @@ func PurgeLoop(ctx context.Context, svc *app.Service, log *slog.Logger, every ti
 			} else if n > 0 {
 				log.InfoContext(ctx, "purged old events", "count", n)
 			}
+			if n, err := svc.PurgeOldMail(ctx); err != nil {
+				log.WarnContext(ctx, "purging old mail failed", "err", err)
+			} else if n > 0 {
+				log.InfoContext(ctx, "purged old mail", "count", n)
+			}
 		}
 	}
 }

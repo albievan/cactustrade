@@ -61,6 +61,11 @@ type Deps struct {
 	// supplied by cmd/cactustrade; nil = not supported.
 	Reload  func(ctx context.Context) error
 	Restart func()
+	// Mailer sends e-mail (nil = no e-mail). MailFallback is the deployment's mail server
+	// (CACTUSTRADE_SMTP_* and the smtp_password secret), used while none is switched on in
+	// the app; ok=false when there is none.
+	Mailer       ports.Mailer
+	MailFallback func() (server domain.SMTPSettings, password string, ok bool)
 }
 
 // Config holds use-case settings.
@@ -68,6 +73,9 @@ type Config struct {
 	Sessions domain.SessionPolicy
 	Version  string
 	Build    string
+	// PublicURL is the address users open the app at (https://host:port), for links in
+	// e-mails; "" switches password reset by e-mail off.
+	PublicURL string
 }
 
 // Service implements the use cases.

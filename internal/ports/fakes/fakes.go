@@ -142,6 +142,8 @@ type Store struct {
 	themes   map[string]domain.Theme
 	reviews  map[string]domain.Review                  // account/instrument
 	shares   map[string]map[string]domain.AccountShare // account → user
+	outbox   []domain.OutboxMail
+	resets   map[string]domain.PasswordReset
 	PingErr  error
 }
 
@@ -159,6 +161,7 @@ func NewStore() *Store {
 		watch:    map[string]map[domain.InstrumentID]domain.WatchItem{},
 		accounts: map[string]domain.Account{}, shares: map[string]map[string]domain.AccountShare{},
 		themes: map[string]domain.Theme{}, reviews: map[string]domain.Review{},
+		resets: map[string]domain.PasswordReset{},
 	}
 }
 
@@ -196,6 +199,12 @@ func (s *Store) Themes() ports.Themes { return themeRepo{s} }
 
 // Reviews returns the reviews repository.
 func (s *Store) Reviews() ports.Reviews { return reviewRepo{s} }
+
+// Outbox returns the outbox repository.
+func (s *Store) Outbox() ports.Outbox { return outboxRepo{s} }
+
+// PasswordResets returns the password-reset repository.
+func (s *Store) PasswordResets() ports.PasswordResets { return resetRepo{s} }
 
 // Accounts returns the accounts repository.
 func (s *Store) Accounts() ports.Accounts { return accountRepo{s} }

@@ -58,11 +58,30 @@ services:
       # eToro demo keys (empty files when not provided; then set them in the web UI).
       ETORO_DEMO_PUB_FILE: /run/secrets/etoro_demo_pub
       ETORO_DEMO_PK_FILE: /run/secrets/etoro_demo_pk
-    secrets: [db_password, master_key, metrics_token, etoro_demo_pub, etoro_demo_pk]
+      # E-mail: links point here; the fallback mail server (see .env).
+      CACTUSTRADE_PUBLIC_URL: ${CACTUSTRADE_PUBLIC_URL:-}
+      CACTUSTRADE_SMTP_HOST: ${CACTUSTRADE_SMTP_HOST:-}
+      CACTUSTRADE_SMTP_PORT: ${CACTUSTRADE_SMTP_PORT:-587}
+      CACTUSTRADE_SMTP_TLS: ${CACTUSTRADE_SMTP_TLS:-starttls}
+      CACTUSTRADE_SMTP_USER: ${CACTUSTRADE_SMTP_USER:-}
+      CACTUSTRADE_SMTP_FROM: ${CACTUSTRADE_SMTP_FROM:-}
+      CACTUSTRADE_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+    secrets: [db_password, master_key, metrics_token, etoro_demo_pub, etoro_demo_pk, smtp_password]
     volumes:
       - ${DATA_DIR}:/data
     ports:
       - "${HTTPS_PORT}:8443"
+
+  # Test mailbox (COMPOSE_PROFILES=mailpit): catches every e-mail the app sends and shows it
+  # at http://localhost:${MAILPIT_PORT}. No sign-in, so it listens on this machine only.
+  mailpit:
+    image: axllent/mailpit:v1.21
+    profiles: [mailpit]
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:${MAILPIT_PORT:-8035}:8025"
 
 secrets:
   db_password: { file: "${SECRETS_DIR}/db_password" }
@@ -71,3 +90,4 @@ secrets:
   metrics_token: { file: "${SECRETS_DIR}/metrics_token" }
   etoro_demo_pub: { file: "${SECRETS_DIR}/etoro_demo_pub" }
   etoro_demo_pk: { file: "${SECRETS_DIR}/etoro_demo_pk" }
+  smtp_password: { file: "${SECRETS_DIR}/smtp_password" }

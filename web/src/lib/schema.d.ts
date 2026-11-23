@@ -106,6 +106,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** E-mail a password-reset link to the user's address (same answer whether or not the user exists) */
+        post: operations["requestPasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/password-reset/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Choose a new password with the link's token (ends every session of the user) */
+        post: operations["confirmPasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your e-mail address and e-mail notification choices */
+        get: operations["getMyProfile"];
+        /** Change your e-mail address and notification choices (web UI) */
+        put: operations["setMyProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The outgoing mail server (admin; never the password) */
+        get: operations["getEmailSetup"];
+        /** Change the outgoing mail server (admin, web UI). password absent keeps the stored one, "" removes it. */
+        put: operations["setEmailSetup"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/email/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a test e-mail now through the saved server (admin, web UI) */
+        post: operations["sendTestEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/email/outbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The newest e-mails, sent or waiting (admin) */
+        get: operations["listOutbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/password": {
         parameters: {
             query?: never;
@@ -711,11 +815,67 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The LLM reviewer's setup and the providers to choose from (viewer; never the key) */
+        /** The LLM reviewer's profiles, the active one and the providers to choose from (viewer; never a key) */
         get: operations["getLlmSetup"];
-        /** Change the LLM reviewer's setup (admin, web UI). The API key is set on the credentials endpoint (llm_api_key). */
-        put: operations["setLlmConfig"];
+        /** Switch reviewing on or off and choose the active profile (admin, web UI) */
+        put: operations["setLlmSettings"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/llm/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a reviewer profile (admin, web UI) */
+        post: operations["createLlmProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/llm/profiles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Change a reviewer profile (admin, web UI). apiKey absent keeps the stored key, "" removes it. */
+        put: operations["updateLlmProfile"];
+        post?: never;
+        /** Delete a reviewer profile and its key (admin, web UI); deleting the active one switches reviewing off */
+        delete: operations["deleteLlmProfile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/llm/profiles/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask a profile about a made-up trade (admin; nothing is traded) */
+        post: operations["testLlmProfile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -731,25 +891,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** List the models a provider offers with the stored key (admin) */
+        /** List the models a provider offers, with the key typed in or a profile's stored key (admin) */
         post: operations["listLlmModels"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/llm/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Ask the reviewer about a made-up trade (admin; nothing is traded) */
-        post: operations["testLlm"];
         delete?: never;
         options?: never;
         head?: never;
@@ -798,6 +941,75 @@ export interface components {
         AgentState: "stopped" | "running" | "paused" | "killed";
         PublicStatus: {
             version: string;
+            /** @description "Forgot password" works (mail server and public address set) */
+            passwordResetAvailable: boolean;
+        };
+        PasswordResetRequest: {
+            username: string;
+        };
+        PasswordResetConfirm: {
+            token: string;
+            password: string;
+        };
+        NotifyPrefs: {
+            /** @description orders, fills and closes (buy, sell, short) */
+            trades: boolean;
+            /** @description shares added to or removed from a watchlist */
+            watchlist: boolean;
+            /** @description warnings and errors: kill switch, limits, failures */
+            alerts: boolean;
+        };
+        Profile: {
+            /** @description empty = no e-mail */
+            email: string;
+            notify: components["schemas"]["NotifyPrefs"];
+        };
+        SmtpPreset: {
+            id: string;
+            label: string;
+            host: string;
+            port: number;
+            tls: string;
+        };
+        EmailSetupInput: {
+            /** @description use this server for all e-mail */
+            enabled: boolean;
+            host: string;
+            port: number;
+            username: string;
+            /** @description Send as: Name <address>; empty = the user name */
+            from: string;
+            /** @enum {string} */
+            tls: "starttls" | "tls" | "none";
+            /** @description write-only; absent = keep, empty = remove */
+            password?: string;
+        };
+        EmailSetup: {
+            enabled: boolean;
+            host: string;
+            port: number;
+            username: string;
+            from: string;
+            tls: string;
+            passwordSet: boolean;
+            warnings: string[];
+            /** @description the deployment's server, used while this one is off (empty = none) */
+            fallback: string;
+            presets: components["schemas"]["SmtpPreset"][];
+        };
+        TestEmailRequest: {
+            to: string;
+        };
+        OutboxMail: {
+            id: string;
+            to: string;
+            subject: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            sentAt?: string;
+            attempts: number;
+            lastError: string;
         };
         SystemStatus: {
             version: string;
@@ -878,7 +1090,7 @@ export interface components {
             secret: string;
         };
         /** @enum {string} */
-        CredentialName: "etoro_demo_api_key" | "etoro_demo_user_key" | "etoro_real_api_key" | "etoro_real_user_key" | "llm_api_key";
+        CredentialName: "etoro_demo_api_key" | "etoro_demo_user_key" | "etoro_real_api_key" | "etoro_real_user_key";
         Credential: {
             name: components["schemas"]["CredentialName"];
             label: string;
@@ -1039,19 +1251,43 @@ export interface components {
             keyRequired: boolean;
             note: string;
         };
-        LlmConfig: {
-            /** @description review every proposed trade (any reviewer failure rejects the trade) */
-            enabled: boolean;
+        LlmProfile: {
+            id: string;
+            name: string;
             provider: string;
             /** @description empty = the provider's default (Anthropic: claude-opus-5-5) */
             model: string;
             /** @description empty = the provider's address */
             baseUrl: string;
             timeoutSeconds: number;
+            keySet: boolean;
+        };
+        LlmProfileInput: {
+            /** @description empty = provider and model */
+            name: string;
+            provider: string;
+            model: string;
+            baseUrl: string;
+            timeoutSeconds: number;
+            /** @description write-only; absent = keep the stored key, empty = remove it */
+            apiKey?: string;
+        };
+        LlmSettings: {
+            /** @description review every proposed trade (any reviewer failure rejects the trade) */
+            enabled: boolean;
+            /** @description the profile reviews use (empty = none) */
+            activeProfileId: string;
+        };
+        LlmModelsRequest: {
+            provider: string;
+            baseUrl: string;
+            /** @description the key typed on the page; absent = the stored key of profileId */
+            apiKey?: string;
+            profileId?: string;
         };
         LlmSetup: {
-            config: components["schemas"]["LlmConfig"];
-            keySet: boolean;
+            settings: components["schemas"]["LlmSettings"];
+            profiles: components["schemas"]["LlmProfile"][];
             defaultAnthropicModel: string;
             providers: components["schemas"]["LlmProvider"][];
         };
@@ -1122,9 +1358,20 @@ export interface components {
             industryId: number;
             enabled: boolean;
             instruments: number[];
+            /** @description the LLM reviewer profile for this theme's candidates (empty = the default profile) */
+            llmProfileId?: string;
+        };
+        ThemeShare: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            name: string;
+            market: string;
         };
         Theme: components["schemas"]["ThemeInput"] & {
             id: string;
+            /** @description the picked shares with their symbols */
+            shares: components["schemas"]["ThemeShare"][];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -1317,6 +1564,201 @@ export interface operations {
                 };
             };
             401: components["responses"]["Problem"];
+        };
+    };
+    requestPasswordReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description If the user exists and has an e-mail address */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    confirmPasswordReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetConfirm"];
+            };
+        };
+        responses: {
+            /** @description Changed; sign in with the new password */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+        };
+    };
+    getMyProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    setMyProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Profile"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    getEmailSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Setup */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailSetup"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    setEmailSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailSetupInput"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailSetup"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    sendTestEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestEmailRequest"];
+            };
+        };
+        responses: {
+            /** @description The server accepted the message */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            502: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    listOutbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboxMail"][];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
         };
     };
     changePassword: {
@@ -2447,7 +2889,7 @@ export interface operations {
             401: components["responses"]["Problem"];
         };
     };
-    setLlmConfig: {
+    setLlmSettings: {
         parameters: {
             query?: never;
             header?: never;
@@ -2456,7 +2898,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LlmConfig"];
+                "application/json": components["schemas"]["LlmSettings"];
             };
         };
         responses: {
@@ -2466,12 +2908,119 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LlmConfig"];
+                    "application/json": components["schemas"]["LlmSetup"];
                 };
             };
             400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
+        };
+    };
+    createLlmProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmProfileInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProfile"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    updateLlmProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmProfileInput"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProfile"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    deleteLlmProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    testLlmProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Result (a provider failure is ok=false with the reason) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmTestResult"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
         };
     };
     listLlmModels: {
@@ -2483,7 +3032,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LlmConfig"];
+                "application/json": components["schemas"]["LlmModelsRequest"];
             };
         };
         responses: {
@@ -2499,29 +3048,7 @@ export interface operations {
             400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
-            503: components["responses"]["Problem"];
-        };
-    };
-    testLlm: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Result (a provider failure is ok=false with the reason) */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LlmTestResult"];
-                };
-            };
-            401: components["responses"]["Problem"];
-            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };
     };

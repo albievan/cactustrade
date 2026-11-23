@@ -223,19 +223,7 @@ func (c *Client) do(ctx context.Context, method, url, apiKey string, body any, o
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		msg := strings.TrimSpace(string(data))
-		var e struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
-			msg = e.Error.Message
-		}
-		if len(msg) > 300 {
-			msg = msg[:300] + "…"
-		}
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, providerMessage(resp.StatusCode, data))
 	}
 	return json.Unmarshal(data, out)
 }
@@ -302,4 +290,40 @@ func (c *Client) Models(ctx context.Context, cfg domain.LLMConfig, apiKey string
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil
+}
+
+type providerError struct {
+	Error struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// providerMessage turns an error response into one readable line: the provider's message
+// (OpenAI style {"error":{...}} or Gemini's [{"error":{...}}]) and what it usually means.
+func providerMessage(status int, data []byte) string {
+	msg := strings.TrimSpace(string(data))
+	var one providerError
+	var many []providerError
+	switch {
+	case json.Unmarshal(data, &one) == nil && one.Error.Message != "":
+		msg = one.Error.Message
+	case json.Unmarshal(data, &many) == nil && len(many) > 0 && many[0].Error.Message != "":
+		msg = many[0].Error.Message
+	}
+	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) > 300 {
+		msg = msg[:300] + "…"
+	}
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "the provider refused the API key (wrong key, or not allowed for this model): " + msg
+	case http.StatusPaymentRequired:
+		return "the provider wants payment (no credit on this key): " + msg
+	case http.StatusNotFound:
+		return "the provider does not know this model or address (pick one with \"Load models\"): " + msg
+	case http.StatusTooManyRequests:
+		return "the provider's quota or rate limit for this key is used up — not a cactusTrade problem; " +
+			"check the plan and billing at the provider, wait, or choose a model your plan includes: " + msg
+	}
+	return msg
 }

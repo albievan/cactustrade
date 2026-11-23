@@ -204,22 +204,41 @@ func TestLlmEndpoints(t *testing.T) {
 	x, _ := newMarketTC(t)
 	csrf := []string{"X-CSRF-Token", x.csrf}
 	code, m, _ := x.do("GET", "/api/v1/llm", "")
-	if code != 200 || m["defaultAnthropicModel"] != "claude-opus-5-5" || len(m["providers"].([]any)) != 9 || m["keySet"] != false {
+	if code != 200 || m["defaultAnthropicModel"] != "claude-opus-5-5" || len(m["providers"].([]any)) != 9 || len(m["profiles"].([]any)) != 0 {
 		t.Fatalf("setup %d %v", code, m)
 	}
-	body := `{"enabled":true,"provider":"openai","model":"m","baseUrl":"","timeoutSeconds":30}`
-	if code, m, _ := x.do("PUT", "/api/v1/llm", body, csrf...); code != 200 || m["provider"] != "openai" {
-		t.Fatalf("set %d %v", code, m)
+	body := `{"name":"GPT","provider":"openai","model":"m","baseUrl":"","timeoutSeconds":30,"apiKey":"sk-secret"}`
+	code, m, _ = x.do("POST", "/api/v1/llm/profiles", body, csrf...)
+	if code != 201 || m["provider"] != "openai" || m["keySet"] != true || m["apiKey"] != nil {
+		t.Fatalf("create %d %v", code, m)
 	}
-	if code, m, _ := x.do("PUT", "/api/v1/llm", `{"enabled":true,"provider":"openai","model":"","baseUrl":"","timeoutSeconds":0}`, csrf...); code != 400 || m["field"] != "model" {
+	id := m["id"].(string)
+	if code, m, _ := x.do("POST", "/api/v1/llm/profiles", `{"name":"x","provider":"openai","model":"","baseUrl":"","timeoutSeconds":0}`, csrf...); code != 400 || m["field"] != "model" {
 		t.Fatalf("invalid %d %v", code, m)
 	}
+	if code, m, _ := x.do("PUT", "/api/v1/llm/profiles/"+id, `{"name":"GPT 2","provider":"openai","model":"m2","baseUrl":"","timeoutSeconds":30}`, csrf...); code != 200 || m["name"] != "GPT 2" || m["keySet"] != true {
+		t.Fatalf("update %d %v", code, m)
+	}
+	if code, m, _ := x.do("PUT", "/api/v1/llm", `{"enabled":true,"activeProfileId":"`+id+`"}`, csrf...); code != 200 || m["settings"].(map[string]any)["enabled"] != true {
+		t.Fatalf("switch on %d %v", code, m)
+	}
 	// no reviewer adapter in this test server
-	if code, _, _ := x.do("POST", "/api/v1/llm/test", "", csrf...); code != 503 {
+	if code, _, _ := x.do("POST", "/api/v1/llm/profiles/"+id+"/test", "", csrf...); code != 503 {
 		t.Fatalf("test %d", code)
 	}
-	if code, _, _ := x.do("POST", "/api/v1/llm/models", body, csrf...); code != 503 {
+	if code, _, _ := x.do("POST", "/api/v1/llm/models", `{"provider":"openai","baseUrl":"","profileId":"`+id+`"}`, csrf...); code != 503 {
 		t.Fatalf("models %d", code)
+	}
+	if code, _, _ := x.do("DELETE", "/api/v1/llm/profiles/"+id, "", csrf...); code != 204 {
+		t.Fatalf("delete %d", code)
+	}
+	if code, m, _ := x.do("PUT", "/api/v1/llm/profiles/"+id, `{"name":"x","provider":"openai","model":"m","baseUrl":"","timeoutSeconds":0}`, csrf...); code != 404 {
+		t.Fatalf("update deleted %d %v", code, m)
+	}
+	for _, a := range x.store.AuditEntries() {
+		if strings.Contains(a.Details, "sk-secret") {
+			t.Fatal("key in audit")
+		}
 	}
 }
 

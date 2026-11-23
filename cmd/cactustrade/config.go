@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,8 @@ type config struct {
 	LogLevel       slog.Level
 	MigrateOnStart bool
 	Container      bool
+	// PublicURL is where users open the app (links in e-mails); "" = no password reset.
+	PublicURL string
 }
 
 // env returns the variable, or the trimmed content of the file named by NAME_FILE, or the
@@ -160,6 +163,12 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 			pfx = netip.PrefixFrom(a, a.BitLen())
 		}
 		c.TrustedProxies = append(c.TrustedProxies, pfx)
+	}
+	if c.PublicURL = strings.TrimRight(strings.TrimSpace(getenv("CACTUSTRADE_PUBLIC_URL")), "/"); c.PublicURL != "" {
+		u, err := url.Parse(c.PublicURL)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return c, fmt.Errorf("CACTUSTRADE_PUBLIC_URL: %q is not an http(s) address such as https://trader.example:8453", c.PublicURL)
+		}
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(env(getenv, "CACTUSTRADE_LOG_LEVEL", "info"))); err != nil {
 		return c, fmt.Errorf("CACTUSTRADE_LOG_LEVEL: %w", err)

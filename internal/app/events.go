@@ -29,6 +29,7 @@ func (s *Service) emitFor(ctx context.Context, accountID, actor, kind string, se
 	if err := s.d.Store.Events().Append(ctx, e); err != nil {
 		s.d.Log.ErrorContext(ctx, "event write failed", "kind", kind, "err", err)
 	}
+	s.notify(ctx, e)
 }
 
 // EventFeed is the newest events and how many the caller has not seen.

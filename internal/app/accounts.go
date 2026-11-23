@@ -46,7 +46,7 @@ func (s *Service) account(ctx context.Context, p Principal, id string, need doma
 	if id == "" {
 		id = s.currentAccountID(ctx, p, vs)
 		if id == "" {
-			return domain.AccountView{}, fmt.Errorf("no eToro account yet: add one under Accounts: %w", domain.ErrNotFound)
+			return domain.AccountView{}, domain.ErrNoAccount
 		}
 	}
 	i := slices.IndexFunc(vs, func(v domain.AccountView) bool { return v.ID == id })

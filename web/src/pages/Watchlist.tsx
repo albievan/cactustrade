@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type Instrument, type Quote, type WatchItem } from "../lib/api";
 import { useSession } from "../lib/session";
 import { useMode } from "../lib/mode";
+import { NeedAccount } from "../components/NeedAccount";
 
 const QUOTE_REFRESH_MS = 15_000; // 4 calls a minute: well inside eToro's market-data quota
 
@@ -18,7 +19,8 @@ export function Watchlist() {
   const load = useCallback(() => {
     api.watchlist().then(setItems).catch((e) => setError(errorText(e)));
   }, []);
-  useEffect(load, [load]);
+  const accountId = status?.account?.id;
+  useEffect(() => { if (accountId) load(); }, [load, accountId]);
   useEffect(() => {
     if (items.length === 0) return;
     const tick = () =>
@@ -38,6 +40,7 @@ export function Watchlist() {
       setError(errorText(e));
     }
   }
+  if (status && !status.account) return <><h1 className="h3">Watchlist</h1><NeedAccount /></>;
   return (
     <>
       <h1 className="h3">Watchlist</h1>

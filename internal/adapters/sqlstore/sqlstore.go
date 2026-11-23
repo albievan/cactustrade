@@ -206,6 +206,12 @@ func (s *Store) Themes() ports.Themes { return themes{s.db} }
 // Reviews returns the scanner's reviews.
 func (s *Store) Reviews() ports.Reviews { return reviews{s.db} }
 
+// Outbox returns the mail outbox.
+func (s *Store) Outbox() ports.Outbox { return outbox{s.db} }
+
+// PasswordResets returns the password-reset links.
+func (s *Store) PasswordResets() ports.PasswordResets { return passwordResets{s.db} }
+
 // Accounts returns the eToro accounts repository.
 func (s *Store) Accounts() ports.Accounts { return accounts{s.db} }
 

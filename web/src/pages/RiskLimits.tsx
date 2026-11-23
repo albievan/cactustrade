@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, errorText, usd, type RiskLimits as Limits } from "../lib/api";
 import { useSession } from "../lib/session";
 import { useMode } from "../lib/mode";
+import { NeedAccount } from "../components/NeedAccount";
 
 // The owner's limits. The risk engine enforces them on every entry; they can be changed only
 // while the agent is stopped, and every change is audited.
@@ -12,11 +13,14 @@ export function RiskLimits() {
   const [budget, setBudget] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const accountId = status?.account?.id;
   useEffect(() => {
+    if (!accountId) return;
     api.riskLimits().then((x) => { setL(x); setBudget((x.tradingBudgetCents / 100).toFixed(2)); }).catch((e) => setError(errorText(e)));
-  }, []);
+  }, [accountId]);
   const owner = status?.account?.access === "owner";
   const editable = owner && me?.via === "session" && status?.agentState === "stopped";
+  if (status && !status.account) return <><h1 className="h3">Risk limits</h1><NeedAccount /></>;
   if (!l) return <><h1 className="h3">Risk limits</h1>{error && <div className="alert alert-danger">{error}</div>}</>;
   const num = (k: keyof Limits) => (e: React.ChangeEvent<HTMLInputElement>) => setL({ ...l, [k]: Number(e.target.value) });
   async function save(e: FormEvent) {

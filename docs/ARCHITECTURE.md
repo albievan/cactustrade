@@ -41,10 +41,12 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `Broker` | `etoro.Client` (read-only until phase 4) |
 | `SignalModel` | phase 3 |
 | `RiskEngine` | phase 4 |
-| `Reviewer` | phase 5 |
+| `Reviewer` | `adapters/llm` (Anthropic SDK; OpenAI-compatible for the others); profiles in settings, keys `llm.<id>.api_key` |
+| `Mailer` | `adapters/mail` (net/smtp: STARTTLS required / implicit TLS / plain to localhost; header-injection checks); `Outbox` and `PasswordResets` repositories |
 
 The `Broker` port has no money-movement operation. Its `Open` takes a `domain.OrderIntent`,
-which has no leverage, direction or settlement field.
+which has no leverage or settlement field: its direction picks one of the adapter's two
+constant order shapes (long = buy + real, short = sellShort + cfd; leverage 1 for both, D19).
 
 ## Accounts
 

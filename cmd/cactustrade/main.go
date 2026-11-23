@@ -39,6 +39,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/etoro"
 	httpapi "github.com/albievan/cactustrade/internal/adapters/http"
 	"github.com/albievan/cactustrade/internal/adapters/llm"
+	"github.com/albievan/cactustrade/internal/adapters/mail"
 	"github.com/albievan/cactustrade/internal/adapters/secretstore"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
 	"github.com/albievan/cactustrade/internal/adapters/system"
@@ -175,13 +176,23 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return streamAccount(ctx, store, secrets)
 	})
 	feed := etoro.NewFeed(broker, stream, 30*time.Second)
+	fallback := &mailFallback{}
+	if err := fallback.load(getenv); err != nil {
+		return err
+	}
+	host, _ := os.Hostname()
 	svc, err = app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
 		Broker: broker, Market: feed, Calendar: cal,
-		Reviewer: llm.New(&http.Client{Timeout: 10 * time.Minute}),
-		Research: broker,
+		Reviewer:     llm.New(&http.Client{Timeout: 10 * time.Minute}),
+		Research:     broker,
+		Mailer:       mail.New(time.Now, host),
+		MailFallback: fallback.get,
 		Reload: func(ctx context.Context) error {
+			if err := fallback.load(getenv); err != nil {
+				return err
+			}
 			vals, err := secretstore.FromEnvironment(getenv, os.ReadFile)
 			if err != nil {
 				return err
@@ -200,7 +211,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 				cancelServe()
 			}()
 		},
-	}, app.Config{Version: version, Build: build})
+	}, app.Config{Version: version, Build: build, PublicURL: cfg.PublicURL})
 	if err != nil {
 		return err
 	}
@@ -211,6 +222,11 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return err
 	} else if created {
 		log.Warn("first run: created the administrator admin/admin; sign in and change its password (required before anything else)")
+	}
+	if migrated, err := svc.MigrateLLMSetup(ctx); err != nil {
+		return err
+	} else if migrated {
+		log.Info("moved the LLM reviewer setup into its first profile")
 	}
 	if created, err := svc.EnsureEnvAccount(ctx); err != nil {
 		return err
@@ -251,6 +267,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	}
 	go stream.Run(ctx)
 	go scannerLoop(ctx, svc, cal, 15*time.Minute)
+	go mailLoop(ctx, svc, log, 15*time.Second)
 
 	errc := make(chan error, 2)
 	var redirect *http.Server
