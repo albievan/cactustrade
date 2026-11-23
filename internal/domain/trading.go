@@ -258,13 +258,6 @@ type Verdict struct {
 	Reason         string
 }
 
-// RiskDecision is the deterministic risk engine's final say.
-type RiskDecision struct {
-	Allowed bool
-	Size    Cents
-	Reason  string
-}
-
 // AgentState is what the trading agent is doing.
 type AgentState string
 

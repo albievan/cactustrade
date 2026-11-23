@@ -46,7 +46,7 @@ func (s *Service) Status(ctx context.Context, p Principal) (SystemStatus, error)
 	}
 	return SystemStatus{
 		Version: s.cfg.Version, Build: s.cfg.Build, Mode: s.Mode(ctx),
-		AgentState: domain.AgentStopped, Database: s.d.Store.Driver(),
+		AgentState: s.AgentState(ctx), Database: s.d.Store.Driver(),
 		StartedAt: s.startedAt, Now: s.d.Clock.Now().UTC(),
 	}, nil
 }
