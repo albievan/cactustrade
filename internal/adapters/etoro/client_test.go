@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -76,13 +77,14 @@ type env struct {
 	c     *Client
 	fake  *fakeEtoro
 	sec   *fakes.SecretStore
-	mode  domain.TradingMode
+	mode  atomic.Value // domain.TradingMode
 	slept []time.Duration
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{fake: &fakeEtoro{t: t}, sec: &fakes.SecretStore{}, mode: domain.ModeDemo}
+	e := &env{fake: &fakeEtoro{t: t}, sec: &fakes.SecretStore{}}
+	e.mode.Store(domain.ModeDemo)
 	srv := httptest.NewServer(e.fake)
 	t.Cleanup(srv.Close)
 	ctx := context.Background()
@@ -92,7 +94,7 @@ func newEnv(t *testing.T) *env {
 	now := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
 	c, err := New(Config{
 		BaseURL: srv.URL, HTTP: srv.Client(), Secrets: e.sec, Random: &fakes.Random{},
-		Mode: func(context.Context) domain.TradingMode { return e.mode },
+		Mode: func(context.Context) domain.TradingMode { return e.mode.Load().(domain.TradingMode) },
 		Now: func() time.Time {
 			mu.Lock()
 			defer mu.Unlock()
@@ -138,7 +140,7 @@ func TestHeadersKeysAndRequestIDs(t *testing.T) {
 func TestRealModeUsesRealKeysAndPaths(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	e.mode = domain.ModeReal
+	e.mode.Store(domain.ModeReal)
 	if _, err := e.c.Portfolio(ctx); !errors.Is(err, domain.ErrUnavailable) || len(e.fake.reqs) != 0 {
 		t.Fatalf("real mode without real keys must not call eToro: %v (%d calls)", err, len(e.fake.reqs))
 	}

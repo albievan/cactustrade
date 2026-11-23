@@ -38,6 +38,7 @@ shape the system, in `docs/adr/`.
 | `github.com/prometheus/client_golang` | Apache-2.0 | `/metrics` exposition format |
 | `golang.org/x/crypto` | BSD-3 | argon2id |
 | `github.com/google/uuid` | BSD-3 | `x-request-id` UUIDs |
+| `github.com/coder/websocket` | ISC | eToro's price stream (`wss://ws.etoro.com/ws`); the standard library has no WebSocket client. Already in the module graph via testcontainers. |
 | `github.com/testcontainers/testcontainers-go` (+ `modules/mariadb`) | MIT | MariaDB integration tests only (test build) |
 
 ## Deviations from the brief (for the owner)
@@ -113,14 +114,14 @@ setup → login → write-only credentials page → users/API keys work for the 
 | 1.12 | Dockerfile (distroless, non-root, read-only), `docker-compose.yml` (app + MariaDB), `deploy/k8s/cactustrade.yaml`, `.env`, `deploy.sh` | `--install --dockerdesktop` healthy | done |
 | 1.13 | README (setup, risk warning, eToro keys), ADR-001…006 | reviewed | done |
 
-## Phase 2 — eToro adapter (read-only) and market calendar — `in progress`
+## Phase 2 — eToro adapter (read-only) and market calendar — `done` (2.7 waits for the owner's demo keys)
 
 | Step | What | Status |
 |---|---|---|
 | 2.1 | HTTP client (`internal/adapters/etoro/client.go`): keys from `SecretStore` per mode, new `x-request-id` per attempt, sliding-window limiter per quota group (`limiter.go`), 429 `Retry-After` pauses the group, jittered exponential backoff for reads, 15 s per attempt, 8 MiB response cap, errors never contain keys. **Mutating operations are refused before any I/O** (`ErrNotEnabled`) until phase 4. | done |
 | 2.2 | Read operations: search (v2 free text), instruments, rates, candles, eligibility, costs (body built only from the guardrail constants), portfolio/PnL, orders:lookup, trade history. Spec-shaped synthetic fixtures in `testdata/` + `httptest` (92 % coverage). | done |
 | 2.3 | Instrument cache + watchlist (migration 00003, both dialects, shared repository suite). Adding asks eToro: share on LSE/NYSE/NASDAQ and eligible as a real share, long, x1 — or refused with the reason. UI page *Watchlist* (search, add, remove, quotes every 15 s). | done |
-| 2.4 | WebSocket price feed (`instrument:<id>`), snapshot, reconnect, staleness; REST polling fallback within quota. | todo |
+| 2.4 | WebSocket price feed (`stream.go`): one connection, Authenticate with the mode's keys, `Subscribe {topics: instrument:<id>, snapshot: true}` on demand, rates parsed from string-or-number fields, binary heartbeats skipped, ping every 30 s, reconnect with backoff (and on a mode change), waits quietly while keys are missing. `Feed` serves stream quotes received ≤ 30 s ago and fetches only the others over REST. Message formats verified against api-portal.etoro.com/core/websocket (2026-11-23). | done |
 | 2.5 | Test connection (`POST /api/v1/broker/test`, admin; one read-only PnL call) on the Credentials page; dashboard shows cash, equity, positions and market sessions. | done |
 | 2.6 | `MarketCalendar` (`internal/adapters/calendar`): LSE 08:00–16:30 London, NYSE/NASDAQ 09:30–16:00 New York, DST from the embedded tz database, 2026–2027 holidays and half days verified against nyse.com, nasdaq.com, londonstockexchange.com and gov.uk (2026-11-23). Unknown year = closed + start-up warning. | done |
 | 2.7 | Answer Q1 (LSE quote units, real settlement availability, `isPotential`) with the owner's demo keys; replace the synthetic fixtures with sanitised recordings. | blocked: needs the demo keys set |

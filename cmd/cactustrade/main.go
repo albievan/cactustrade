@@ -153,10 +153,13 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
+	// Prices: the WebSocket stream when fresh (≤ 30 s), REST rates otherwise.
+	stream := etoro.NewStream(broker)
+	feed := etoro.NewFeed(broker, stream, 30*time.Second)
 	svc, err = app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
-		Broker: broker, Market: broker, Calendar: cal,
+		Broker: broker, Market: feed, Calendar: cal,
 	}, app.Config{Version: version, Build: build})
 	if err != nil {
 		return err
@@ -201,6 +204,12 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return err
 	}
 	go httpapi.PurgeLoop(ctx, svc, log, 10*time.Minute)
+	if items, err := store.Watchlist().List(ctx); err == nil {
+		for _, it := range items {
+			stream.Watch(it.Instrument.ID)
+		}
+	}
+	go stream.Run(ctx)
 
 	errc := make(chan error, 2)
 	var redirect *http.Server

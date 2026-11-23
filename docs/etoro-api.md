@@ -111,12 +111,22 @@ retries.
 
 ## WebSocket
 
-`wss://ws.etoro.com/ws`. Envelope `{id, operation: Authenticate|Subscribe|Unsubscribe, data}`.
-Authenticate first with `{"userKey","apiKey"}` in `data` (also for public market data).
-Topics: `instrument:<id>` (Ask, Bid, LastExecution, Date; market-status messages),
-`candle:<id>`, `private:demo` / `private` (order and position updates). Push envelope
-`{messages:[{topic, content, id, type}]}` where `content` is a JSON *string*. Binary heartbeat
-frames are skipped.
+`wss://ws.etoro.com/ws` (verified 2026-11-23 against api-portal.etoro.com/core/websocket/
+authentication, topics, control-channel and instrument-rates pages).
+
+- Request envelope `{id, operation, data}`. **Authenticate** first, also for public market
+  data: `data: {userKey, apiKey}`. Reply `{id, operation, success}`; on failure also
+  `errorCode` (InvalidKey, Unauthorized, Forbidden, TooManyRequests, …) and `errorMessage`.
+  Subscribing before authenticating fails with `SessionNotAuthenticated`.
+- **Subscribe** `data: {topics: ["instrument:<id>"], snapshot: true}` (snapshot sends the
+  current rate at once; market-data topics only). **Unsubscribe** `data: {topics}`.
+  Other topics: `candle:<id>`, `private:demo`, `private` / `private:real` (not used yet).
+- **Push** `{messages: [{topic, content, id, type}]}`; `content` is a JSON *string*. Rates
+  (`Trading.Instrument.Rate`): `Ask`, `Bid`, `LastExecution`, `Date` — numbers arrive as
+  quoted strings. A `Trading.Instrument.MarketStatus` type is documented as illustrative.
+- Not documented: heartbeat/ping, topics per connection, connections per key, reconnect
+  advice. The client pings with WebSocket control frames every 30 s and reconnects with
+  backoff (1 s … 1 min).
 
 ## Account currency and FX
 
