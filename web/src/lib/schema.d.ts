@@ -464,6 +464,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/llm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The LLM reviewer's setup and the providers to choose from (viewer; never the key) */
+        get: operations["getLlmSetup"];
+        /** Change the LLM reviewer's setup (admin, web UI). The API key is set on the credentials endpoint (llm_api_key). */
+        put: operations["setLlmConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/llm/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** List the models a provider offers with the stored key (admin) */
+        post: operations["listLlmModels"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/llm/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the reviewer about a made-up trade (admin; nothing is traded) */
+        post: operations["testLlm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -736,6 +788,39 @@ export interface components {
             flattenBeforeCloseMinutes: number;
             maxPortfolioAgeSeconds: number;
             maxQuoteAgeSeconds: number;
+        };
+        LlmProvider: {
+            id: string;
+            label: string;
+            defaultBaseUrl: string;
+            keyRequired: boolean;
+            note: string;
+        };
+        LlmConfig: {
+            /** @description review every proposed trade (any reviewer failure rejects the trade) */
+            enabled: boolean;
+            provider: string;
+            /** @description empty = the provider's default (Anthropic: claude-opus-5-5) */
+            model: string;
+            /** @description empty = the provider's address */
+            baseUrl: string;
+            timeoutSeconds: number;
+        };
+        LlmSetup: {
+            config: components["schemas"]["LlmConfig"];
+            keySet: boolean;
+            defaultAnthropicModel: string;
+            providers: components["schemas"]["LlmProvider"][];
+        };
+        LlmTestResult: {
+            ok: boolean;
+            /** @enum {string} */
+            verdict?: "approve" | "reduce" | "reject";
+            sizeMultiplier?: number;
+            reason?: string;
+            error?: string;
+            /** Format: int64 */
+            latencyMs: number;
         };
         AuditEntry: {
             /** Format: int64 */
@@ -1502,6 +1587,105 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             409: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getLlmSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Setup */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmSetup"];
+                };
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    setLlmConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmConfig"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmConfig"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    listLlmModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmConfig"];
+            };
+        };
+        responses: {
+            /** @description Model ids */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    testLlm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Result (a provider failure is ok=false with the reason) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmTestResult"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };
     };

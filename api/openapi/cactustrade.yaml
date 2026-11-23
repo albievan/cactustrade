@@ -31,6 +31,7 @@ tags:
   - name: market
   - name: events
   - name: risk
+  - name: llm
   - name: audit
 security:
   - sessionCookie: []
@@ -484,6 +485,72 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/llm:
+    get:
+      tags: [llm]
+      operationId: getLlmSetup
+      summary: The LLM reviewer's setup and the providers to choose from (viewer; never the key)
+      responses:
+        "200":
+          description: Setup
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmSetup" }
+        "401": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [llm]
+      operationId: setLlmConfig
+      summary: Change the LLM reviewer's setup (admin, web UI). The API key is set on the credentials endpoint (llm_api_key).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LlmConfig" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmConfig" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/llm/models:
+    post:
+      tags: [llm]
+      operationId: listLlmModels
+      summary: List the models a provider offers with the stored key (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LlmConfig" }
+      responses:
+        "200":
+          description: Model ids
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/llm/test:
+    post:
+      tags: [llm]
+      operationId: testLlm
+      summary: Ask the reviewer about a made-up trade (admin; nothing is traded)
+      responses:
+        "200":
+          description: Result (a provider failure is ok=false with the reason)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmTestResult" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/audit:
     get:
       tags: [audit]
@@ -794,6 +861,44 @@ components:
         flattenBeforeCloseMinutes: { type: integer }
         maxPortfolioAgeSeconds: { type: integer }
         maxQuoteAgeSeconds: { type: integer }
+    LlmProvider:
+      type: object
+      required: [id, label, defaultBaseUrl, keyRequired, note]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        defaultBaseUrl: { type: string }
+        keyRequired: { type: boolean }
+        note: { type: string }
+    LlmConfig:
+      type: object
+      required: [enabled, provider, model, baseUrl, timeoutSeconds]
+      properties:
+        enabled: { type: boolean, description: "review every proposed trade (any reviewer failure rejects the trade)" }
+        provider: { type: string, maxLength: 32 }
+        model: { type: string, maxLength: 200, description: "empty = the provider's default (Anthropic: claude-opus-5-5)" }
+        baseUrl: { type: string, maxLength: 500, description: "empty = the provider's address" }
+        timeoutSeconds: { type: integer, minimum: 0, maximum: 600 }
+    LlmSetup:
+      type: object
+      required: [config, keySet, providers, defaultAnthropicModel]
+      properties:
+        config: { $ref: "#/components/schemas/LlmConfig" }
+        keySet: { type: boolean }
+        defaultAnthropicModel: { type: string }
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/LlmProvider" }
+    LlmTestResult:
+      type: object
+      required: [ok, latencyMs]
+      properties:
+        ok: { type: boolean }
+        verdict: { type: string, enum: [approve, reduce, reject] }
+        sizeMultiplier: { type: number }
+        reason: { type: string }
+        error: { type: string }
+        latencyMs: { type: integer, format: int64 }
     AuditEntry:
       type: object
       required: [id, at, actor, action, target, details, remoteIp]

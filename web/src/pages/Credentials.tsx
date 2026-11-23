@@ -15,7 +15,7 @@ export function Credentials() {
   const editable = can("credentials.write") && me?.via === "session";
   return (
     <>
-      <h1 className="h3">Credentials</h1>
+      <h1 className="h3">eToro keys</h1>
       <p className="text-secondary">
         Keys are stored encrypted (AES-256-GCM) and are <strong>write-only</strong>: once saved they are never shown
         again, logged or returned by the API. eToro binds each key pair to one environment, so demo and real pairs are
@@ -25,7 +25,7 @@ export function Credentials() {
       {error && <div className="alert alert-danger">{error}</div>}
       {can("credentials.write") && <BrokerTest />}
       <div className="list-group">
-        {creds.map((c) => (
+        {creds.filter((c) => c.name.startsWith("etoro_")).map((c) => (
           <CredentialRow key={c.name} cred={c} editable={editable} onChange={load} />
         ))}
       </div>

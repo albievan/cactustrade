@@ -125,6 +125,27 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for LlmTestResultVerdict.
+const (
+	Approve LlmTestResultVerdict = "approve"
+	Reduce  LlmTestResultVerdict = "reduce"
+	Reject  LlmTestResultVerdict = "reject"
+)
+
+// Valid indicates whether the value is a known member of the LlmTestResultVerdict enum.
+func (e LlmTestResultVerdict) Valid() bool {
+	switch e {
+	case Approve:
+		return true
+	case Reduce:
+		return true
+	case Reject:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Market.
 const (
 	Empty Market = ""
@@ -380,6 +401,50 @@ type Instrument struct {
 	Type   string `json:"type"`
 }
 
+// LlmConfig defines model for LlmConfig.
+type LlmConfig struct {
+	// BaseUrl empty = the provider's address
+	BaseUrl string `json:"baseUrl"`
+
+	// Enabled review every proposed trade (any reviewer failure rejects the trade)
+	Enabled bool `json:"enabled"`
+
+	// Model empty = the provider's default (Anthropic: claude-opus-5-5)
+	Model          string `json:"model"`
+	Provider       string `json:"provider"`
+	TimeoutSeconds int    `json:"timeoutSeconds"`
+}
+
+// LlmProvider defines model for LlmProvider.
+type LlmProvider struct {
+	DefaultBaseUrl string `json:"defaultBaseUrl"`
+	Id             string `json:"id"`
+	KeyRequired    bool   `json:"keyRequired"`
+	Label          string `json:"label"`
+	Note           string `json:"note"`
+}
+
+// LlmSetup defines model for LlmSetup.
+type LlmSetup struct {
+	Config                LlmConfig     `json:"config"`
+	DefaultAnthropicModel string        `json:"defaultAnthropicModel"`
+	KeySet                bool          `json:"keySet"`
+	Providers             []LlmProvider `json:"providers"`
+}
+
+// LlmTestResult defines model for LlmTestResult.
+type LlmTestResult struct {
+	Error          *string               `json:"error,omitempty"`
+	LatencyMs      int64                 `json:"latencyMs"`
+	Ok             bool                  `json:"ok"`
+	Reason         *string               `json:"reason,omitempty"`
+	SizeMultiplier *float32              `json:"sizeMultiplier,omitempty"`
+	Verdict        *LlmTestResultVerdict `json:"verdict,omitempty"`
+}
+
+// LlmTestResultVerdict defines model for LlmTestResult.Verdict.
+type LlmTestResultVerdict string
+
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
 	Password string `json:"password"`
@@ -591,6 +656,12 @@ type ChangePasswordJSONRequestBody = ChangePasswordRequest
 // SetCredentialJSONRequestBody defines body for SetCredential for application/json ContentType.
 type SetCredentialJSONRequestBody = SetCredentialRequest
 
+// SetLlmConfigJSONRequestBody defines body for SetLlmConfig for application/json ContentType.
+type SetLlmConfigJSONRequestBody = LlmConfig
+
+// ListLlmModelsJSONRequestBody defines body for ListLlmModels for application/json ContentType.
+type ListLlmModelsJSONRequestBody = LlmConfig
+
 // SetRiskLimitsJSONRequestBody defines body for SetRiskLimits for application/json ContentType.
 type SetRiskLimitsJSONRequestBody = RiskLimits
 
@@ -653,6 +724,18 @@ type ServerInterface interface {
 	// SearchInstruments Search eToro instruments by name or symbol (admin)
 	// (GET /api/v1/instruments/search)
 	SearchInstruments(w http.ResponseWriter, r *http.Request, params SearchInstrumentsParams)
+	// GetLlmSetup The LLM reviewer's setup and the providers to choose from (viewer; never the key)
+	// (GET /api/v1/llm)
+	GetLlmSetup(w http.ResponseWriter, r *http.Request)
+	// SetLlmConfig Change the LLM reviewer's setup (admin, web UI). The API key is set on the credentials endpoint (llm_api_key).
+	// (PUT /api/v1/llm)
+	SetLlmConfig(w http.ResponseWriter, r *http.Request)
+	// ListLlmModels List the models a provider offers with the stored key (admin)
+	// (POST /api/v1/llm/models)
+	ListLlmModels(w http.ResponseWriter, r *http.Request)
+	// TestLlm Ask the reviewer about a made-up trade (admin; nothing is traded)
+	// (POST /api/v1/llm/test)
+	TestLlm(w http.ResponseWriter, r *http.Request)
 	// GetMarketStatus Today's sessions for LSE and NYSE/NASDAQ (viewer)
 	// (GET /api/v1/market/status)
 	GetMarketStatus(w http.ResponseWriter, r *http.Request)
@@ -1023,6 +1106,62 @@ func (siw *ServerInterfaceWrapper) SearchInstruments(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SearchInstruments(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLlmSetup operation middleware
+func (siw *ServerInterfaceWrapper) GetLlmSetup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLlmSetup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetLlmConfig operation middleware
+func (siw *ServerInterfaceWrapper) SetLlmConfig(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetLlmConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLlmModels operation middleware
+func (siw *ServerInterfaceWrapper) ListLlmModels(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLlmModels(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestLlm operation middleware
+func (siw *ServerInterfaceWrapper) TestLlm(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestLlm(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1458,6 +1597,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/events/seen", wrapper.MarkEventsSeen)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.GetRiskLimits)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.SetRiskLimits)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/llm", wrapper.GetLlmSetup)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/llm", wrapper.SetLlmConfig)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/models", wrapper.ListLlmModels)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/test", wrapper.TestLlm)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.ListAudit)
 
 	return m

@@ -53,6 +53,7 @@ type Deps struct {
 	Broker   ports.Broker
 	Market   ports.MarketData
 	Calendar ports.MarketCalendar
+	Reviewer ports.Reviewer // the LLM reviewer (nil = not available)
 	// Reload re-reads settings that live outside the database (credentials from the
 	// environment / secret files). Restart asks the process to restart gracefully. Both are
 	// supplied by cmd/cactustrade; nil = not supported.

@@ -216,9 +216,12 @@ type ReviewInput struct {
 	TodayPnL      domain.Cents
 }
 
-// Reviewer is the LLM. It has no tools and no broker access; it only returns a verdict.
+// Reviewer is the LLM. It has no tools and no broker access; it only returns a verdict,
+// which the caller clamps (domain.ClampVerdict). Any error is a rejection (fail closed).
 type Reviewer interface {
-	Review(ctx context.Context, in ReviewInput) (domain.Verdict, error)
+	Review(ctx context.Context, cfg domain.LLMConfig, apiKey string, in ReviewInput) (domain.Verdict, error)
+	// Models lists the model ids the provider offers with this key.
+	Models(ctx context.Context, cfg domain.LLMConfig, apiKey string) ([]string, error)
 }
 
 // RiskEngine has the final, deterministic say.

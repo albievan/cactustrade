@@ -22,6 +22,9 @@ export type Quote = components["schemas"]["Quote"];
 export type EventFeed = components["schemas"]["EventFeed"];
 export type AppEvent = components["schemas"]["Event"];
 export type RiskLimits = components["schemas"]["RiskLimits"];
+export type LlmSetup = components["schemas"]["LlmSetup"];
+export type LlmConfig = components["schemas"]["LlmConfig"];
+export type LlmTestResult = components["schemas"]["LlmTestResult"];
 
 export class ApiError extends Error {
   constructor(
@@ -108,6 +111,10 @@ export const api = {
   setRiskLimits: (l: RiskLimits) => request<RiskLimits>("PUT", "/api/v1/risk/limits", l),
   reloadSettings: () => request<void>("POST", "/api/v1/system/reload"),
   restart: () => request<void>("POST", "/api/v1/system/restart"),
+  llmSetup: () => request<LlmSetup>("GET", "/api/v1/llm"),
+  setLlm: (c: LlmConfig) => request<LlmConfig>("PUT", "/api/v1/llm", c),
+  llmModels: (c: LlmConfig) => request<string[]>("POST", "/api/v1/llm/models", c),
+  testLlm: () => request<LlmTestResult>("POST", "/api/v1/llm/test"),
 };
 
 // usd formats US-dollar cents, e.g. 123456 → "$1,234.56".

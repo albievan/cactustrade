@@ -191,3 +191,26 @@ func TestEventsSystemAndRiskEndpoints(t *testing.T) {
 		t.Fatalf("invalid limits %d %v", code, m)
 	}
 }
+
+func TestLlmEndpoints(t *testing.T) {
+	x, _ := newMarketTC(t)
+	csrf := []string{"X-CSRF-Token", x.csrf}
+	code, m, _ := x.do("GET", "/api/v1/llm", "")
+	if code != 200 || m["defaultAnthropicModel"] != "claude-opus-5-5" || len(m["providers"].([]any)) != 9 || m["keySet"] != false {
+		t.Fatalf("setup %d %v", code, m)
+	}
+	body := `{"enabled":true,"provider":"openai","model":"m","baseUrl":"","timeoutSeconds":30}`
+	if code, m, _ := x.do("PUT", "/api/v1/llm", body, csrf...); code != 200 || m["provider"] != "openai" {
+		t.Fatalf("set %d %v", code, m)
+	}
+	if code, m, _ := x.do("PUT", "/api/v1/llm", `{"enabled":true,"provider":"openai","model":"","baseUrl":"","timeoutSeconds":0}`, csrf...); code != 400 || m["field"] != "model" {
+		t.Fatalf("invalid %d %v", code, m)
+	}
+	// no reviewer adapter in this test server
+	if code, _, _ := x.do("POST", "/api/v1/llm/test", "", csrf...); code != 503 {
+		t.Fatalf("test %d", code)
+	}
+	if code, _, _ := x.do("POST", "/api/v1/llm/models", body, csrf...); code != 503 {
+		t.Fatalf("models %d", code)
+	}
+}

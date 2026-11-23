@@ -38,6 +38,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/calendar"
 	"github.com/albievan/cactustrade/internal/adapters/etoro"
 	httpapi "github.com/albievan/cactustrade/internal/adapters/http"
+	"github.com/albievan/cactustrade/internal/adapters/llm"
 	"github.com/albievan/cactustrade/internal/adapters/secretstore"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
 	"github.com/albievan/cactustrade/internal/adapters/system"
@@ -176,6 +177,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
 		Broker: broker, Market: feed, Calendar: cal,
+		Reviewer: llm.New(&http.Client{Timeout: 10 * time.Minute}),
 		Reload: func(context.Context) error {
 			vals, err := secretstore.FromEnvironment(getenv, os.ReadFile)
 			if err != nil {
