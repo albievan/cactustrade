@@ -48,6 +48,10 @@ export type AccountHoldings = components["schemas"]["AccountHoldings"];
 export type Holding = components["schemas"]["Holding"];
 export type CurrencyTotal = components["schemas"]["CurrencyTotal"];
 export type EquitySeries = components["schemas"]["EquitySeries"];
+export type PlatformInfo = components["schemas"]["PlatformInfo"];
+export type CredentialSpec = components["schemas"]["CredentialSpec"];
+export type AccountCredential = components["schemas"]["AccountCredential"];
+export type ConnectStart = components["schemas"]["ConnectStart"];
 
 export class ApiError extends Error {
   constructor(
@@ -169,6 +173,11 @@ export const api = {
   accountKeys: (id: string) => request<AccountKeys>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/keys`),
   setAccountKeys: (id: string, apiKey: string, userKey: string) =>
     request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/keys`, { apiKey, userKey }),
+  // setAccountCredentials stores credentials by key (CredentialSpec.key); empty values are kept.
+  setAccountCredentials: (id: string, values: Record<string, string>) =>
+    request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/keys`, { values }),
+  platforms: () => request<PlatformInfo[]>("GET", "/api/v1/platforms"),
+  connectSaxo: (id: string) => request<ConnectStart>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/saxo/connect`),
   testAccount: (id: string) => request<BrokerCheck>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/test`),
   accountShares: (id: string) => request<AccountShare[]>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/shares`),
   shareAccount: (id: string, username: string, access: "view" | "trade") =>
@@ -183,18 +192,36 @@ export function usd(cents: number | undefined): string {
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-// money formats minor units (hundredths) of an ISO currency, e.g. (123456, "GBP") → "£1,234.56".
-// An unknown code falls back to "1,234.56 XYZ".
+// currencyDecimals mirrors domain.CurrencyDecimals: the minor unit of JPY and KRW is the unit
+// itself; every other currency has two decimals.
+export function currencyDecimals(currency: string): number {
+  return ["JPY", "KRW"].includes(currency.trim().toUpperCase()) ? 0 : 2;
+}
+
+// money formats minor units of an ISO currency, e.g. (123456, "GBP") → "£1,234.56" and
+// (150000, "JPY") → "¥150,000". An unknown code falls back to "1,234.56 XYZ".
 export function money(minor: number | undefined, currency: string): string {
   if (minor === undefined) return "—";
+  const d = currencyDecimals(currency);
+  const v = minor / 10 ** d;
   try {
-    return (minor / 100).toLocaleString("en-GB", { style: "currency", currency });
+    return v.toLocaleString("en-GB", { style: "currency", currency, minimumFractionDigits: d, maximumFractionDigits: d });
   } catch {
-    return `${(minor / 100).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+    return `${v.toLocaleString("en-GB", { minimumFractionDigits: d, maximumFractionDigits: d })} ${currency}`;
   }
 }
 
-export const platformLabel: Record<Platform, string> = { etoro: "eToro", trading212: "Trading 212" };
+export const platformLabel: Record<Platform, string> = { etoro: "eToro", trading212: "Trading 212", saxo: "Saxo", tiger: "Tiger Brokers" };
+
+// platformBadge is the text badge class per platform (no logos are drawn).
+export const platformBadge: Record<Platform, string> = {
+  etoro: "text-bg-success", trading212: "text-bg-primary", saxo: "text-bg-dark", tiger: "text-bg-warning",
+};
+
+// viewOnly: cactusTrade only shows accounts on these platforms; it trades eToro accounts only.
+export function viewOnly(platform: Platform): boolean {
+  return platform !== "etoro";
+}
 
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) return e.message;

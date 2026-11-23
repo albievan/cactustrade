@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
@@ -125,15 +126,11 @@ func (s *Service) CreateAccount(ctx context.Context, p Principal, name string, m
 }
 
 // platformLabel names a platform for people.
-func platformLabel(pl domain.Platform) string {
-	if pl == domain.PlatformTrading212 {
-		return "Trading 212"
-	}
-	return "eToro"
-}
+func platformLabel(pl domain.Platform) string { return pl.Label() }
 
 // CreateAccountOn adds an account on a platform ("" = eToro) owned by the caller (operator or
-// admin). A Trading 212 account is view-only: it appears in the overview and nowhere else.
+// admin). A Trading 212, Saxo or Tiger account is view-only: it appears in the overview and
+// nowhere else.
 func (s *Service) CreateAccountOn(ctx context.Context, p Principal, platform domain.Platform, name string, mode domain.TradingMode) (domain.AccountView, error) {
 	if err := s.authorize(p, domain.PermAgentControl); err != nil {
 		return domain.AccountView{}, err
@@ -189,8 +186,8 @@ func (s *Service) DeleteAccount(ctx context.Context, p Principal, id string) err
 		return fmt.Errorf("stop the agent of %s first: %w", v.Name, domain.ErrConflict)
 	}
 	if !v.EnvKeys {
-		ak, uk := domain.AccountKeyNames(v.Account)
-		for _, n := range []domain.CredentialName{ak, uk} {
+		for _, c := range domain.PlatformCredentials(v.OnPlatform()) {
+			n, _ := domain.AccountCredentialName(v.Account, c.Key)
 			if err := s.d.Secrets.Delete(ctx, n); err != nil && !errors.Is(err, domain.ErrNotFound) {
 				return fmt.Errorf("app.DeleteAccount: %w", err)
 			}
@@ -204,13 +201,30 @@ func (s *Service) DeleteAccount(ctx context.Context, p Principal, id string) err
 	return nil
 }
 
-// AccountKeys says whether an account's key pair is set and where from (never the values).
+// AccountKeys says which of an account's credentials are set and where from — never their
+// values. APIKeySet and UserKeySet are the platform's first two credentials (the older API).
 type AccountKeys struct {
 	APIKeySet, UserKeySet bool
 	FromEnvironment       bool
+	// Complete: enough is set to read the account (domain.CredentialsComplete).
+	Complete    bool
+	Credentials []AccountCredential
+	// ConnectRedirectURI is the address to register with a platform that signs in through
+	// the browser (Saxo), "" when the platform has none or CACTUSTRADE_PUBLIC_URL is not set.
+	// Connectable says the platform has such a sign-in.
+	ConnectRedirectURI string
+	Connectable        bool
 }
 
-// AccountKeysStatus reports the key pair's state (view).
+// AccountCredential is one credential of an account: its description, whether it is set and
+// when it last changed (zero when unknown, e.g. from the environment).
+type AccountCredential struct {
+	domain.CredentialSpec
+	Set       bool
+	UpdatedAt time.Time
+}
+
+// AccountKeysStatus reports the state of an account's credentials (view).
 func (s *Service) AccountKeysStatus(ctx context.Context, p Principal, id string) (AccountKeys, error) {
 	v, err := s.anyAccount(ctx, p, id, domain.AccessView)
 	if err != nil {
@@ -220,16 +234,48 @@ func (s *Service) AccountKeysStatus(ctx context.Context, p Principal, id string)
 	if err != nil {
 		return AccountKeys{}, fmt.Errorf("app.AccountKeysStatus: %w", err)
 	}
-	ak, uk := domain.AccountKeyNames(v.Account)
-	a, aok := st[ak]
-	u, uok := st[uk]
-	return AccountKeys{APIKeySet: aok, UserKeySet: uok, FromEnvironment: a.Source == ports.SourceEnv || u.Source == ports.SourceEnv}, nil
+	pl := v.OnPlatform()
+	var out AccountKeys
+	set := map[string]bool{}
+	for i, c := range domain.PlatformCredentials(pl) {
+		n, _ := domain.AccountCredentialName(v.Account, c.Key)
+		meta, ok := st[n]
+		set[c.Key] = ok
+		out.Credentials = append(out.Credentials, AccountCredential{CredentialSpec: c, Set: ok, UpdatedAt: meta.UpdatedAt})
+		out.FromEnvironment = out.FromEnvironment || (ok && meta.Source == ports.SourceEnv)
+		switch i {
+		case 0:
+			out.APIKeySet = ok
+		case 1:
+			out.UserKeySet = ok
+		}
+	}
+	out.Complete = domain.CredentialsComplete(pl, func(k string) bool { return set[k] })
+	if _, ok := s.d.Connectors[pl]; ok {
+		out.Connectable = true
+		out.ConnectRedirectURI = s.redirectURI(pl)
+	}
+	return out, nil
 }
 
-// SetAccountKeys stores an account's key pair, write-only (owner, web session): for eToro the
-// API key and the user key, for Trading 212 the API key and the API secret (userKey). Either
-// value may be empty to keep the stored one.
+// SetAccountKeys stores an account's first two credentials, write-only (owner, web session):
+// for eToro the API key and the user key, for Trading 212 the API key and the API secret, for
+// Saxo the app key and secret, for Tiger the Tiger ID and account number. Either value may be
+// empty to keep the stored one.
 func (s *Service) SetAccountKeys(ctx context.Context, p Principal, id, apiKey, userKey string) error {
+	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
+	if err != nil {
+		return err
+	}
+	specs := domain.PlatformCredentials(v.OnPlatform())
+	return s.SetAccountCredentials(ctx, p, id, map[string]string{specs[0].Key: apiKey, specs[1].Key: userKey})
+}
+
+// SetAccountCredentials stores any of an account's credentials by key (domain.CredentialSpec.Key),
+// write-only, encrypted (owner, web session). An empty value keeps the stored one. A key the
+// platform does not have, or one only its sign-in sets (Saxo's refresh token), is refused and
+// nothing is stored.
+func (s *Service) SetAccountCredentials(ctx context.Context, p Principal, id string, values map[string]string) error {
 	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
 	if err != nil {
 		return err
@@ -237,23 +283,42 @@ func (s *Service) SetAccountKeys(ctx context.Context, p Principal, id, apiKey, u
 	if p.Via != ViaSession {
 		return fmt.Errorf("keys can only be set in the web UI: %w", domain.ErrForbidden)
 	}
-	ak, uk := domain.AccountKeyNames(v.Account)
-	for _, kv := range []struct {
+	type put struct {
 		name domain.CredentialName
 		val  string
-	}{{ak, apiKey}, {uk, userKey}} {
-		if kv.val == "" {
+	}
+	var puts []put
+	for _, c := range domain.PlatformCredentials(v.OnPlatform()) { // in spec order: stable
+		raw, ok := values[c.Key]
+		if !ok || raw == "" {
 			continue
 		}
-		val, err := domain.NormalizeCredential(kv.val)
+		if c.SetByFlow {
+			return domain.Invalid(c.Key, "is set by connecting to "+platformLabel(v.OnPlatform()))
+		}
+		val, err := domain.NormalizeCredentialFor(c, raw)
 		if err != nil {
+			if ve, ok := errors.AsType[*domain.ValidationError](err); ok {
+				return domain.Invalid(c.Key, ve.Reason)
+			}
 			return err
 		}
-		if err := s.d.Secrets.Put(ctx, kv.name, val); err != nil {
-			return fmt.Errorf("app.SetAccountKeys: %w", err)
+		n, _ := domain.AccountCredentialName(v.Account, c.Key)
+		puts = append(puts, put{n, val})
+	}
+	for k := range values {
+		if _, ok := domain.CredentialSpecFor(v.OnPlatform(), k); !ok {
+			return domain.Invalid("key", "unknown credential for "+platformLabel(v.OnPlatform()))
 		}
 	}
-	s.audit(ctx, p, "account.keys_set", v.ID, "") // never the values
+	for _, x := range puts {
+		if err := s.d.Secrets.Put(ctx, x.name, x.val); err != nil {
+			return fmt.Errorf("app.SetAccountCredentials: %w", err)
+		}
+	}
+	if len(puts) > 0 {
+		s.audit(ctx, p, "account.keys_set", v.ID, fmt.Sprintf("credentials=%d", len(puts))) // never the values
+	}
 	return nil
 }
 

@@ -68,6 +68,8 @@ linters:
           deny:
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/etoro", desc: "the LLM never calls the broker" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/trading212", desc: "the LLM never calls a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/saxo", desc: "the LLM never calls a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/tiger", desc: "the LLM never calls a broker" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/secretstore", desc: "the LLM adapter gets its key injected, nothing more" }
         # The Trading 212 client is read-only and stands alone: it never reaches eToro.
         trading212:
@@ -76,6 +78,25 @@ linters:
           deny:
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/etoro", desc: "Trading 212 keys never go to eToro" }
             - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
+        # The Saxo and Tiger clients are read-only and stand alone (R21): they never reach
+        # eToro, another platform's client or the use cases.
+        saxo:
+          files: ["**/internal/adapters/saxo/**"]
+          list-mode: lax
+          deny:
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/etoro", desc: "Saxo tokens never go to eToro" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/tiger", desc: "each platform's client stands alone" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/trading212", desc: "each platform's client stands alone" }
+            - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
+        tiger:
+          files: ["**/internal/adapters/tiger/**"]
+          list-mode: lax
+          deny:
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/etoro", desc: "Tiger keys never go to eToro" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/saxo", desc: "each platform's client stands alone" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/trading212", desc: "each platform's client stands alone" }
+            - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
+            - { pkg: "github.com/tigerfintech", desc: "no third-party broker SDKs: our own client" }
   exclusions:
     generated: lax
     presets: [comments, common-false-positives, legacy, std-error-handling]

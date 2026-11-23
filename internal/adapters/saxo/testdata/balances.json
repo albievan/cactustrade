@@ -1,0 +1,9 @@
+{
+  "CalculationReliability": "Ok",
+  "CashBalance": 10234.56,
+  "Currency": "AUD",
+  "CurrencyDecimals": 2,
+  "MarginAvailableForTrading": 10234.56,
+  "TotalValue": 25890.12,
+  "UnrealizedPositionsValue": 15655.56
+}

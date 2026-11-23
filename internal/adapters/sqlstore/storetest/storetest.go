@@ -693,6 +693,22 @@ func Run(t *testing.T, s ports.Store) {
 		if g, _ := ar.Get(ctx, plain.ID); g.Platform != domain.PlatformEtoro {
 			t.Fatalf("default platform = %q", g.Platform)
 		}
+		// R21: Saxo and Tiger accounts keep their platform; a JPY snapshot keeps whole yen.
+		for _, pl := range []domain.Platform{domain.PlatformSaxo, domain.PlatformTiger} {
+			a := domain.Account{ID: "acc-" + string(pl), Name: pl.Label(), OwnerID: admin.ID, Mode: domain.ModeDemo, Platform: pl, CreatedAt: t0, UpdatedAt: t0}
+			if err := ar.Create(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			if g, err := ar.Get(ctx, a.ID); err != nil || g.Platform != pl || g.Tradable() {
+				t.Fatalf("Get %s = %+v %v", pl, g, err)
+			}
+		}
+		if err := es.Add(ctx, domain.EquitySnapshot{AccountID: "acc-tiger", At: t0, Currency: "JPY", Cash: 150_000, Equity: 1_250_000}); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := es.List(ctx, []string{"acc-tiger"}, t0.Add(-time.Hour)); err != nil || len(got) != 1 || got[0].Currency != "JPY" || got[0].Equity != 1_250_000 {
+			t.Fatalf("JPY snapshot = %+v %v", got, err)
+		}
 		vs, _ := ar.ForUser(ctx, admin.ID)
 		found := false
 		for _, v := range vs {

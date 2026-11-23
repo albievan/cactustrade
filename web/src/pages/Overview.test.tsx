@@ -36,13 +36,13 @@ const series = [
     points: [{ at: "2026-11-23T14:45:00Z", cash: 12345, equity: 384547 }] },
 ];
 
-function mockApi(history: unknown[]) {
+function mockApi(history: unknown[], ov: unknown = overview) {
   const urls: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     urls.push(url);
     const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
-    if (url.endsWith("/api/v1/overview")) return json(overview);
+    if (url.endsWith("/api/v1/overview")) return json(ov);
     if (url.includes("/api/v1/overview/history")) return json(history);
     return new Response("{}", { status: 404 });
   });
@@ -74,6 +74,30 @@ describe("Overview", () => {
     await waitFor(() => expect(urls.some((u) => u.endsWith("days=7"))).toBe(true));
     fireEvent.click(screen.getByRole("button", { name: "All" }));
     await waitFor(() => expect(urls.some((u) => u.endsWith("days=400"))).toBe(true));
+  });
+
+  it("shows Saxo and Tiger accounts: reconnect, whole yen, unknown values", async () => {
+    mockApi([], {
+      asOf: "2026-11-23T15:00:00Z",
+      totals: [{ currency: "JPY", accounts: 1, cash: 150000, equity: 1250000, unrealisedPnl: 0 }],
+      accounts: [
+        { account: acct("s1", "Saxo SIM", "saxo"), noKeys: false, reconnect: true, error: "Reconnect to Saxo: the Saxo sign-in of Saxo SIM has lapsed or was refused" },
+        {
+          account: acct("g1", "Tiger JP", "tiger", "real"), noKeys: false,
+          holdings: { platform: "tiger", currency: "JPY", cash: 150000, invested: 0, equity: 1250000, unrealisedPnl: 0, realisedPnl: 0, asOf: "2026-11-23T15:00:00Z",
+            positions: [{ symbol: "AAPL", name: "Apple", currency: "USD", quantity: "3", avgPrice: "180", currentPrice: "190", value: 0, cost: 0, pnl: 0, long: true, cfd: false, unknown: true }] },
+        },
+      ],
+    });
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    expect(await screen.findByText(/Reconnect to Saxo: the Saxo sign-in/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Connect again" })).toHaveAttribute("href", "/accounts");
+    expect(screen.getAllByText("JP¥1,250,000").length).toBeGreaterThanOrEqual(2); // total + card, whole yen
+    expect(screen.getByText(/Some positions have no value in JPY/)).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    expect(within(table).getAllByText("unknown")).toHaveLength(2); // value and P&L
+    expect(within(table).getByText("Tiger Brokers")).toHaveClass("badge");
+    expect(screen.getAllByText("Saxo").some((el) => el.classList.contains("badge"))).toBe(true);
   });
 
   it("explains the empty chart", async () => {

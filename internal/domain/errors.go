@@ -14,9 +14,14 @@ var (
 	// ErrNoAccount means the caller has no eToro account yet (none owned, none shared); it
 	// wraps ErrNotFound.
 	ErrNoAccount = fmt.Errorf("no eToro account: %w", ErrNotFound)
-	// ErrViewOnly means the account is on a platform cactusTrade only shows (Trading 212):
-	// no agent, scanner, watchlist, themes, limits or orders. It wraps ErrForbidden.
-	ErrViewOnly = fmt.Errorf("view-only account (cactusTrade does not trade Trading 212 accounts yet): %w", ErrForbidden)
+	// ErrViewOnly means the account is on a platform cactusTrade only shows (Trading 212,
+	// Saxo, Tiger Brokers): no agent, scanner, watchlist, themes, limits or orders. It wraps
+	// ErrForbidden.
+	ErrViewOnly = fmt.Errorf("view-only account (cactusTrade trades eToro accounts only): %w", ErrForbidden)
+	// ErrReconnect means a platform's sign-in has lapsed (Saxo's refresh token expired or was
+	// refused, or its 24-hour developer token is too old): nothing is read until the owner
+	// connects again. It comes wrapped together with ErrUnavailable.
+	ErrReconnect = errors.New("sign-in expired")
 	// ErrConflict means the request clashes with the current state (duplicate, last admin…).
 	ErrConflict = errors.New("conflict")
 	// ErrUnauthenticated means no valid credentials were presented.

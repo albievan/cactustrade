@@ -1,0 +1,43 @@
+{
+  "__count": 3,
+  "Data": [
+    {
+      "NetPositionId": "123__Stock",
+      "PositionBase": {
+        "AccountId": "SIM-1",
+        "Amount": 100,
+        "AssetType": "Stock",
+        "ExecutionTimeOpen": "2026-11-20T23:15:02.123000Z",
+        "OpenPrice": 101.25,
+        "Uic": 123
+      },
+      "PositionId": "5001",
+      "PositionView": {
+        "AverageOpenPrice": 101.25,
+        "CurrentPrice": 105.5,
+        "MarketValue": 10550,
+        "MarketValueInBaseCurrency": 10550,
+        "ProfitLossOnTrade": 425,
+        "ProfitLossOnTradeInBaseCurrency": 425
+      },
+      "DisplayAndFormat": { "Currency": "AUD", "Decimals": 2, "Description": "Commonwealth Bank of Australia", "Format": "Normal", "Symbol": "CBA:xasx" }
+    },
+    {
+      "PositionBase": { "Amount": 10, "AssetType": "Stock", "OpenPrice": 175.5, "Uic": 211 },
+      "PositionView": {
+        "AverageOpenPrice": 175.5,
+        "CurrentPrice": 190,
+        "MarketValue": 1900,
+        "MarketValueInBaseCurrency": 2905.55,
+        "ProfitLossOnTrade": 145,
+        "ProfitLossOnTradeInBaseCurrency": 150.25
+      },
+      "DisplayAndFormat": { "Currency": "USD", "Decimals": 2, "Description": "Apple Inc.", "Symbol": "AAPL:xnas" }
+    },
+    {
+      "PositionBase": { "Amount": -5, "AssetType": "CfdOnStock", "Uic": 307 },
+      "PositionView": { "AverageOpenPrice": 192.4, "MarketValue": -950, "ProfitLossOnTrade": 12 },
+      "DisplayAndFormat": { "Currency": "USD", "Decimals": 2, "Description": "Microsoft Corp.", "Symbol": "MSFT:xnas" }
+    }
+  ]
+}

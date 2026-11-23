@@ -17,7 +17,7 @@ func toHoldings(h domain.Holdings) Holdings {
 		x := Holding{
 			Symbol: p.Symbol, Name: p.Name, Currency: p.Currency, Quantity: dec(p.Quantity), AvgPrice: dec(p.AvgPrice),
 			CurrentPrice: dec(p.CurrentPrice), Value: MinorUnits(p.Value), Cost: MinorUnits(p.Cost), Pnl: MinorUnits(p.PnL),
-			Long: p.Long, Cfd: p.CFD,
+			Long: p.Long, Cfd: p.CFD, Unknown: p.Unknown,
 		}
 		if !p.OpenedAt.IsZero() {
 			x.OpenedAt = ptr(p.OpenedAt)
@@ -42,6 +42,9 @@ func (s *Server) GetOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.Error != "" {
 			x.Error = ptr(a.Error)
+		}
+		if a.Reconnect {
+			x.Reconnect = ptr(true)
 		}
 		out.Accounts = append(out.Accounts, x)
 	}

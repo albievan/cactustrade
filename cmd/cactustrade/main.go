@@ -40,9 +40,11 @@ import (
 	httpapi "github.com/albievan/cactustrade/internal/adapters/http"
 	"github.com/albievan/cactustrade/internal/adapters/llm"
 	"github.com/albievan/cactustrade/internal/adapters/mail"
+	"github.com/albievan/cactustrade/internal/adapters/saxo"
 	"github.com/albievan/cactustrade/internal/adapters/secretstore"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
 	"github.com/albievan/cactustrade/internal/adapters/system"
+	"github.com/albievan/cactustrade/internal/adapters/tiger"
 	"github.com/albievan/cactustrade/internal/adapters/trading212"
 	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
@@ -182,6 +184,16 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
+	// Saxo and Tiger Brokers (R21): read-only (balance/assets and positions), overview only.
+	// Saxo also signs in through the browser (OAuth code flow; needs CACTUSTRADE_PUBLIC_URL).
+	saxoClient, err := saxo.New(saxo.Config{HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Log: log})
+	if err != nil {
+		return err
+	}
+	tigerClient, err := tiger.New(tiger.Config{HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Log: log})
+	if err != nil {
+		return err
+	}
 	fallback := &mailFallback{}
 	if err := fallback.load(getenv); err != nil {
 		return err
@@ -191,7 +203,10 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
 		Broker: broker, Market: feed, Calendar: cal,
-		Holdings:     map[domain.Platform]ports.Holdings{domain.PlatformTrading212: t212},
+		Holdings: map[domain.Platform]ports.Holdings{
+			domain.PlatformTrading212: t212, domain.PlatformSaxo: saxoClient, domain.PlatformTiger: tigerClient,
+		},
+		Connectors:   map[domain.Platform]ports.OAuthConnector{domain.PlatformSaxo: saxoClient},
 		Reviewer:     llm.New(&http.Client{Timeout: 10 * time.Minute}),
 		Research:     broker,
 		Mailer:       mail.New(time.Now, host),

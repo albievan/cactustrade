@@ -10,10 +10,12 @@ import (
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
+// setCookie sets the session cookie. Its Max-Age is measured on the service's clock, the one
+// that set the session's expiry (not the wall clock, which may differ).
 func (s *Server) setCookie(w http.ResponseWriter, token string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name: SessionCookie, Value: token, Path: "/", Expires: expires,
-		MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: s.cfg.CookieSecure,
+		MaxAge: int(expires.Sub(s.svc.Now()).Seconds()), HttpOnly: true, Secure: s.cfg.CookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
 }

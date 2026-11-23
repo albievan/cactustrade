@@ -55,10 +55,12 @@ type Deps struct {
 	Market   ports.MarketData
 	Calendar ports.MarketCalendar
 	// Holdings are the read-only sources for platforms cactusTrade shows but does not trade
-	// (Trading 212). eToro holdings come from Broker. A missing platform = "unavailable".
-	Holdings map[domain.Platform]ports.Holdings
-	Reviewer ports.Reviewer // the LLM reviewer (nil = not available)
-	Research ports.Research // industries and the screen for the scanner (nil = not available)
+	// (Trading 212, Saxo, Tiger). eToro holdings come from Broker. A missing platform =
+	// "unavailable". Connectors are the browser sign-ins of those that have one (Saxo).
+	Holdings   map[domain.Platform]ports.Holdings
+	Connectors map[domain.Platform]ports.OAuthConnector
+	Reviewer   ports.Reviewer // the LLM reviewer (nil = not available)
+	Research   ports.Research // industries and the screen for the scanner (nil = not available)
 	// Reload re-reads settings that live outside the database (credentials from the
 	// environment / secret files). Restart asks the process to restart gracefully. Both are
 	// supplied by cmd/cactustrade; nil = not supported.
@@ -87,6 +89,7 @@ type Service struct {
 	cfg       Config
 	startedAt time.Time
 	dummyHash string // verified against when a username is unknown (equal timing)
+	oauth     *oauthStates
 	// evalOverride replaces the strategy in scanner tests.
 	evalOverride func(domain.InstrumentID, []domain.Candle) strategy.Decision
 }
@@ -106,7 +109,7 @@ func New(d Deps, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("app.New: %w", err)
 	}
-	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy}, nil
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, oauth: newOAuthStates()}, nil
 }
 
 func (s *Service) authorize(p Principal, perm domain.Permission) error {

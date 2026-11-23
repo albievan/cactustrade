@@ -423,9 +423,13 @@ export interface paths {
         /** Whether the account's keys are set (never their values) */
         get: operations["getAccountKeys"];
         /**
-         * Store the account's key pair, write-only (owner, web UI); an empty value keeps the stored one
-         * @description eToro: `apiKey` is the Public API Key (x-api-key), `userKey` the User Key (x-user-key).
-         *     Trading 212: `apiKey` is the API key, `userKey` the API secret.
+         * Store the account's credentials, write-only (owner, web UI); an empty value keeps the stored one
+         * @description `values` sets any credential by its key (see `GET /api/v1/platforms` for each platform's
+         *     keys); a key the platform does not have, or one only its sign-in sets (Saxo's
+         *     `refresh_token`), is refused and nothing is stored.
+         *     The older fields set the platform's first two credentials. eToro: `apiKey` is the Public
+         *     API Key (x-api-key), `userKey` the User Key (x-user-key). Trading 212: API key and API
+         *     secret. Saxo: app key and app secret. Tiger: Tiger ID and account number.
          */
         put: operations["setAccountKeys"];
         post?: never;
@@ -494,6 +498,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/accounts/{accountId}/saxo/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Start connecting a Saxo account — returns Saxo's sign-in address (owner, web UI)
+         * @description Issues a random, single-use `state` (kept only as a hash, valid 10 minutes, bound to you
+         *     and the account) and returns Saxo's authorize address (SIM for a demo account, LIVE for
+         *     a real one) with the account's app key. Needs `CACTUSTRADE_PUBLIC_URL`: the redirect
+         *     address to register in the Saxo developer portal is that URL followed by
+         *     `/api/v1/oauth/saxo/callback`. Nothing is sent to Saxo until the browser goes there.
+         */
+        get: operations["connectSaxoAccount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/saxo/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Saxo sends the browser back here after sign-in (public; redirects to /accounts)
+         * @description Checks the `state` (ours, unused, under 10 minutes old, for an account its user still
+         *     owns; it is used up whatever happens), exchanges the `code` for tokens and stores the
+         *     refresh token encrypted. Always answers with a redirect to `/accounts`: with
+         *     `?connected=<accountId>` on success, else `?connect_error=expired|refused|failed`.
+         */
+        get: operations["saxoCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/platforms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The platforms an account can be on and the credentials each needs (never values) */
+        get: operations["listPlatforms"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/overview": {
         parameters: {
             query?: never;
@@ -503,8 +573,9 @@ export interface paths {
         };
         /**
          * Every account you can view, on every platform — cash, equity, positions (viewer)
-         * @description Reads each account now (eToro and Trading 212). An account that cannot be read carries
-         *     its `error` (and `noKeys` when its keys are not set yet) instead of failing the call.
+         * @description Reads each account now (eToro, and the view-only Trading 212, Saxo and Tiger Brokers).
+         *     An account that cannot be read carries its `error` (`noKeys` when its keys are not set
+         *     yet, `reconnect` when its platform sign-in has lapsed) instead of failing the call.
          *     Totals are per currency: amounts in different currencies are never added up.
          */
         get: operations["getOverview"];
@@ -1345,10 +1416,45 @@ export interface components {
             latencyMs: number;
         };
         /**
-         * @description eToro (traded) or Trading 212 (view-only for now)
+         * @description eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
          * @enum {string}
          */
-        Platform: "etoro" | "trading212";
+        Platform: "etoro" | "trading212" | "saxo" | "tiger";
+        /** @description One credential of a platform account (never its value) */
+        CredentialSpec: {
+            /** @description the name used in SetAccountKeysRequest.values */
+            key: string;
+            label: string;
+            help: string;
+            /** @description a PEM key; line breaks are kept */
+            multiline: boolean;
+            optional: boolean;
+            /** @description set by the platform's sign-in (Saxo's Connect), not typed in */
+            setByFlow: boolean;
+        };
+        PlatformInfo: {
+            platform: components["schemas"]["Platform"];
+            label: string;
+            /** @description cactusTrade shows the platform's accounts but never trades them */
+            viewOnly: boolean;
+            /** @description the platform signs in through the browser (Saxo) */
+            connectable: boolean;
+            credentials: components["schemas"]["CredentialSpec"][];
+        };
+        AccountCredential: components["schemas"]["CredentialSpec"] & {
+            set: boolean;
+            /**
+             * Format: date-time
+             * @description when it was last stored (absent when unknown)
+             */
+            updatedAt?: string;
+        };
+        ConnectStart: {
+            /** @description Saxo's sign-in page; open it in this browser */
+            authorizeUrl: string;
+            /** @description the address registered for the app in the Saxo developer portal */
+            redirectUri: string;
+        };
         Account: {
             id: string;
             name: string;
@@ -1375,22 +1481,38 @@ export interface components {
             accountId: string;
         };
         AccountKeys: {
+            /** @description the platform's first credential is set */
             apiKeySet: boolean;
+            /** @description the platform's second credential is set */
             userKeySet: boolean;
             fromEnvironment: boolean;
+            /** @description enough is set to read the account */
+            complete: boolean;
+            credentials: components["schemas"]["AccountCredential"][];
+            /** @description the platform signs in through the browser (Saxo) */
+            connectable: boolean;
+            /** @description the redirect address to register with the platform (absent without CACTUSTRADE_PUBLIC_URL) */
+            connectRedirectUri?: string;
         };
         SetAccountKeysRequest: {
-            /** @description eToro Public API Key (x-api-key) or Trading 212 API key; empty = keep */
-            apiKey: string;
-            /** @description eToro User Key (x-user-key) or Trading 212 API secret; empty = keep */
-            userKey: string;
+            /** @description the platform's first credential (eToro Public API Key…); empty = keep */
+            apiKey?: string;
+            /** @description the platform's second credential (eToro User Key…); empty = keep */
+            userKey?: string;
+            /** @description credentials by key (CredentialSpec.key); empty = keep */
+            values?: {
+                [key: string]: string;
+            };
         };
         /**
          * Format: int64
-         * @description An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+         * @description An amount in minor units of the currency given next to it: hundredths for most (USD
+         *     cents, GBP pence…), whole units for JPY and KRW.
          */
         MinorUnits: number;
         Holding: {
+            /** @description the platform did not report value and P&L in the account currency: value, cost and pnl are 0 and mean unknown */
+            unknown: boolean;
             symbol: string;
             name: string;
             /** @description the instrument's price currency ("" when unknown) */
@@ -1426,6 +1548,8 @@ export interface components {
             error?: string;
             /** @description the account's keys are not set yet */
             noKeys: boolean;
+            /** @description the platform's sign-in has lapsed (Saxo): the owner connects again */
+            reconnect?: boolean;
         };
         CurrencyTotal: {
             currency: string;
@@ -2458,6 +2582,77 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    connectSaxoAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Where to send the browser */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectStart"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    saxoCallback: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+                error?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Back to the accounts page */
+            303: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listPlatforms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Platforms, eToro first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformInfo"][];
+                };
+            };
+            401: components["responses"]["Problem"];
         };
     };
     getOverview: {

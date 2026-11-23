@@ -288,9 +288,20 @@ type Broker interface {
 
 // Holdings reads an account's cash and open positions, read-only, for the account set with
 // WithAccount (without one it refuses). It has no operation that changes anything: it is how
-// cactusTrade shows platforms it does not trade (Trading 212).
+// cactusTrade shows platforms it does not trade (Trading 212, Saxo, Tiger Brokers).
 type Holdings interface {
 	Holdings(ctx context.Context) (domain.Holdings, error)
+}
+
+// OAuthConnector is a view-only platform's browser sign-in (OAuth 2.0 authorization code
+// grant; Saxo). Both calls are for the account set with WithAccount.
+type OAuthConnector interface {
+	// AuthorizeURL is where the owner's browser signs in; the platform sends it back to
+	// redirectURI with a code and state. It needs the account's app key, nothing is sent.
+	AuthorizeURL(ctx context.Context, redirectURI, state string) (string, error)
+	// Exchange trades the code for tokens and stores the refresh token in the SecretStore
+	// (write-only) before anything uses the access token.
+	Exchange(ctx context.Context, code, redirectURI string) error
 }
 
 // SignalModel turns candles into candidates (regime model + playbooks).

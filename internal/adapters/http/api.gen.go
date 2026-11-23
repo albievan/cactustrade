@@ -248,6 +248,8 @@ func (e MeVia) Valid() bool {
 // Defines values for Platform.
 const (
 	Etoro      Platform = "etoro"
+	Saxo       Platform = "saxo"
+	Tiger      Platform = "tiger"
 	Trading212 Platform = "trading212"
 )
 
@@ -255,6 +257,10 @@ const (
 func (e Platform) Valid() bool {
 	switch e {
 	case Etoro:
+		return true
+	case Saxo:
+		return true
+	case Tiger:
 		return true
 	case Trading212:
 		return true
@@ -396,12 +402,32 @@ type Account struct {
 	OwnerId   string      `json:"ownerId"`
 	OwnerName string      `json:"ownerName"`
 
-	// Platform eToro (traded) or Trading 212 (view-only for now)
+	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
 	Platform Platform `json:"platform"`
 }
 
 // AccountAccess defines model for Account.Access.
 type AccountAccess string
+
+// AccountCredential defines model for AccountCredential.
+type AccountCredential struct {
+	Help string `json:"help"`
+
+	// Key the name used in SetAccountKeysRequest.values
+	Key   string `json:"key"`
+	Label string `json:"label"`
+
+	// Multiline a PEM key; line breaks are kept
+	Multiline bool `json:"multiline"`
+	Optional  bool `json:"optional"`
+	Set       bool `json:"set"`
+
+	// SetByFlow set by the platform's sign-in (Saxo's Connect), not typed in
+	SetByFlow bool `json:"setByFlow"`
+
+	// UpdatedAt when it was last stored (absent when unknown)
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+}
 
 // AccountHoldings defines model for AccountHoldings.
 type AccountHoldings struct {
@@ -415,13 +441,29 @@ type AccountHoldings struct {
 
 	// NoKeys the account's keys are not set yet
 	NoKeys bool `json:"noKeys"`
+
+	// Reconnect the platform's sign-in has lapsed (Saxo): the owner connects again
+	Reconnect *bool `json:"reconnect,omitempty"`
 }
 
 // AccountKeys defines model for AccountKeys.
 type AccountKeys struct {
-	ApiKeySet       bool `json:"apiKeySet"`
-	FromEnvironment bool `json:"fromEnvironment"`
-	UserKeySet      bool `json:"userKeySet"`
+	// ApiKeySet the platform's first credential is set
+	ApiKeySet bool `json:"apiKeySet"`
+
+	// Complete enough is set to read the account
+	Complete bool `json:"complete"`
+
+	// ConnectRedirectUri the redirect address to register with the platform (absent without CACTUSTRADE_PUBLIC_URL)
+	ConnectRedirectUri *string `json:"connectRedirectUri,omitempty"`
+
+	// Connectable the platform signs in through the browser (Saxo)
+	Connectable     bool                `json:"connectable"`
+	Credentials     []AccountCredential `json:"credentials"`
+	FromEnvironment bool                `json:"fromEnvironment"`
+
+	// UserKeySet the platform's second credential is set
+	UserKeySet bool `json:"userKeySet"`
 }
 
 // AccountRef defines model for AccountRef.
@@ -501,12 +543,21 @@ type ChangePasswordRequest struct {
 	NewPassword     string `json:"newPassword"`
 }
 
+// ConnectStart defines model for ConnectStart.
+type ConnectStart struct {
+	// AuthorizeUrl Saxo's sign-in page; open it in this browser
+	AuthorizeUrl string `json:"authorizeUrl"`
+
+	// RedirectUri the address registered for the app in the Saxo developer portal
+	RedirectUri string `json:"redirectUri"`
+}
+
 // CreateAccountRequest defines model for CreateAccountRequest.
 type CreateAccountRequest struct {
 	Mode TradingMode `json:"mode"`
 	Name string      `json:"name"`
 
-	// Platform eToro (traded) or Trading 212 (view-only for now)
+	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
 	Platform *Platform `json:"platform,omitempty"`
 }
 
@@ -552,18 +603,37 @@ type CredentialSource string
 // CredentialName defines model for CredentialName.
 type CredentialName string
 
+// CredentialSpec One credential of a platform account (never its value)
+type CredentialSpec struct {
+	Help string `json:"help"`
+
+	// Key the name used in SetAccountKeysRequest.values
+	Key   string `json:"key"`
+	Label string `json:"label"`
+
+	// Multiline a PEM key; line breaks are kept
+	Multiline bool `json:"multiline"`
+	Optional  bool `json:"optional"`
+
+	// SetByFlow set by the platform's sign-in (Saxo's Connect), not typed in
+	SetByFlow bool `json:"setByFlow"`
+}
+
 // CurrencyTotal defines model for CurrencyTotal.
 type CurrencyTotal struct {
 	Accounts int `json:"accounts"`
 
-	// Cash An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Cash An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Cash     MinorUnits `json:"cash"`
 	Currency string     `json:"currency"`
 
-	// Equity An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Equity An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Equity MinorUnits `json:"equity"`
 
-	// UnrealisedPnl An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// UnrealisedPnl An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	UnrealisedPnl MinorUnits `json:"unrealisedPnl"`
 }
 
@@ -621,10 +691,12 @@ type EmailSetupInputTls string
 type EquityPoint struct {
 	At time.Time `json:"at"`
 
-	// Cash An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Cash An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Cash MinorUnits `json:"cash"`
 
-	// Equity An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Equity An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Equity MinorUnits `json:"equity"`
 }
 
@@ -635,7 +707,7 @@ type EquitySeries struct {
 	Mode      TradingMode `json:"mode"`
 	Name      string      `json:"name"`
 
-	// Platform eToro (traded) or Trading 212 (view-only for now)
+	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
 	Platform Platform      `json:"platform"`
 	Points   []EquityPoint `json:"points"`
 }
@@ -675,7 +747,8 @@ type Holding struct {
 	AvgPrice Decimal `json:"avgPrice"`
 	Cfd      bool    `json:"cfd"`
 
-	// Cost An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Cost An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Cost MinorUnits `json:"cost"`
 
 	// Currency the instrument's price currency ("" when unknown)
@@ -687,14 +760,19 @@ type Holding struct {
 	Name         string     `json:"name"`
 	OpenedAt     *time.Time `json:"openedAt,omitempty"`
 
-	// Pnl An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Pnl An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Pnl MinorUnits `json:"pnl"`
 
 	// Quantity An exact decimal (prices and units, up to 6 places)
 	Quantity Decimal `json:"quantity"`
 	Symbol   string  `json:"symbol"`
 
-	// Value An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Unknown the platform did not report value and P&L in the account currency: value, cost and pnl are 0 and mean unknown
+	Unknown bool `json:"unknown"`
+
+	// Value An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Value MinorUnits `json:"value"`
 }
 
@@ -702,24 +780,29 @@ type Holding struct {
 type Holdings struct {
 	AsOf time.Time `json:"asOf"`
 
-	// Cash An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Cash An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Cash     MinorUnits `json:"cash"`
 	Currency string     `json:"currency"`
 
-	// Equity An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Equity An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Equity MinorUnits `json:"equity"`
 
-	// Invested An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// Invested An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	Invested MinorUnits `json:"invested"`
 
-	// Platform eToro (traded) or Trading 212 (view-only for now)
+	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
 	Platform  Platform  `json:"platform"`
 	Positions []Holding `json:"positions"`
 
-	// RealisedPnl An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// RealisedPnl An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	RealisedPnl MinorUnits `json:"realisedPnl"`
 
-	// UnrealisedPnl An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+	// UnrealisedPnl An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
 	UnrealisedPnl MinorUnits `json:"unrealisedPnl"`
 }
 
@@ -853,7 +936,8 @@ type Me struct {
 // MeVia defines model for Me.Via.
 type MeVia string
 
-// MinorUnits An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+// MinorUnits An amount in minor units of the currency given next to it: hundredths for most (USD
+// cents, GBP pence…), whole units for JPY and KRW.
 type MinorUnits = int64
 
 // NotifyPrefs defines model for NotifyPrefs.
@@ -897,8 +981,22 @@ type PasswordResetRequest struct {
 	Username string `json:"username"`
 }
 
-// Platform eToro (traded) or Trading 212 (view-only for now)
+// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
 type Platform string
+
+// PlatformInfo defines model for PlatformInfo.
+type PlatformInfo struct {
+	// Connectable the platform signs in through the browser (Saxo)
+	Connectable bool             `json:"connectable"`
+	Credentials []CredentialSpec `json:"credentials"`
+	Label       string           `json:"label"`
+
+	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+	Platform Platform `json:"platform"`
+
+	// ViewOnly cactusTrade shows the platform's accounts but never trades them
+	ViewOnly bool `json:"viewOnly"`
+}
 
 // Portfolio defines model for Portfolio.
 type Portfolio struct {
@@ -1056,11 +1154,14 @@ type ScannerSwitch struct {
 
 // SetAccountKeysRequest defines model for SetAccountKeysRequest.
 type SetAccountKeysRequest struct {
-	// ApiKey eToro Public API Key (x-api-key) or Trading 212 API key; empty = keep
-	ApiKey string `json:"apiKey"`
+	// ApiKey the platform's first credential (eToro Public API Key…); empty = keep
+	ApiKey *string `json:"apiKey,omitempty"`
 
-	// UserKey eToro User Key (x-user-key) or Trading 212 API secret; empty = keep
-	UserKey string `json:"userKey"`
+	// UserKey the platform's second credential (eToro User Key…); empty = keep
+	UserKey *string `json:"userKey,omitempty"`
+
+	// Values credentials by key (CredentialSpec.key); empty = keep
+	Values *map[string]string `json:"values,omitempty"`
 }
 
 // SetCredentialRequest defines model for SetCredentialRequest.
@@ -1197,6 +1298,13 @@ type SearchInstrumentsParams struct {
 	Q string `form:"q" json:"q"`
 }
 
+// SaxoCallbackParams defines parameters for SaxoCallback.
+type SaxoCallbackParams struct {
+	Code  *string `form:"code,omitempty" json:"code,omitempty"`
+	State *string `form:"state,omitempty" json:"state,omitempty"`
+	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
 // GetEquityHistoryParams defines parameters for GetEquityHistory.
 type GetEquityHistoryParams struct {
 	Days *int `form:"days,omitempty" json:"days,omitempty"`
@@ -1302,9 +1410,12 @@ type ServerInterface interface {
 	// GetAccountKeys Whether the account's keys are set (never their values)
 	// (GET /api/v1/accounts/{accountId}/keys)
 	GetAccountKeys(w http.ResponseWriter, r *http.Request, accountId string)
-	// SetAccountKeys Store the account's key pair, write-only (owner, web UI); an empty value keeps the stored one
+	// SetAccountKeys Store the account's credentials, write-only (owner, web UI); an empty value keeps the stored one
 	// (PUT /api/v1/accounts/{accountId}/keys)
 	SetAccountKeys(w http.ResponseWriter, r *http.Request, accountId string)
+	// ConnectSaxoAccount Start connecting a Saxo account — returns Saxo's sign-in address (owner, web UI)
+	// (GET /api/v1/accounts/{accountId}/saxo/connect)
+	ConnectSaxoAccount(w http.ResponseWriter, r *http.Request, accountId string)
 	// ListAccountShares Who the account is shared with (owner)
 	// (GET /api/v1/accounts/{accountId}/shares)
 	ListAccountShares(w http.ResponseWriter, r *http.Request, accountId string)
@@ -1410,12 +1521,18 @@ type ServerInterface interface {
 	// SetMyProfile Change your e-mail address and notification choices (web UI)
 	// (PUT /api/v1/me/profile)
 	SetMyProfile(w http.ResponseWriter, r *http.Request)
+	// SaxoCallback Saxo sends the browser back here after sign-in (public; redirects to /accounts)
+	// (GET /api/v1/oauth/saxo/callback)
+	SaxoCallback(w http.ResponseWriter, r *http.Request, params SaxoCallbackParams)
 	// GetOverview Every account you can view, on every platform — cash, equity, positions (viewer)
 	// (GET /api/v1/overview)
 	GetOverview(w http.ResponseWriter, r *http.Request)
 	// GetEquityHistory Equity over time of every account you can view (snapshots every 15 minutes, kept 400 days)
 	// (GET /api/v1/overview/history)
 	GetEquityHistory(w http.ResponseWriter, r *http.Request, params GetEquityHistoryParams)
+	// ListPlatforms The platforms an account can be on and the credentials each needs (never values)
+	// (GET /api/v1/platforms)
+	ListPlatforms(w http.ResponseWriter, r *http.Request)
 	// RequestPasswordReset E-mail a password-reset link to the user's address (same answer whether or not the user exists)
 	// (POST /api/v1/public/password-reset)
 	RequestPasswordReset(w http.ResponseWriter, r *http.Request)
@@ -1639,6 +1756,32 @@ func (siw *ServerInterfaceWrapper) SetAccountKeys(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetAccountKeys(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConnectSaxoAccount operation middleware
+func (siw *ServerInterfaceWrapper) ConnectSaxoAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConnectSaxoAccount(w, r, accountId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2324,6 +2467,65 @@ func (siw *ServerInterfaceWrapper) SetMyProfile(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// SaxoCallback operation middleware
+func (siw *ServerInterfaceWrapper) SaxoCallback(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SaxoCallbackParams
+
+	// ------------- Optional query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "error" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "error", r.URL.Query(), &params.Error, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "error"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "error", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaxoCallback(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOverview operation middleware
 func (siw *ServerInterfaceWrapper) GetOverview(w http.ResponseWriter, r *http.Request) {
 
@@ -2362,6 +2564,20 @@ func (siw *ServerInterfaceWrapper) GetEquityHistory(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetEquityHistory(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPlatforms operation middleware
+func (siw *ServerInterfaceWrapper) ListPlatforms(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPlatforms(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2957,6 +3173,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ListAccountShares)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ShareAccount)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares/{userId}", wrapper.UnshareAccount)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/saxo/connect", wrapper.ConnectSaxoAccount)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/oauth/saxo/callback", wrapper.SaxoCallback)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platforms", wrapper.ListPlatforms)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/overview", wrapper.GetOverview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/overview/history", wrapper.GetEquityHistory)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/broker/test", wrapper.TestBrokerConnection)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { EquityCharts } from "../components/EquityChart";
-import { api, errorText, money, platformLabel, type AccountHoldings, type EquitySeries, type Overview as OverviewData } from "../lib/api";
+import { api, errorText, money, platformBadge, platformLabel, type AccountHoldings, type EquitySeries, type Overview as OverviewData } from "../lib/api";
 
 // Every account the user can view, on every platform: totals per currency, one card per
 // account, an equity chart and every open position. Read-only: nothing here places an order.
@@ -38,7 +38,9 @@ export function Overview() {
         </button>
       </div>
       <p className="text-secondary">
-        All your accounts on every platform, read now. Trading 212 accounts are view-only: cactusTrade does not trade them.
+        All your accounts on every platform, read now. Trading 212, Saxo and Tiger Brokers accounts are view-only: cactusTrade
+        does not trade them. A position shown as <em>unknown</em> is one whose value the platform did not report in the
+        account currency (cactusTrade never guesses or converts it).
       </p>
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
 
@@ -103,8 +105,8 @@ export function Overview() {
                       <td className="text-end">{p.quantity}</td>
                       <td className="text-end">{p.avgPrice} <span className="text-secondary small">{p.currency}</span></td>
                       <td className="text-end">{p.currentPrice === "0" ? "—" : <>{p.currentPrice} <span className="text-secondary small">{p.currency}</span></>}</td>
-                      <td className="text-end">{money(p.value, cur)}</td>
-                      <td className="text-end"><Pnl v={p.pnl} cur={cur} /></td>
+                      <td className="text-end">{p.unknown ? <Unknown /> : money(p.value, cur)}</td>
+                      <td className="text-end">{p.unknown ? <Unknown /> : <Pnl v={p.pnl} cur={cur} />}</td>
                       <td className="small text-secondary">{p.openedAt ? new Date(p.openedAt).toLocaleDateString() : "—"}</td>
                     </tr>
                   );
@@ -122,8 +124,12 @@ function Pnl({ v, cur }: { v: number; cur: string }) {
   return <span className={v > 0 ? "text-success" : v < 0 ? "text-danger" : ""}>{v > 0 ? "+" : ""}{money(v, cur)}</span>;
 }
 
+function Unknown() {
+  return <span className="text-secondary fst-italic" title="The platform did not report this in the account currency">unknown</span>;
+}
+
 function PlatformBadge({ platform }: { platform: AccountHoldings["account"]["platform"] }) {
-  return <span className={"badge " + (platform === "trading212" ? "text-bg-primary" : "text-bg-success")}>{platformLabel[platform]}</span>;
+  return <span className={"badge " + platformBadge[platform]}>{platformLabel[platform]}</span>;
 }
 
 function AccountCard({ a }: { a: AccountHoldings }) {
@@ -145,10 +151,17 @@ function AccountCard({ a }: { a: AccountHoldings }) {
             <dt className="col-6 fw-normal text-secondary">Positions</dt><dd className="col-6 text-end mb-0">{h.positions.length}</dd>
           </dl>
         )}
+        {h && h.positions.some((p) => p.unknown) && (
+          <p className="small text-secondary mt-2 mb-0">Some positions have no value in {h.currency} from the platform: shown as unknown.</p>
+        )}
         {!h && a.noKeys && (
           <p className="small mb-0 text-secondary">No keys yet — add them on the <Link to="/accounts">Platform accounts</Link> page.</p>
         )}
-        {!h && !a.noKeys && (
+        {!h && a.reconnect && (
+          <p className="small mb-0 text-warning-emphasis"><i className="bi bi-box-arrow-in-right me-1" />{a.error || `Reconnect to ${platformLabel[a.account.platform]}`}.{" "}
+            <Link to="/accounts">Connect again</Link></p>
+        )}
+        {!h && !a.noKeys && !a.reconnect && (
           <p className="small mb-0 text-danger"><i className="bi bi-exclamation-triangle me-1" />{a.error || "Could not be read."}{" "}
             <Link to="/accounts">Check the account</Link></p>
         )}
