@@ -71,6 +71,8 @@ type Event struct {
 	Title    string
 	Detail   string
 	Actor    string // username, or "agent" / "system"
+	// AccountID is the eToro account the event is about ("" = the whole system).
+	AccountID string
 }
 
 // AuditEntry records who did what. Details never hold secrets.

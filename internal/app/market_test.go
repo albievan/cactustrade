@@ -45,6 +45,9 @@ func withBroker(t *testing.T) (*env, *fakes.Broker) {
 		Prices: map[domain.InstrumentID]domain.Quote{1: {Instrument: 1, Bid: 1, Ask: 2}},
 	}
 	e.svc.d.Broker, e.svc.d.Market, e.svc.d.Calendar = b, b, fixedCalendar{}
+	if _, err := e.svc.CreateAccount(context.Background(), e.admin, "Main demo", domain.ModeDemo); err != nil {
+		t.Fatal(err)
+	}
 	return e, b
 }
 
@@ -52,25 +55,25 @@ func TestTestConnection(t *testing.T) {
 	ctx := context.Background()
 	e, b := withBroker(t)
 	viewer := e.user(t, "vera", domain.RoleViewer)
-	if _, err := e.svc.TestConnection(ctx, viewer); !errors.Is(err, domain.ErrForbidden) {
-		t.Fatal("viewer tested the connection")
+	if _, err := e.svc.TestConnection(ctx, viewer, ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("a user without an account tested the connection")
 	}
-	res, err := e.svc.TestConnection(ctx, e.admin)
+	res, err := e.svc.TestConnection(ctx, e.admin, "")
 	if err != nil || !res.OK || res.Mode != domain.ModeDemo || res.AvailableCash != 100000 || res.Positions != 2 ||
 		res.NonConforming != 1 || res.Equity != 100000+5000+100+1000 {
 		t.Fatalf("ok check = %+v %v", res, err)
 	}
 	b.Err = fmt.Errorf("eToro portfolio: HTTP 401 Unauthorized: %w", domain.ErrUnavailable)
-	res, err = e.svc.TestConnection(ctx, e.admin)
+	res, err = e.svc.TestConnection(ctx, e.admin, "")
 	if err != nil || res.OK || !res.ConfiguredKeys || res.Error == "" {
 		t.Fatalf("failed check = %+v %v", res, err)
 	}
 	b.Err = fmt.Errorf("keys: %w: %w", domain.ErrCredentialsMissing, domain.ErrUnavailable)
-	if res, _ := e.svc.TestConnection(ctx, e.admin); res.ConfiguredKeys {
+	if res, _ := e.svc.TestConnection(ctx, e.admin, ""); res.ConfiguredKeys {
 		t.Fatal("missing keys not reported")
 	}
 	b.Err = errors.New("boom")
-	if _, err := e.svc.TestConnection(ctx, e.admin); err == nil {
+	if _, err := e.svc.TestConnection(ctx, e.admin, ""); err == nil {
 		t.Fatal("unexpected error swallowed")
 	}
 	last := e.store.AuditEntries()
@@ -82,7 +85,13 @@ func TestTestConnection(t *testing.T) {
 func TestNoBrokerConfigured(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	if _, err := e.svc.TestConnection(ctx, e.admin); !errors.Is(err, domain.ErrUnavailable) {
+	if _, err := e.svc.Portfolio(ctx, e.admin); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("portfolio without any account")
+	}
+	if _, err := e.svc.CreateAccount(ctx, e.admin, "Main", domain.ModeDemo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.TestConnection(ctx, e.admin, ""); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatal("test connection")
 	}
 	if _, err := e.svc.Portfolio(ctx, e.admin); !errors.Is(err, domain.ErrUnavailable) {
@@ -106,6 +115,10 @@ func TestPortfolioAndMarketStatus(t *testing.T) {
 	ctx := context.Background()
 	e, b := withBroker(t)
 	viewer := e.user(t, "vera", domain.RoleViewer)
+	acct, _ := e.svc.CurrentAccount(ctx, e.admin)
+	if err := e.svc.ShareAccount(ctx, e.admin, acct.ID, "vera", domain.AccessTrade); err != nil {
+		t.Fatal(err)
+	}
 	if pf, err := e.svc.Portfolio(ctx, viewer); err != nil || pf.AvailableCash != 100000 {
 		t.Fatalf("portfolio = %+v %v", pf, err)
 	}
@@ -137,8 +150,15 @@ func TestWatchlist(t *testing.T) {
 	ctx := context.Background()
 	e, b := withBroker(t)
 	op := e.user(t, "olivia", domain.RoleOperator)
+	if _, err := e.svc.SearchInstruments(ctx, op, "a"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("a user without an account searched")
+	}
+	acct, _ := e.svc.CurrentAccount(ctx, e.admin)
+	if err := e.svc.ShareAccount(ctx, e.admin, acct.ID, "olivia", domain.AccessView); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := e.svc.SearchInstruments(ctx, op, "a"); !errors.Is(err, domain.ErrForbidden) {
-		t.Fatal("operator searched")
+		t.Fatal("view access searched")
 	}
 	if res, err := e.svc.SearchInstruments(ctx, e.admin, "a"); err != nil || len(res) != 5 {
 		t.Fatalf("search = %v %v", res, err)

@@ -95,7 +95,7 @@ func newStreamEnv(t *testing.T) (*env, *Stream, chan *fakeWS) {
 	}
 	e.c.cfg.Now = time.Now
 	conns := make(chan *fakeWS, 4)
-	s := NewStream(e.c)
+	s := NewStream(e.c, func(context.Context) (domain.Account, bool) { return e.account(), true })
 	s.PingEvery = 20 * time.Millisecond
 	s.dial = func(context.Context, string) (wsConn, error) {
 		f := newFakeWS()
@@ -173,9 +173,10 @@ func TestStreamReconnects(t *testing.T) {
 	ws = <-conns
 	ws.in <- []byte(`{"operation":"Authenticate","success":true}`)
 	waitFor(t, "connected", func() bool { ok, _ := s.Status(); return ok })
-	_ = e.sec.Put(ctx, domain.CredEtoroRealAPIKey, "real-api")
-	_ = e.sec.Put(ctx, domain.CredEtoroRealUserKey, "real-user")
-	e.mode.Store(domain.ModeReal)
+	e.mode.Store(domain.ModeReal) // the stream's account changes to one with its own keys
+	ak, uk := domain.AccountKeyNames(e.account())
+	_ = e.sec.Put(ctx, ak, "real-api")
+	_ = e.sec.Put(ctx, uk, "real-user")
 	ws = <-conns
 	waitFor(t, "authenticate with real keys", func() bool { return len(ws.sentOps()) == 1 })
 	if ws.sentOps()[0]["data"].(map[string]any)["apiKey"] != "real-api" {
@@ -183,6 +184,17 @@ func TestStreamReconnects(t *testing.T) {
 	}
 	cancel()
 	waitFor(t, "closed", func() bool { ws.mu.Lock(); defer ws.mu.Unlock(); return ws.closed })
+}
+
+func TestStreamWaitsForAnAccount(t *testing.T) {
+	_, s, conns := newStreamEnv(t)
+	s.Account = func(context.Context) (domain.Account, bool) { return domain.Account{}, false }
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	s.Run(ctx)
+	if len(conns) != 0 {
+		t.Fatal("dialled without an account")
+	}
 }
 
 func TestStreamWaitsForKeys(t *testing.T) {
@@ -201,12 +213,12 @@ func TestStreamWaitsForKeys(t *testing.T) {
 
 func TestFeedPrefersFreshStreamQuotes(t *testing.T) {
 	e := newEnv(t)
-	s := NewStream(e.c)
+	s := NewStream(e.c, func(context.Context) (domain.Account, bool) { return e.account(), true })
 	f := NewFeed(e.c, s, 30*time.Second)
 	now := e.c.cfg.Now()
 	s.quotes[1001] = streamQuote{q: domain.Quote{Instrument: 1001, Bid: 1, Ask: 2}, received: now.Add(-5 * time.Second)}
 	s.quotes[2002] = streamQuote{q: domain.Quote{Instrument: 2002, Bid: 1, Ask: 2}, received: now.Add(-time.Minute)} // stale
-	qs, err := f.Quotes(context.Background(), []domain.InstrumentID{2002, 1001})
+	qs, err := f.Quotes(e.ctx(), []domain.InstrumentID{2002, 1001})
 	if err != nil || len(qs) != 2 {
 		t.Fatalf("quotes = %+v %v", qs, err)
 	}
@@ -221,10 +233,10 @@ func TestFeedPrefersFreshStreamQuotes(t *testing.T) {
 	}
 	// REST down: fresh stream quotes are still served; nothing at all → error
 	e.fake.route = func(*http.Request, int) (int, string, http.Header) { return 503, "", nil }
-	if qs, err := f.Quotes(context.Background(), []domain.InstrumentID{1001, 2002}); err != nil || len(qs) != 1 {
+	if qs, err := f.Quotes(e.ctx(), []domain.InstrumentID{1001, 2002}); err != nil || len(qs) != 1 {
 		t.Fatalf("partial = %+v %v", qs, err)
 	}
-	if _, err := f.Quotes(context.Background(), []domain.InstrumentID{2002}); err == nil {
+	if _, err := f.Quotes(e.ctx(), []domain.InstrumentID{2002}); err == nil {
 		t.Fatal("no quote and REST down must be an error")
 	}
 }

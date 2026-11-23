@@ -89,6 +89,10 @@ linters:
       - path: cmd/cactustrade/main\.go
         text: "G204|G702"
         linters: [gosec]
+      # Reviewed: the only text concatenated into the events query is a list of "?" placeholders.
+      - path: internal/adapters/sqlstore/market\.go
+        text: "G202"
+        linters: [gosec]
       # Reviewed: the HTTP->HTTPS redirect targets the client's own validated Host header.
       - path: cmd/cactustrade/demux\.go
         text: "G710"

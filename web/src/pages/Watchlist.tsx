@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type Instrument, type Quote, type WatchItem } from "../lib/api";
 import { useSession } from "../lib/session";
+import { useMode } from "../lib/mode";
 
 const QUOTE_REFRESH_MS = 15_000; // 4 calls a minute: well inside eToro's market-data quota
 
@@ -8,7 +9,9 @@ const QUOTE_REFRESH_MS = 15_000; // 4 calls a minute: well inside eToro's market
 // real share, long, at leverage 1; anything else is refused with eToro's reason.
 export function Watchlist() {
   const { can } = useSession();
-  const admin = can("settings.write");
+  const status = useMode();
+  const access = status?.account?.access;
+  const admin = can("agent.control") && (access === "trade" || access === "owner");
   const [items, setItems] = useState<WatchItem[]>([]);
   const [quotes, setQuotes] = useState<Record<number, Quote>>({});
   const [error, setError] = useState("");

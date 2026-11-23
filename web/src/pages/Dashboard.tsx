@@ -1,20 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, errorText, usd, type Credential, type MarketSession, type Portfolio, type SystemStatus } from "../lib/api";
+import { api, errorText, usd, type MarketSession, type Portfolio, type SystemStatus } from "../lib/api";
 
 export function Dashboard() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
-  const [creds, setCreds] = useState<Credential[]>([]);
   const [markets, setMarkets] = useState<MarketSession[]>([]);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [pfError, setPfError] = useState("");
   useEffect(() => {
     api.status().then(setStatus).catch(() => undefined);
-    api.credentials().then(setCreds).catch(() => undefined);
     api.marketStatus().then(setMarkets).catch(() => undefined);
     api.portfolio().then(setPortfolio).catch((e) => setPfError(errorText(e)));
   }, []);
-  const demoReady = creds.filter((c) => c.name.startsWith("etoro_demo_") && c.set).length === 2;
+  const noAccount = status !== null && !status.account;
   return (
     <>
       <h1 className="h3 mb-4">Dashboard</h1>
@@ -24,10 +22,10 @@ export function Dashboard() {
         <Stat label="Available cash" value={portfolio ? usd(portfolio.availableCashCents) : "—"} icon="bi-cash-coin" />
         <Stat label="Equity" value={portfolio ? usd(portfolio.equityCents) : "—"} icon="bi-graph-up" />
       </div>
-      {!demoReady && (
+      {noAccount && (
         <div className="alert alert-warning">
-          The eToro <strong>demo</strong> keys are not set yet. Add them under <Link to="/credentials">eToro keys</Link>,
-          or start cactusTrade with <code>ETORO_DEMO_PUB</code> and <code>ETORO_DEMO_PK</code>.
+          You have no eToro account yet. Add one under <Link to="/accounts">eToro accounts</Link>, or start cactusTrade
+          with <code>ETORO_DEMO_PUB</code> and <code>ETORO_DEMO_PK</code> (the first admin then gets "Demo (environment)").
         </div>
       )}
       <div className="row g-3 mb-4">

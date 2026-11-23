@@ -28,9 +28,12 @@ import (
 // errorCode, errorMessage}; pushes {messages:[{topic, content, id, type}]} where content is
 // a JSON string with Ask, Bid, LastExecution, Date (numbers sent as strings).
 type Stream struct {
-	c    *Client
-	url  string
-	dial func(ctx context.Context, url string) (wsConn, error)
+	c *Client
+	// Account picks the account whose keys the stream authenticates with (market data is the
+	// same for every account); false = none usable yet.
+	Account func(context.Context) (domain.Account, bool)
+	url     string
+	dial    func(ctx context.Context, url string) (wsConn, error)
 	// PingEvery and ReconnectMax tune the connection (tests shorten them).
 	PingEvery    time.Duration
 	ReconnectMax time.Duration
@@ -57,9 +60,9 @@ type wsConn interface {
 }
 
 // NewStream builds a stream on the client's keys, mode, clock and log.
-func NewStream(c *Client) *Stream {
+func NewStream(c *Client, acct func(context.Context) (domain.Account, bool)) *Stream {
 	return &Stream{
-		c: c, url: WebSocketURL, dial: dialWS, PingEvery: 30 * time.Second, ReconnectMax: time.Minute,
+		c: c, Account: acct, url: WebSocketURL, dial: dialWS, PingEvery: 30 * time.Second, ReconnectMax: time.Minute,
 		want: map[domain.InstrumentID]bool{}, quotes: map[domain.InstrumentID]streamQuote{},
 		changed: make(chan struct{}, 1),
 	}
@@ -158,8 +161,15 @@ type wsPushMessage struct {
 
 // session runs one connection: dial, authenticate, subscribe, then read until it fails.
 func (s *Stream) session(ctx context.Context) error {
-	mode := s.c.cfg.Mode(ctx)
-	apiKey, userKey, err := s.c.keys(ctx, mode)
+	acct, ok := s.Account(ctx)
+	if !ok {
+		return fmt.Errorf("eToro stream: no account with keys yet: %w: %w", domain.ErrCredentialsMissing, domain.ErrUnavailable)
+	}
+	mode := domain.ModeDemo
+	if acct.Mode == domain.ModeReal {
+		mode = domain.ModeReal
+	}
+	apiKey, userKey, err := s.c.keys(ctx, acct, mode)
 	if err != nil {
 		return err
 	}
@@ -190,15 +200,16 @@ func (s *Stream) session(ctx context.Context) error {
 	s.c.cfg.Log.InfoContext(ctx, "eToro stream connected", "mode", string(mode))
 
 	errc := make(chan error, 2)
-	go func() { errc <- s.writer(ctx, conn, mode) }()
+	go func() { errc <- s.writer(ctx, conn, acct.ID) }()
 	go func() { errc <- s.reader(ctx, conn) }()
 	err = <-errc
 	cancel()
 	return err
 }
 
-// writer subscribes new instruments, pings, and ends the session when the mode changes.
-func (s *Stream) writer(ctx context.Context, conn wsConn, mode domain.TradingMode) error {
+// writer subscribes new instruments, pings, and ends the session when the stream's account
+// changes (e.g. it was deleted).
+func (s *Stream) writer(ctx context.Context, conn wsConn, accountID string) error {
 	subscribed := map[domain.InstrumentID]bool{}
 	ping := time.NewTicker(s.PingEvery)
 	defer ping.Stop()
@@ -239,8 +250,8 @@ func (s *Stream) writer(ctx context.Context, conn wsConn, mode domain.TradingMod
 				return err
 			}
 		case <-ping.C:
-			if m := s.c.cfg.Mode(ctx); m != mode {
-				return fmt.Errorf("eToro stream: trading mode changed to %s; reconnecting", m)
+			if a, ok := s.Account(ctx); !ok || a.ID != accountID {
+				return errors.New("eToro stream: the account it uses changed; reconnecting")
 			}
 			pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			err := conn.Ping(pctx)

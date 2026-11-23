@@ -4,11 +4,11 @@ import { useSession } from "./lib/session";
 import { Login } from "./pages/Login";
 import { ChangeDefaultPassword } from "./pages/ChangeDefaultPassword";
 import { Dashboard } from "./pages/Dashboard";
-import { Credentials } from "./pages/Credentials";
 import { Users } from "./pages/Users";
 import { ApiKeys } from "./pages/ApiKeys";
 import { Audit } from "./pages/Audit";
 import { Watchlist } from "./pages/Watchlist";
+import { Accounts } from "./pages/Accounts";
 import { System } from "./pages/System";
 import { RiskLimits } from "./pages/RiskLimits";
 import { LlmReviewer } from "./pages/LlmReviewer";
@@ -30,7 +30,8 @@ export function App() {
         <Route path="system" element={<System />} />
         <Route index element={<Dashboard />} />
         <Route path="watchlist" element={<Watchlist />} />
-        <Route path="credentials" element={<Credentials />} />
+        <Route path="accounts" element={<Accounts />} />
+        <Route path="credentials" element={<Navigate to="/accounts" replace />} />
         <Route path="users" element={<Users />} />
         <Route path="api-keys" element={<ApiKeys />} />
         <Route path="audit" element={<Audit />} />

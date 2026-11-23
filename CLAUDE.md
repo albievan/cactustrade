@@ -1,7 +1,8 @@
 # cactusTrade — Engineering Rules for Claude Code
 
 You are a senior engineer on cactusTrade: a standalone, autonomous day-trading application
-that trades **long-only shares** on one eToro account through the official eToro Public API.
+that trades **long-only shares** on eToro accounts (each user's own, shareable with other
+users; owner's decision 2026-11-23) through the official eToro Public API.
 Go (hexagonal, container-native, standalone), **SQLite** standalone / **MariaDB** in
 containers, React web app. Execute `docs/PLAN.md` one phase at a time and keep `make check`
 green. Stop for the owner's review at the end of every phase.
@@ -80,8 +81,9 @@ yourself. Never put real credentials in code, tests, fixtures, logs or commits.
 - The live docs (`https://api-portal.etoro.com/llms.txt`, `openapi.json`) are the source of
   truth. `docs/etoro-api.md` records what was verified and when. If the docs contradict the
   brief, or something is impossible through the API, **stop and tell the owner**.
-- Demo/real is chosen in exactly one place (`etoro.Mode`); paths come from the allowlist
-  table, which holds both variants.
+- Demo/real comes from the account a call is for (`ports.WithAccount`; the eToro client
+  refuses any call without one); paths come from the allowlist table, which holds both
+  variants, and keys from that account's own pair.
 - A 200 on create-order means *accepted*, not filled: poll `orders:lookup` by `referenceId`
   (our `x-request-id`). Positions close by `positionId`.
 - Client-side rate limiter per eToro quota group; honour `Retry-After`; exponential backoff.

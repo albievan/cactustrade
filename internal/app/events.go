@@ -14,12 +14,18 @@ const eventRetention = 90 * 24 * time.Hour
 
 func seenKey(userID string) string { return "events.seen." + userID }
 
-// emit appends to the event feed. A failed write is logged, never fatal to the action.
+// emit appends a system-wide event (seen by everyone).
 func (s *Service) emit(ctx context.Context, actor, kind string, sev domain.EventSeverity, title, detail string) {
+	s.emitFor(ctx, "", actor, kind, sev, title, detail)
+}
+
+// emitFor appends an event about one account (seen by the users who can see that account).
+// A failed write is logged, never fatal to the action.
+func (s *Service) emitFor(ctx context.Context, accountID, actor, kind string, sev domain.EventSeverity, title, detail string) {
 	if actor == "" {
 		actor = "system"
 	}
-	e := domain.Event{ID: s.d.Random.ID(), At: s.d.Clock.Now().UTC(), Kind: kind, Severity: sev, Title: title, Detail: detail, Actor: actor}
+	e := domain.Event{ID: s.d.Random.ID(), At: s.d.Clock.Now().UTC(), Kind: kind, Severity: sev, Title: title, Detail: detail, Actor: actor, AccountID: accountID}
 	if err := s.d.Store.Events().Append(ctx, e); err != nil {
 		s.d.Log.ErrorContext(ctx, "event write failed", "kind", kind, "err", err)
 	}
@@ -39,11 +45,19 @@ func (s *Service) Events(ctx context.Context, p Principal, limit int) (EventFeed
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	es, err := s.d.Store.Events().List(ctx, limit)
+	vs, err := s.Accounts(ctx, p)
 	if err != nil {
 		return EventFeed{}, err
 	}
-	n, err := s.d.Store.Events().CountSince(ctx, s.seen(ctx, p.UserID))
+	ids := make([]string, len(vs))
+	for i, v := range vs {
+		ids[i] = v.ID
+	}
+	es, err := s.d.Store.Events().List(ctx, ids, limit)
+	if err != nil {
+		return EventFeed{}, err
+	}
+	n, err := s.d.Store.Events().CountSince(ctx, ids, s.seen(ctx, p.UserID))
 	if err != nil {
 		return EventFeed{}, err
 	}

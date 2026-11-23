@@ -14,6 +14,45 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AccountAccess.
+const (
+	AccountAccessOwner AccountAccess = "owner"
+	AccountAccessTrade AccountAccess = "trade"
+	AccountAccessView  AccountAccess = "view"
+)
+
+// Valid indicates whether the value is a known member of the AccountAccess enum.
+func (e AccountAccess) Valid() bool {
+	switch e {
+	case AccountAccessOwner:
+		return true
+	case AccountAccessTrade:
+		return true
+	case AccountAccessView:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AccountShareAccess.
+const (
+	AccountShareAccessTrade AccountShareAccess = "trade"
+	AccountShareAccessView  AccountShareAccess = "view"
+)
+
+// Valid indicates whether the value is a known member of the AccountShareAccess enum.
+func (e AccountShareAccess) Valid() bool {
+	switch e {
+	case AccountShareAccessTrade:
+		return true
+	case AccountShareAccessView:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentState.
 const (
 	Killed  AgentState = "killed"
@@ -206,6 +245,24 @@ func (e Role) Valid() bool {
 	}
 }
 
+// Defines values for ShareAccountRequestAccess.
+const (
+	ShareAccountRequestAccessTrade ShareAccountRequestAccess = "trade"
+	ShareAccountRequestAccessView  ShareAccountRequestAccess = "view"
+)
+
+// Valid indicates whether the value is a known member of the ShareAccountRequestAccess enum.
+func (e ShareAccountRequestAccess) Valid() bool {
+	switch e {
+	case ShareAccountRequestAccessTrade:
+		return true
+	case ShareAccountRequestAccessView:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SystemStatusDatabase.
 const (
 	Mariadb SystemStatusDatabase = "mariadb"
@@ -241,6 +298,46 @@ func (e TradingMode) Valid() bool {
 		return false
 	}
 }
+
+// Account defines model for Account.
+type Account struct {
+	Access    AccountAccess `json:"access"`
+	CreatedAt time.Time     `json:"createdAt"`
+
+	// EnvKeys uses the deployment's ETORO_DEMO_PUB / _PK
+	EnvKeys   bool        `json:"envKeys"`
+	Id        string      `json:"id"`
+	Mode      TradingMode `json:"mode"`
+	Name      string      `json:"name"`
+	OwnerId   string      `json:"ownerId"`
+	OwnerName string      `json:"ownerName"`
+}
+
+// AccountAccess defines model for Account.Access.
+type AccountAccess string
+
+// AccountKeys defines model for AccountKeys.
+type AccountKeys struct {
+	ApiKeySet       bool `json:"apiKeySet"`
+	FromEnvironment bool `json:"fromEnvironment"`
+	UserKeySet      bool `json:"userKeySet"`
+}
+
+// AccountRef defines model for AccountRef.
+type AccountRef struct {
+	AccountId string `json:"accountId"`
+}
+
+// AccountShare defines model for AccountShare.
+type AccountShare struct {
+	Access    AccountShareAccess `json:"access"`
+	CreatedAt time.Time          `json:"createdAt"`
+	UserId    string             `json:"userId"`
+	Username  string             `json:"username"`
+}
+
+// AccountShareAccess defines model for AccountShare.Access.
+type AccountShareAccess string
 
 // AddWatchRequest defines model for AddWatchRequest.
 type AddWatchRequest struct {
@@ -301,6 +398,12 @@ type Cents = int64
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
+}
+
+// CreateAccountRequest defines model for CreateAccountRequest.
+type CreateAccountRequest struct {
+	Mode TradingMode `json:"mode"`
+	Name string      `json:"name"`
 }
 
 // CreateApiKeyRequest defines model for CreateApiKeyRequest.
@@ -553,6 +656,11 @@ type Quote struct {
 	InstrumentId int64   `json:"instrumentId"`
 }
 
+// RenameAccountRequest defines model for RenameAccountRequest.
+type RenameAccountRequest struct {
+	Name string `json:"name"`
+}
+
 // RiskLimits defines model for RiskLimits.
 type RiskLimits struct {
 	// DailyLossBp stop new entries at this loss from the start-of-day equity (bp; 200 = 2 %)
@@ -576,14 +684,33 @@ type RiskLimits struct {
 // Role defines model for Role.
 type Role string
 
+// SetAccountKeysRequest defines model for SetAccountKeysRequest.
+type SetAccountKeysRequest struct {
+	// ApiKey eToro Public API Key (x-api-key); empty = keep
+	ApiKey string `json:"apiKey"`
+
+	// UserKey eToro User Key (x-user-key); empty = keep
+	UserKey string `json:"userKey"`
+}
+
 // SetCredentialRequest defines model for SetCredentialRequest.
 type SetCredentialRequest struct {
 	// Value Write-only: never returned
 	Value string `json:"value"`
 }
 
+// ShareAccountRequest defines model for ShareAccountRequest.
+type ShareAccountRequest struct {
+	Access   ShareAccountRequestAccess `json:"access"`
+	Username string                    `json:"username"`
+}
+
+// ShareAccountRequestAccess defines model for ShareAccountRequest.Access.
+type ShareAccountRequestAccess string
+
 // SystemStatus defines model for SystemStatus.
 type SystemStatus struct {
+	Account    *Account             `json:"account,omitempty"`
 	AgentState AgentState           `json:"agentState"`
 	Build      string               `json:"build"`
 	Database   SystemStatusDatabase `json:"database"`
@@ -644,6 +771,21 @@ type SearchInstrumentsParams struct {
 	Q string `form:"q" json:"q"`
 }
 
+// CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
+type CreateAccountJSONRequestBody = CreateAccountRequest
+
+// SetCurrentAccountJSONRequestBody defines body for SetCurrentAccount for application/json ContentType.
+type SetCurrentAccountJSONRequestBody = AccountRef
+
+// RenameAccountJSONRequestBody defines body for RenameAccount for application/json ContentType.
+type RenameAccountJSONRequestBody = RenameAccountRequest
+
+// SetAccountKeysJSONRequestBody defines body for SetAccountKeys for application/json ContentType.
+type SetAccountKeysJSONRequestBody = SetAccountKeysRequest
+
+// ShareAccountJSONRequestBody defines body for ShareAccount for application/json ContentType.
+type ShareAccountJSONRequestBody = ShareAccountRequest
+
 // CreateApiKeyJSONRequestBody defines body for CreateApiKey for application/json ContentType.
 type CreateApiKeyJSONRequestBody = CreateApiKeyRequest
 
@@ -676,6 +818,39 @@ type AddToWatchlistJSONRequestBody = AddWatchRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListAccounts The eToro accounts you own or were given, with your access
+	// (GET /api/v1/accounts)
+	ListAccounts(w http.ResponseWriter, r *http.Request)
+	// CreateAccount Add an eToro account you own (operator or admin)
+	// (POST /api/v1/accounts)
+	CreateAccount(w http.ResponseWriter, r *http.Request)
+	// SetCurrentAccount Switch the account you are working on
+	// (PUT /api/v1/accounts/current)
+	SetCurrentAccount(w http.ResponseWriter, r *http.Request)
+	// DeleteAccount Delete an account, its keys, shares and watchlist (owner, web UI)
+	// (DELETE /api/v1/accounts/{accountId})
+	DeleteAccount(w http.ResponseWriter, r *http.Request, accountId string)
+	// RenameAccount Rename an account (owner)
+	// (PATCH /api/v1/accounts/{accountId})
+	RenameAccount(w http.ResponseWriter, r *http.Request, accountId string)
+	// GetAccountKeys Whether the account's eToro keys are set (never their values)
+	// (GET /api/v1/accounts/{accountId}/keys)
+	GetAccountKeys(w http.ResponseWriter, r *http.Request, accountId string)
+	// SetAccountKeys Store the account's eToro key pair, write-only (owner, web UI); an empty value keeps the stored one
+	// (PUT /api/v1/accounts/{accountId}/keys)
+	SetAccountKeys(w http.ResponseWriter, r *http.Request, accountId string)
+	// ListAccountShares Who the account is shared with (owner)
+	// (GET /api/v1/accounts/{accountId}/shares)
+	ListAccountShares(w http.ResponseWriter, r *http.Request, accountId string)
+	// ShareAccount Give a user view or trade access (owner, web UI)
+	// (PUT /api/v1/accounts/{accountId}/shares)
+	ShareAccount(w http.ResponseWriter, r *http.Request, accountId string)
+	// UnshareAccount Remove a user's access (owner, web UI)
+	// (DELETE /api/v1/accounts/{accountId}/shares/{userId})
+	UnshareAccount(w http.ResponseWriter, r *http.Request, accountId string, userId string)
+	// TestAccount Test the account's eToro connection (owner; one read-only call)
+	// (POST /api/v1/accounts/{accountId}/test)
+	TestAccount(w http.ResponseWriter, r *http.Request, accountId string)
 	// ListApiKeys List your API keys (admins see all)
 	// (GET /api/v1/api-keys)
 	ListApiKeys(w http.ResponseWriter, r *http.Request)
@@ -797,6 +972,265 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListAccounts operation middleware
+func (siw *ServerInterfaceWrapper) ListAccounts(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAccounts(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAccount operation middleware
+func (siw *ServerInterfaceWrapper) CreateAccount(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAccount(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetCurrentAccount operation middleware
+func (siw *ServerInterfaceWrapper) SetCurrentAccount(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetCurrentAccount(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAccount operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAccount(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenameAccount operation middleware
+func (siw *ServerInterfaceWrapper) RenameAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameAccount(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAccountKeys operation middleware
+func (siw *ServerInterfaceWrapper) GetAccountKeys(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAccountKeys(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetAccountKeys operation middleware
+func (siw *ServerInterfaceWrapper) SetAccountKeys(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetAccountKeys(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAccountShares operation middleware
+func (siw *ServerInterfaceWrapper) ListAccountShares(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAccountShares(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ShareAccount operation middleware
+func (siw *ServerInterfaceWrapper) ShareAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ShareAccount(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnshareAccount operation middleware
+func (siw *ServerInterfaceWrapper) UnshareAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "userId" -------------
+	var userId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", r.PathValue("userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnshareAccount(w, r, accountId, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestAccount operation middleware
+func (siw *ServerInterfaceWrapper) TestAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestAccount(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListApiKeys operation middleware
 func (siw *ServerInterfaceWrapper) ListApiKeys(w http.ResponseWriter, r *http.Request) {
@@ -1583,6 +2017,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/credentials", wrapper.ListCredentials)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/credentials/{name}", wrapper.DeleteCredential)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/credentials/{name}", wrapper.SetCredential)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts", wrapper.ListAccounts)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts", wrapper.CreateAccount)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/current", wrapper.SetCurrentAccount)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/accounts/{accountId}", wrapper.DeleteAccount)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/accounts/{accountId}", wrapper.RenameAccount)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/keys", wrapper.GetAccountKeys)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/keys", wrapper.SetAccountKeys)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts/{accountId}/test", wrapper.TestAccount)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ListAccountShares)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ShareAccount)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares/{userId}", wrapper.UnshareAccount)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/broker/test", wrapper.TestBrokerConnection)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/broker/portfolio", wrapper.GetPortfolio)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/market/status", wrapper.GetMarketStatus)

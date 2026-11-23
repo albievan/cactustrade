@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 	"github.com/albievan/cactustrade/internal/ports/fakes"
 )
 
@@ -94,7 +95,6 @@ func newEnv(t *testing.T) *env {
 	now := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
 	c, err := New(Config{
 		BaseURL: srv.URL, HTTP: srv.Client(), Secrets: e.sec, Random: &fakes.Random{},
-		Mode: func(context.Context) domain.TradingMode { return e.mode.Load().(domain.TradingMode) },
 		Now: func() time.Time {
 			mu.Lock()
 			defer mu.Unlock()
@@ -117,9 +117,20 @@ func newEnv(t *testing.T) *env {
 
 func (e *env) last() *http.Request { return e.fake.reqs[len(e.fake.reqs)-1] }
 
+// ctx carries the account the calls are for: the env-keyed demo account, or a real account
+// with its own key pair when the test switched e.mode to real.
+func (e *env) ctx() context.Context { return ports.WithAccount(context.Background(), e.account()) }
+
+func (e *env) account() domain.Account {
+	if e.mode.Load().(domain.TradingMode) == domain.ModeReal {
+		return domain.Account{ID: "real-1", Name: "Real", Mode: domain.ModeReal}
+	}
+	return domain.Account{ID: domain.EnvAccountID, Name: "Demo", Mode: domain.ModeDemo, EnvKeys: true}
+}
+
 func TestHeadersKeysAndRequestIDs(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
+	ctx := e.ctx()
 	for range 2 {
 		if _, err := e.c.Portfolio(ctx); err != nil {
 			t.Fatal(err)
@@ -139,13 +150,14 @@ func TestHeadersKeysAndRequestIDs(t *testing.T) {
 
 func TestRealModeUsesRealKeysAndPaths(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
 	e.mode.Store(domain.ModeReal)
+	ctx := e.ctx()
 	if _, err := e.c.Portfolio(ctx); !errors.Is(err, domain.ErrUnavailable) || len(e.fake.reqs) != 0 {
 		t.Fatalf("real mode without real keys must not call eToro: %v (%d calls)", err, len(e.fake.reqs))
 	}
-	_ = e.sec.Put(ctx, domain.CredEtoroRealAPIKey, "real-api")
-	_ = e.sec.Put(ctx, domain.CredEtoroRealUserKey, "real-user")
+	ak, uk := domain.AccountKeyNames(e.account())
+	_ = e.sec.Put(ctx, ak, "real-api")
+	_ = e.sec.Put(ctx, uk, "real-user")
 	if _, err := e.c.Portfolio(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -154,9 +166,24 @@ func TestRealModeUsesRealKeysAndPaths(t *testing.T) {
 	}
 }
 
+func TestNoAccountFailsClosed(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.c.Portfolio(context.Background()); !errors.Is(err, domain.ErrUnavailable) || len(e.fake.reqs) != 0 {
+		t.Fatalf("a call without an account: %v (%d requests)", err, len(e.fake.reqs))
+	}
+}
+
+func TestLimitersArePerAccount(t *testing.T) {
+	e := newEnv(t)
+	a1, a2, b := e.c.limiter("a"), e.c.limiter("a"), e.c.limiter("b")
+	if a1 == b || a1 != a2 {
+		t.Fatal("one limiter per account")
+	}
+}
+
 func TestMissingKeysFailClosed(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
+	ctx := e.ctx()
 	_ = e.sec.Delete(ctx, domain.CredEtoroDemoUserKey)
 	_, err := e.c.Portfolio(ctx)
 	if !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "not both set") {
@@ -169,7 +196,7 @@ func TestMissingKeysFailClosed(t *testing.T) {
 
 func TestPortfolio(t *testing.T) {
 	e := newEnv(t)
-	p, err := e.c.Portfolio(context.Background())
+	p, err := e.c.Portfolio(e.ctx())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,14 +221,14 @@ func TestPortfolioWithoutCreditFailsClosed(t *testing.T) {
 	e.fake.route = func(*http.Request, int) (int, string, http.Header) {
 		return 200, `{"clientPortfolio":{"positions":[]}}`, nil
 	}
-	if _, err := e.c.Portfolio(context.Background()); !errors.Is(err, domain.ErrUnavailable) {
+	if _, err := e.c.Portfolio(e.ctx()); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestQuotes(t *testing.T) {
 	e := newEnv(t)
-	qs, err := e.c.Quotes(context.Background(), []domain.InstrumentID{1001, 2002, 3003})
+	qs, err := e.c.Quotes(e.ctx(), []domain.InstrumentID{1001, 2002, 3003})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +242,7 @@ func TestQuotes(t *testing.T) {
 
 func TestCandles(t *testing.T) {
 	e := newEnv(t)
-	cs, err := e.c.Candles(context.Background(), 1001, time.Minute, 2)
+	cs, err := e.c.Candles(e.ctx(), 1001, time.Minute, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +256,7 @@ func TestCandles(t *testing.T) {
 		iv time.Duration
 		n  int
 	}{{2 * time.Minute, 10}, {time.Minute, 0}, {time.Minute, 1001}} {
-		if _, err := e.c.Candles(context.Background(), 1001, bad.iv, bad.n); !errors.Is(err, domain.ErrInvalid) {
+		if _, err := e.c.Candles(e.ctx(), 1001, bad.iv, bad.n); !errors.Is(err, domain.ErrInvalid) {
 			t.Errorf("Candles(%v, %d) = %v", bad.iv, bad.n, err)
 		}
 	}
@@ -237,7 +264,7 @@ func TestCandles(t *testing.T) {
 
 func TestSearchMarksSupportedShares(t *testing.T) {
 	e := newEnv(t)
-	is, err := e.c.Search(context.Background(), "  example ")
+	is, err := e.c.Search(e.ctx(), "  example ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +277,7 @@ func TestSearchMarksSupportedShares(t *testing.T) {
 			t.Errorf("%s (%s) market = %q, want %q", in.Symbol, in.Type, in.Market, want[in.ID])
 		}
 	}
-	if _, err := e.c.Search(context.Background(), " "); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := e.c.Search(e.ctx(), " "); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatal("empty query accepted")
 	}
 }
@@ -269,7 +296,7 @@ func TestInstrumentsPaginates(t *testing.T) {
 		}
 		return 200, `{"results":[{"instrumentId":2002,"displayName":"B","type":"Stocks","symbol":"B.L","exchangeId":7}],"pagination":{"hasNext":false}}`, nil
 	}
-	is, err := e.c.Instruments(context.Background(), []domain.InstrumentID{1001, 2002})
+	is, err := e.c.Instruments(e.ctx(), []domain.InstrumentID{1001, 2002})
 	if err != nil || len(is) != 2 || is[1].Market != domain.MarketLSE {
 		t.Fatalf("instruments = %+v %v", is, err)
 	}
@@ -277,7 +304,7 @@ func TestInstrumentsPaginates(t *testing.T) {
 
 func TestEligibility(t *testing.T) {
 	e := newEnv(t)
-	els, err := e.c.Eligibility(context.Background(), []domain.InstrumentID{1001, 2002, 3003, 6006, 9999})
+	els, err := e.c.Eligibility(e.ctx(), []domain.InstrumentID{1001, 2002, 3003, 6006, 9999})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +329,7 @@ func TestEligibility(t *testing.T) {
 
 func TestCostsSendOnlyGuardrailConstants(t *testing.T) {
 	e := newEnv(t)
-	items, err := e.c.Costs(context.Background(), 2002, 12345)
+	items, err := e.c.Costs(e.ctx(), 2002, 12345)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,14 +345,14 @@ func TestCostsSendOnlyGuardrailConstants(t *testing.T) {
 	if len(items) != 3 || items[2].Type != "sdrt" || items[2].Value != 500000 {
 		t.Fatalf("costs = %+v", items)
 	}
-	if _, err := e.c.Costs(context.Background(), 2002, 0); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := e.c.Costs(e.ctx(), 2002, 0); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatal("zero amount accepted")
 	}
 }
 
 func TestLookupAndHistory(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
+	ctx := e.ctx()
 	st, err := e.c.Lookup(ctx, "req-1")
 	if err != nil || st.State != domain.OrderFilled || st.OrderID != 555 || len(st.PositionIDs) != 1 {
 		t.Fatalf("lookup = %+v %v", st, err)
@@ -351,7 +378,7 @@ func TestLookupStates(t *testing.T) {
 		e.fake.route = func(*http.Request, int) (int, string, http.Header) {
 			return 200, fmt.Sprintf(`{"orderId":1,"status":{"id":%d,"name":"x","errorMessage":"why"}}`, id), nil
 		}
-		st, err := e.c.Lookup(context.Background(), "r")
+		st, err := e.c.Lookup(e.ctx(), "r")
 		if err != nil || st.State != want || st.Reason != "why" {
 			t.Errorf("status %d → %+v %v", id, st, err)
 		}
@@ -360,7 +387,7 @@ func TestLookupStates(t *testing.T) {
 	e.fake.route = func(*http.Request, int) (int, string, http.Header) {
 		return 404, `{"type":"x","title":"Not Found","status":404,"detail":"no such order"}`, nil
 	}
-	st, err := e.c.Lookup(context.Background(), "r")
+	st, err := e.c.Lookup(e.ctx(), "r")
 	if !errors.Is(err, domain.ErrNotFound) || st.State != domain.OrderUnknown || !strings.Contains(err.Error(), "no such order") {
 		t.Fatalf("404 lookup = %+v %v", st, err)
 	}
@@ -377,7 +404,7 @@ func TestRetriesHonourRetryAfter(t *testing.T) {
 		}
 		return 0, "", nil
 	}
-	if _, err := e.c.Portfolio(context.Background()); err != nil {
+	if _, err := e.c.Portfolio(e.ctx()); err != nil {
 		t.Fatalf("after retries: %v", err)
 	}
 	if len(e.fake.reqs) != 3 {
@@ -396,7 +423,7 @@ func TestNoRetryOnClientErrorsAndGivesUp(t *testing.T) {
 	e.fake.route = func(*http.Request, int) (int, string, http.Header) {
 		return 401, `{"errorCode":"Unauthorized","errorMessage":"bad key"}`, nil
 	}
-	_, err := e.c.Portfolio(context.Background())
+	_, err := e.c.Portfolio(e.ctx())
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Status != 401 || ae.Code != "Unauthorized" || !errors.Is(err, domain.ErrUnavailable) || errors.Is(err, domain.ErrUnauthenticated) {
 		t.Fatalf("401 = %v", err)
@@ -410,7 +437,7 @@ func TestNoRetryOnClientErrorsAndGivesUp(t *testing.T) {
 
 	e = newEnv(t)
 	e.fake.route = func(*http.Request, int) (int, string, http.Header) { return 500, "oops", nil }
-	if _, err := e.c.Portfolio(context.Background()); !errors.Is(err, domain.ErrUnavailable) || len(e.fake.reqs) != 3 {
+	if _, err := e.c.Portfolio(e.ctx()); !errors.Is(err, domain.ErrUnavailable) || len(e.fake.reqs) != 3 {
 		t.Fatalf("500: %v after %d attempts", err, len(e.fake.reqs))
 	}
 }
@@ -418,20 +445,20 @@ func TestNoRetryOnClientErrorsAndGivesUp(t *testing.T) {
 func TestBadResponses(t *testing.T) {
 	e := newEnv(t)
 	e.fake.route = func(*http.Request, int) (int, string, http.Header) { return 200, "{not json", nil }
-	if _, err := e.c.Quotes(context.Background(), []domain.InstrumentID{1}); !errors.Is(err, domain.ErrUnavailable) {
+	if _, err := e.c.Quotes(e.ctx(), []domain.InstrumentID{1}); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("bad json: %v", err)
 	}
 	e.fake.route = func(*http.Request, int) (int, string, http.Header) {
 		return 200, strings.Repeat(" ", maxResponse+10), nil
 	}
-	if _, err := e.c.Quotes(context.Background(), []domain.InstrumentID{1}); !errors.Is(err, domain.ErrUnavailable) {
+	if _, err := e.c.Quotes(e.ctx(), []domain.InstrumentID{1}); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("oversized: %v", err)
 	}
 }
 
 func TestOrdersAreNotEnabled(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
+	ctx := e.ctx()
 	if _, err := e.c.Open(ctx, domain.OrderIntent{RequestID: "r", Instrument: 1, Amount: 100}); !errors.Is(err, ErrNotEnabled) {
 		t.Fatal("open")
 	}
@@ -479,7 +506,7 @@ func TestExpandAndHelpers(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
 		t.Fatal("New without deps")
 	}
-	if _, err := New(Config{Secrets: &fakes.SecretStore{}, Random: &fakes.Random{}, Mode: func(context.Context) domain.TradingMode { return domain.ModeDemo }, BaseURL: "::"}); err == nil {
+	if _, err := New(Config{Secrets: &fakes.SecretStore{}, Random: &fakes.Random{}, BaseURL: "::"}); err == nil {
 		t.Fatal("bad base URL")
 	}
 	long := parseError(OpRates, 400, []byte(`{"errorCode":"X","errorMessage":"`+strings.Repeat("a", 400)+`"}`))

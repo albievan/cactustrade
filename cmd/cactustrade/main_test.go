@@ -110,7 +110,7 @@ func TestBacktestCommandValidates(t *testing.T) {
 	}
 	// no keys: fails before any network call, with the reason
 	err := run(context.Background(), []string{"backtest", "--instrument", "1"}, e, &out)
-	if err == nil || !strings.Contains(err.Error(), "not both set") {
+	if err == nil || !strings.Contains(err.Error(), "no demo eToro account") {
 		t.Fatalf("without keys: %v", err)
 	}
 }

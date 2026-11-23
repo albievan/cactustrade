@@ -289,6 +289,89 @@ func Run(t *testing.T, s ports.Store) {
 		}
 	})
 
+	t.Run("accounts", func(t *testing.T) {
+		ar := s.Accounts()
+		bob := domain.User{ID: "u-bob", Username: "bob", Role: domain.RoleOperator, PasswordHash: "h", CreatedAt: t0, UpdatedAt: t0}
+		if err := s.Users().Create(ctx, bob); err != nil {
+			t.Fatal(err)
+		}
+		a1 := domain.Account{ID: "acc-1", Name: "Main demo", OwnerID: admin.ID, Mode: domain.ModeDemo, CreatedAt: t0, UpdatedAt: t0}
+		a2 := domain.Account{ID: "acc-2", Name: "Bob ISA", OwnerID: bob.ID, Mode: domain.ModeReal, EnvKeys: false, CreatedAt: t0, UpdatedAt: t0}
+		env := domain.Account{ID: domain.EnvAccountID, Name: "Demo (environment)", OwnerID: admin.ID, Mode: domain.ModeDemo, EnvKeys: true, CreatedAt: t0, UpdatedAt: t0}
+		for _, a := range []domain.Account{a1, a2, env} {
+			if err := ar.Create(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := ar.Create(ctx, a1); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("duplicate: %v", err)
+		}
+		got, err := ar.Get(ctx, "acc-1")
+		a1.OwnerName = "admin"
+		if err != nil || got != a1 {
+			t.Fatalf("Get = %+v %v", got, err)
+		}
+		if _, err := ar.Get(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("Get missing")
+		}
+		if all, _ := ar.List(ctx); len(all) != 3 || all[0].Name != "Bob ISA" || !all[1].EnvKeys {
+			t.Fatalf("List = %+v", all)
+		}
+		if err := ar.SetShare(ctx, domain.AccountShare{AccountID: "acc-2", UserID: admin.ID, Access: domain.AccessView, CreatedAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ar.SetShare(ctx, domain.AccountShare{AccountID: "acc-2", UserID: admin.ID, Access: domain.AccessTrade, CreatedAt: t0}); err != nil {
+			t.Fatal(err) // change, not a duplicate
+		}
+		views, err := ar.ForUser(ctx, admin.ID)
+		if err != nil || len(views) != 3 || views[0].ID != "acc-2" || views[0].Access != domain.AccessTrade || views[1].Access != domain.AccessOwner {
+			t.Fatalf("ForUser(admin) = %+v %v", views, err)
+		}
+		if v, _ := ar.ForUser(ctx, bob.ID); len(v) != 1 || v[0].Access != domain.AccessOwner || v[0].OwnerName != "bob" {
+			t.Fatalf("ForUser(bob) = %+v", v)
+		}
+		sh, err := ar.Shares(ctx, "acc-2")
+		if err != nil || len(sh) != 1 || sh[0].Username != "admin" || sh[0].Access != domain.AccessTrade {
+			t.Fatalf("Shares = %+v %v", sh, err)
+		}
+		a2.Name, a2.Mode, a2.UpdatedAt = "Bob real", domain.ModeDemo, t0.Add(time.Minute)
+		if err := ar.Update(ctx, a2); err != nil {
+			t.Fatal(err)
+		}
+		if g, _ := ar.Get(ctx, "acc-2"); g.Name != "Bob real" || g.Mode != domain.ModeDemo || !g.UpdatedAt.Equal(a2.UpdatedAt) {
+			t.Fatalf("after Update = %+v", g)
+		}
+		if err := ar.Update(ctx, domain.Account{ID: "nope", Name: "x", Mode: domain.ModeDemo}); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("Update missing")
+		}
+		if n, _ := ar.CountOwnedBy(ctx, admin.ID); n != 2 {
+			t.Fatalf("CountOwnedBy = %d", n)
+		}
+		// a user who owns an account cannot be deleted
+		if err := s.Users().Delete(ctx, bob.ID); err == nil {
+			t.Fatal("deleted the owner of an account")
+		}
+		if err := ar.RemoveShare(ctx, "acc-2", admin.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := ar.RemoveShare(ctx, "acc-2", admin.ID); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("RemoveShare missing")
+		}
+		_ = ar.SetShare(ctx, domain.AccountShare{AccountID: "acc-2", UserID: admin.ID, Access: domain.AccessView, CreatedAt: t0})
+		if err := ar.Delete(ctx, "acc-2"); err != nil {
+			t.Fatal(err)
+		}
+		if sh, _ := ar.Shares(ctx, "acc-2"); len(sh) != 0 {
+			t.Fatal("shares survived their account")
+		}
+		if err := ar.Delete(ctx, "acc-2"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("Delete missing")
+		}
+		if err := s.Users().Delete(ctx, bob.ID); err != nil {
+			t.Fatalf("delete a user without accounts: %v", err)
+		}
+	})
+
 	t.Run("instruments_watchlist", func(t *testing.T) {
 		ir, wl := s.Instruments(), s.Watchlist()
 		aapl := domain.Instrument{ID: 1001, Symbol: "AAPL", Name: "Apple", Type: "Stocks", ExchangeID: 4, Market: domain.MarketNYSE, Currency: "USD"}
@@ -298,7 +381,7 @@ func Run(t *testing.T, s ports.Store) {
 		if _, _, err := ir.Get(ctx, 1001); !errors.Is(err, domain.ErrNotFound) {
 			t.Fatal("Get missing instrument")
 		}
-		if err := wl.Add(ctx, 1001, "admin", t0); !errors.Is(err, domain.ErrNotFound) {
+		if err := wl.Add(ctx, "acc-1", 1001, "admin", t0); !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("Add of an uncached instrument: %v", err)
 		}
 		for range 2 { // insert, then update with identical values
@@ -326,41 +409,54 @@ func Run(t *testing.T, s ports.Store) {
 		if _, el, _ := ir.Get(ctx, 1001); el.RealLong || el.Reason != "suspended" {
 			t.Fatalf("update = %+v", el)
 		}
-		if err := wl.Add(ctx, 2002, "admin", t0); err != nil {
+		if err := wl.Add(ctx, "acc-1", 2002, "admin", t0); err != nil {
 			t.Fatal(err)
 		}
-		if err := wl.Add(ctx, 1001, "olivia", t0.Add(time.Second)); err != nil {
+		if err := wl.Add(ctx, "no-such-account", 2002, "admin", t0); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("unknown account: %v", err)
+		}
+		if err := wl.Add(ctx, domain.EnvAccountID, 2002, "admin", t0); err != nil {
 			t.Fatal(err)
 		}
-		if err := wl.Add(ctx, 1001, "olivia", t0); !errors.Is(err, domain.ErrConflict) {
+		if err := wl.Add(ctx, "acc-1", 1001, "olivia", t0.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if err := wl.Add(ctx, "acc-1", 1001, "olivia", t0); !errors.Is(err, domain.ErrConflict) {
 			t.Fatalf("duplicate Add: %v", err)
 		}
-		items, err := wl.List(ctx)
+		if ids, err := wl.Watched(ctx); err != nil || len(ids) != 2 || ids[0] != 1001 || ids[1] != 2002 {
+			t.Fatalf("Watched = %v %v", ids, err)
+		}
+		if other, _ := wl.List(ctx, domain.EnvAccountID); len(other) != 1 {
+			t.Fatalf("the other account's list = %+v", other)
+		}
+		items, err := wl.List(ctx, "acc-1")
 		if err != nil || len(items) != 2 || items[0].Instrument.Symbol != "AAPL" || items[1].Instrument != barc ||
 			items[0].AddedBy != "olivia" || !items[0].AddedAt.Equal(t0.Add(time.Second)) || items[0].Eligibility.Reason != "suspended" {
 			t.Fatalf("List = %+v %v", items, err)
 		}
-		if err := wl.Remove(ctx, 2002); err != nil {
+		if err := wl.Remove(ctx, "acc-1", 2002); err != nil {
 			t.Fatal(err)
 		}
-		if err := wl.Remove(ctx, 2002); !errors.Is(err, domain.ErrNotFound) {
+		if err := wl.Remove(ctx, "acc-1", 2002); !errors.Is(err, domain.ErrNotFound) {
 			t.Fatal("Remove missing")
 		}
-		if items, _ := wl.List(ctx); len(items) != 1 {
+		if items, _ := wl.List(ctx, "acc-1"); len(items) != 1 {
 			t.Fatalf("after Remove = %+v", items)
 		}
 	})
 
 	t.Run("events", func(t *testing.T) {
 		ev := s.Events()
-		if n, err := ev.CountSince(ctx, time.Time{}); err != nil || n != 0 {
+		if n, err := ev.CountSince(ctx, nil, time.Time{}); err != nil || n != 0 {
 			t.Fatalf("CountSince on empty = %d %v", n, err)
 		}
 		long := strings.Repeat("é", 2000) // 4000 bytes: clipped on a rune boundary
 		for i, e := range []domain.Event{
 			{ID: "e1", At: t0, Kind: "watchlist.added", Severity: domain.SeverityInfo, Title: "AAPL added", Actor: "admin"},
 			{ID: "e2", At: t0.Add(time.Minute), Kind: "order.filled", Severity: domain.SeveritySuccess, Title: "Bought", Detail: long},
-			{ID: "e3", At: t0.Add(2 * time.Minute), Kind: "killswitch", Severity: domain.SeverityDanger, Title: "Kill"},
+			{ID: "e3", At: t0.Add(2 * time.Minute), Kind: "killswitch", Severity: domain.SeverityDanger, Title: "Kill", AccountID: "acc-1"},
+			{ID: "e4", At: t0.Add(3 * time.Minute), Kind: "order.filled", Severity: domain.SeverityInfo, Title: "Other account", AccountID: "acc-9"},
 		} {
 			if err := ev.Append(ctx, e); err != nil {
 				t.Fatalf("Append %d: %v", i, err)
@@ -369,20 +465,26 @@ func Run(t *testing.T, s ports.Store) {
 		if err := ev.Append(ctx, domain.Event{ID: "e1", At: t0, Kind: "x", Severity: domain.SeverityInfo, Title: "dup"}); !errors.Is(err, domain.ErrConflict) {
 			t.Fatalf("duplicate id: %v", err)
 		}
-		list, err := ev.List(ctx, 2)
-		if err != nil || len(list) != 2 || list[0].ID != "e3" || list[1].ID != "e2" || list[0].Severity != domain.SeverityDanger {
+		list, err := ev.List(ctx, []string{"acc-1"}, 2)
+		if err != nil || len(list) != 2 || list[0].ID != "e3" || list[1].ID != "e2" || list[0].Severity != domain.SeverityDanger || list[0].AccountID != "acc-1" {
 			t.Fatalf("List = %+v %v", list, err)
 		}
 		if !utf8.ValidString(list[1].Detail) || len(list[1].Detail) > 2000 || len(list[1].Detail) < 1990 {
 			t.Fatalf("detail not clipped on a rune boundary: %d bytes", len(list[1].Detail))
 		}
-		if n, _ := ev.CountSince(ctx, t0); n != 2 {
+		if n, _ := ev.CountSince(ctx, []string{"acc-1"}, t0); n != 2 {
+			t.Fatalf("CountSince = %d", n)
+		}
+		if n, _ := ev.CountSince(ctx, nil, t0); n != 1 {
+			t.Fatalf("CountSince(system only) = %d", n)
+		}
+		if n, _ := ev.CountSince(ctx, []string{"acc-1", "acc-9"}, t0); n != 3 {
 			t.Fatalf("CountSince = %d", n)
 		}
 		if n, err := ev.DeleteBefore(ctx, t0.Add(90*time.Second)); err != nil || n != 2 {
 			t.Fatalf("DeleteBefore = %d %v", n, err)
 		}
-		if list, _ := ev.List(ctx, 10); len(list) != 1 {
+		if list, _ := ev.List(ctx, []string{"acc-1", "acc-9"}, 10); len(list) != 2 {
 			t.Fatalf("after delete = %+v", list)
 		}
 	})

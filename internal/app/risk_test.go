@@ -12,15 +12,16 @@ import (
 func TestRiskLimits(t *testing.T) {
 	ctx := context.Background()
 	e, b := withBroker(t) // equity 106,100 cents
+	acct, _ := e.svc.CurrentAccount(ctx, e.admin)
 	viewer := e.user(t, "vera", domain.RoleViewer)
-	l, err := e.svc.RiskLimits(ctx, viewer)
+	l, err := e.svc.RiskLimits(ctx, e.admin)
 	if err != nil || l != domain.DefaultRiskLimits || l.TradingBudget != 0 {
 		t.Fatalf("defaults = %+v %v", l, err)
 	}
 	next := domain.DefaultRiskLimits
 	next.TradingBudget, next.DailyLoss = 50_000, 150
-	if _, err := e.svc.SetRiskLimits(ctx, viewer, next); !errors.Is(err, domain.ErrForbidden) {
-		t.Fatal("viewer changed limits")
+	if _, err := e.svc.SetRiskLimits(ctx, viewer, next); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("a user without access changed limits")
 	}
 	key := e.admin
 	key.Via = ViaAPIKey
@@ -30,7 +31,7 @@ func TestRiskLimits(t *testing.T) {
 	if _, err := e.svc.SetRiskLimits(ctx, e.admin, next); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := e.svc.RiskLimits(ctx, viewer); got != next {
+	if got, _ := e.svc.RiskLimits(ctx, e.admin); got != next {
 		t.Fatalf("stored = %+v", got)
 	}
 	audit := e.store.AuditEntries()
@@ -59,22 +60,22 @@ func TestRiskLimits(t *testing.T) {
 	}
 	// only while stopped
 	for _, st := range []domain.AgentState{domain.AgentRunning, domain.AgentPaused, domain.AgentKilled} {
-		_ = e.store.Settings().Set(ctx, settingAgentState, string(st), e.clock.T)
+		_ = e.store.Settings().Set(ctx, agentStateKey(acct.ID), string(st), e.clock.T)
 		if _, err := e.svc.SetRiskLimits(ctx, e.admin, zero); !errors.Is(err, domain.ErrConflict) {
 			t.Fatalf("changed while %s: %v", st, err)
 		}
-		if got := e.svc.AgentState(ctx); got != st {
+		if got := e.svc.agentState(ctx, acct.ID); got != st {
 			t.Fatalf("state = %s", got)
 		}
 	}
-	_ = e.store.Settings().Set(ctx, settingAgentState, "bogus", e.clock.T)
-	if e.svc.AgentState(ctx) != domain.AgentStopped {
+	_ = e.store.Settings().Set(ctx, agentStateKey(acct.ID), "bogus", e.clock.T)
+	if e.svc.agentState(ctx, acct.ID) != domain.AgentStopped {
 		t.Fatal("unknown agent state must read as stopped")
 	}
 	// corrupted stored limits fall back to the defaults with no budget
 	for _, v := range []string{"{not json", `{"tradingBudgetCents":5,"dailyLossBp":0}`} {
-		_ = e.store.Settings().Set(ctx, settingRiskLimits, v, e.clock.T)
-		if got, _ := e.svc.RiskLimits(ctx, viewer); got != domain.DefaultRiskLimits {
+		_ = e.store.Settings().Set(ctx, riskLimitsKey(acct.ID), v, e.clock.T)
+		if got, _ := e.svc.RiskLimits(ctx, e.admin); got != domain.DefaultRiskLimits {
 			t.Fatalf("bad stored limits %q → %+v", v, got)
 		}
 	}

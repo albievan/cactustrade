@@ -23,6 +23,9 @@ export type EventFeed = components["schemas"]["EventFeed"];
 export type AppEvent = components["schemas"]["Event"];
 export type RiskLimits = components["schemas"]["RiskLimits"];
 export type LlmSetup = components["schemas"]["LlmSetup"];
+export type Account = components["schemas"]["Account"];
+export type AccountKeys = components["schemas"]["AccountKeys"];
+export type AccountShare = components["schemas"]["AccountShare"];
 export type LlmConfig = components["schemas"]["LlmConfig"];
 export type LlmTestResult = components["schemas"]["LlmTestResult"];
 
@@ -115,6 +118,20 @@ export const api = {
   setLlm: (c: LlmConfig) => request<LlmConfig>("PUT", "/api/v1/llm", c),
   llmModels: (c: LlmConfig) => request<string[]>("POST", "/api/v1/llm/models", c),
   testLlm: () => request<LlmTestResult>("POST", "/api/v1/llm/test"),
+  accounts: () => request<Account[]>("GET", "/api/v1/accounts"),
+  createAccount: (name: string, mode: "demo" | "real") => request<Account>("POST", "/api/v1/accounts", { name, mode }),
+  setCurrentAccount: (accountId: string) => request<Account>("PUT", "/api/v1/accounts/current", { accountId }),
+  renameAccount: (id: string, name: string) => request<Account>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}`, { name }),
+  deleteAccount: (id: string) => request<void>("DELETE", `/api/v1/accounts/${encodeURIComponent(id)}`),
+  accountKeys: (id: string) => request<AccountKeys>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/keys`),
+  setAccountKeys: (id: string, apiKey: string, userKey: string) =>
+    request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/keys`, { apiKey, userKey }),
+  testAccount: (id: string) => request<BrokerCheck>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/test`),
+  accountShares: (id: string) => request<AccountShare[]>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/shares`),
+  shareAccount: (id: string, username: string, access: "view" | "trade") =>
+    request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/shares`, { username, access }),
+  unshareAccount: (id: string, userId: string) =>
+    request<void>("DELETE", `/api/v1/accounts/${encodeURIComponent(id)}/shares/${encodeURIComponent(userId)}`),
 };
 
 // usd formats US-dollar cents, e.g. 123456 → "$1,234.56".

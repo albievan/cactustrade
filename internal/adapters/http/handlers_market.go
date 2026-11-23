@@ -37,9 +37,13 @@ func toWatchItem(w domain.WatchItem) WatchItem {
 	return WatchItem{Instrument: toInstrument(w.Instrument), Eligibility: el, AddedBy: w.AddedBy, AddedAt: w.AddedAt}
 }
 
-// TestBrokerConnection calls eToro once with the current mode's keys.
+// TestBrokerConnection calls eToro once with the current account's keys.
 func (s *Server) TestBrokerConnection(w http.ResponseWriter, r *http.Request) {
-	res, err := s.svc.TestConnection(r.Context(), state(r).principal)
+	s.writeBrokerCheck(w, r, "")
+}
+
+func (s *Server) writeBrokerCheck(w http.ResponseWriter, r *http.Request, accountID string) {
+	res, err := s.svc.TestConnection(r.Context(), state(r).principal, accountID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -64,8 +68,12 @@ func (s *Server) GetPortfolio(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	mode := domain.ModeDemo
+	if v, err := s.svc.CurrentAccount(r.Context(), state(r).principal); err == nil && v.Mode == domain.ModeReal {
+		mode = domain.ModeReal
+	}
 	out := Portfolio{
-		Mode: TradingMode(s.svc.Mode(r.Context())), AvailableCashCents: Cents(pf.AvailableCash),
+		Mode: TradingMode(mode), AvailableCashCents: Cents(pf.AvailableCash),
 		PendingOpenCents: Cents(pf.PendingOpen), EquityCents: Cents(pf.Equity()), AsOf: pf.AsOf,
 		Positions: make([]Position, 0, len(pf.Positions)),
 	}

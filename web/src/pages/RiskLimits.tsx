@@ -6,7 +6,7 @@ import { useMode } from "../lib/mode";
 // The owner's limits. The risk engine enforces them on every entry; they can be changed only
 // while the agent is stopped, and every change is audited.
 export function RiskLimits() {
-  const { can, me } = useSession();
+  const { me } = useSession();
   const status = useMode();
   const [l, setL] = useState<Limits | null>(null);
   const [budget, setBudget] = useState("");
@@ -15,7 +15,8 @@ export function RiskLimits() {
   useEffect(() => {
     api.riskLimits().then((x) => { setL(x); setBudget((x.tradingBudgetCents / 100).toFixed(2)); }).catch((e) => setError(errorText(e)));
   }, []);
-  const editable = can("settings.write") && me?.via === "session" && status?.agentState === "stopped";
+  const owner = status?.account?.access === "owner";
+  const editable = owner && me?.via === "session" && status?.agentState === "stopped";
   if (!l) return <><h1 className="h3">Risk limits</h1>{error && <div className="alert alert-danger">{error}</div>}</>;
   const num = (k: keyof Limits) => (e: React.ChangeEvent<HTMLInputElement>) => setL({ ...l, [k]: Number(e.target.value) });
   async function save(e: FormEvent) {
@@ -46,7 +47,9 @@ export function RiskLimits() {
         Enforced by the risk engine on every order, in US dollars (the eToro account currency). Nothing can switch on
         leverage, short selling or CFDs: those are fixed in the code.
       </p>
-      {!editable && can("settings.write") && <div className="alert alert-info">Stop the agent to change the limits (it is <strong>{status?.agentState}</strong>).</div>}
+      {status?.account && <p className="small">Account: <strong>{status.account.name}</strong> ({status.account.mode}).</p>}
+      {owner && !editable && <div className="alert alert-info">Stop the agent to change the limits (it is <strong>{status?.agentState}</strong>).</div>}
+      {!owner && <div className="alert alert-secondary">Only the account's owner can change its limits.</div>}
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
       {saved && <div className="alert alert-success" role="status">Saved and audited.</div>}
       <form onSubmit={save} className="card"><div className="card-body row g-4">

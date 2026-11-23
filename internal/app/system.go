@@ -9,9 +9,6 @@ import (
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-// Setting keys.
-const settingMode = "trading.mode"
-
 // SystemStatus is what the dashboard header shows.
 type SystemStatus struct {
 	Version    string
@@ -21,34 +18,36 @@ type SystemStatus struct {
 	Database   string
 	StartedAt  time.Time
 	Now        time.Time
+	Account    *domain.AccountView // the caller's current account; nil when there is none
 }
 
-// Mode returns the trading mode stored server-side; demo unless the gate set real. An
-// unreadable or unknown value is demo (fail closed: never real by accident).
-func (s *Service) Mode(ctx context.Context) domain.TradingMode {
-	v, err := s.d.Store.Settings().Get(ctx, settingMode)
-	if err != nil {
-		if !errors.Is(err, domain.ErrNotFound) {
-			s.d.Log.WarnContext(ctx, "reading trading mode failed; using demo", "err", err)
-		}
-		return domain.ModeDemo
-	}
-	if domain.TradingMode(v) == domain.ModeReal {
+// accountMode is the mode an account trades in: real only when the account says so (an
+// unknown value is demo: never real by accident).
+func accountMode(a domain.Account) domain.TradingMode {
+	if a.Mode == domain.ModeReal {
 		return domain.ModeReal
 	}
 	return domain.ModeDemo
 }
 
-// Status reports versions, mode and agent state (viewer).
+// Status reports versions and the caller's current account: its mode and agent state
+// (viewer). Without an account the mode reads demo and the agent stopped.
 func (s *Service) Status(ctx context.Context, p Principal) (SystemStatus, error) {
 	if err := s.authorize(p, domain.PermView); err != nil {
 		return SystemStatus{}, err
 	}
-	return SystemStatus{
-		Version: s.cfg.Version, Build: s.cfg.Build, Mode: s.Mode(ctx),
-		AgentState: s.AgentState(ctx), Database: s.d.Store.Driver(),
-		StartedAt: s.startedAt, Now: s.d.Clock.Now().UTC(),
-	}, nil
+	st := SystemStatus{
+		Version: s.cfg.Version, Build: s.cfg.Build, Mode: domain.ModeDemo, AgentState: domain.AgentStopped,
+		Database: s.d.Store.Driver(), StartedAt: s.startedAt, Now: s.d.Clock.Now().UTC(),
+	}
+	v, err := s.account(ctx, p, "", domain.AccessView)
+	switch {
+	case err == nil:
+		st.Mode, st.AgentState, st.Account = accountMode(v.Account), s.agentState(ctx, v.ID), &v
+	case !errors.Is(err, domain.ErrNotFound):
+		return SystemStatus{}, err
+	}
+	return st, nil
 }
 
 // Ready reports whether the service can take requests (database reachable).

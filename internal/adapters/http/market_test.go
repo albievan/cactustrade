@@ -54,6 +54,9 @@ func newMarketTC(t *testing.T) (*tc, *fakes.Broker) {
 	c.Jar, _ = cookiejar.New(nil)
 	x := &tc{t: t, srv: srv, c: c, store: st, svc: svc}
 	x.setupAndLogin()
+	if code, m, _ := x.do("POST", "/api/v1/accounts", `{"name":"Main demo","mode":"demo"}`, "X-CSRF-Token", x.csrf); code != 201 || m["access"] != "owner" {
+		t.Fatalf("create account %d %v", code, m)
+	}
 	return x, b
 }
 
@@ -122,6 +125,11 @@ func TestMarketEndpointsNeedRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, accts, _ := x.do("GET", "/api/v1/system/status", "")
+	acctID := accts["account"].(map[string]any)["id"].(string)
+	if code, m, _ := x.do("PUT", "/api/v1/accounts/"+acctID+"/shares", `{"username":"vera","access":"trade"}`, "X-CSRF-Token", x.csrf); code != 204 {
+		t.Fatalf("share %d %v", code, m)
+	}
 	x.c.Jar, _ = cookiejar.New(nil) // a fresh browser
 	x.login("vera", "vera password 1")
 	csrf := []string{"X-CSRF-Token", x.csrf}
@@ -163,7 +171,7 @@ func TestEventsSystemAndRiskEndpoints(t *testing.T) {
 	}
 	code, m, _ := x.do("GET", "/api/v1/events?limit=5", "")
 	evs := m["events"].([]any)
-	if code != 200 || m["unread"] != 1.0 || len(evs) != 1 || evs[0].(map[string]any)["kind"] != "watchlist.added" || evs[0].(map[string]any)["severity"] != "info" {
+	if code != 200 || m["unread"] != 2.0 || len(evs) != 2 || evs[0].(map[string]any)["kind"] != "watchlist.added" || evs[1].(map[string]any)["kind"] != "account.created" {
 		t.Fatalf("events %d %v", code, m)
 	}
 	if code, _, _ := x.do("POST", "/api/v1/events/seen", "", csrf...); code != 204 {
@@ -212,5 +220,67 @@ func TestLlmEndpoints(t *testing.T) {
 	}
 	if code, _, _ := x.do("POST", "/api/v1/llm/models", body, csrf...); code != 503 {
 		t.Fatalf("models %d", code)
+	}
+}
+
+func TestAccountEndpoints(t *testing.T) {
+	x, b := newMarketTC(t)
+	csrf := []string{"X-CSRF-Token", x.csrf}
+	var accts []map[string]any
+	if code := x.getJSON("/api/v1/accounts", &accts); code != 200 || len(accts) != 1 || accts[0]["access"] != "owner" || accts[0]["ownerName"] != "admin" {
+		t.Fatalf("list %d %v", code, accts)
+	}
+	main := accts[0]["id"].(string)
+	code, m, _ := x.do("POST", "/api/v1/accounts", `{"name":"Real one","mode":"real"}`, csrf...)
+	if code != 201 || m["mode"] != "real" {
+		t.Fatalf("create real %d %v", code, m)
+	}
+	realID := m["id"].(string)
+	if code, m, _ := x.do("PUT", "/api/v1/accounts/current", `{"accountId":"`+realID+`"}`, csrf...); code != 200 || m["id"] != realID {
+		t.Fatalf("switch %d %v", code, m)
+	}
+	if _, m, _ := x.do("GET", "/api/v1/system/status", ""); m["mode"] != "real" || m["account"].(map[string]any)["name"] != "Real one" {
+		t.Fatalf("status after switching to a real account %v", m)
+	}
+	if code, m, _ := x.do("PATCH", "/api/v1/accounts/"+realID, `{"name":"Real ISA"}`, csrf...); code != 200 || m["name"] != "Real ISA" {
+		t.Fatalf("rename %d %v", code, m)
+	}
+	if code, _, _ := x.do("PUT", "/api/v1/accounts/"+realID+"/keys", `{"apiKey":"a-key","userKey":"u-key"}`, csrf...); code != 204 {
+		t.Fatalf("keys %d", code)
+	}
+	if code, m, _ := x.do("GET", "/api/v1/accounts/"+realID+"/keys", ""); code != 200 || m["apiKeySet"] != true || m["userKeySet"] != true || m["fromEnvironment"] != false {
+		t.Fatalf("keys status %d %v", code, m)
+	}
+	b.SeeAccount = true
+	if code, m, _ := x.do("POST", "/api/v1/accounts/"+realID+"/test", "", csrf...); code != 200 || m["ok"] != true || m["mode"] != "real" || b.LastAccount.ID != realID {
+		t.Fatalf("test %d %v (broker saw %+v)", code, m, b.LastAccount)
+	}
+	if _, err := x.svc.CreateUser(context.Background(), app.Principal{UserID: "x", Role: domain.RoleAdmin, Via: app.ViaSession, Username: "admin"}, "bob", "bob password 12", domain.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	if code, m, _ := x.do("PUT", "/api/v1/accounts/"+realID+"/shares", `{"username":"bob","access":"view"}`, csrf...); code != 204 {
+		t.Fatalf("share %d %v", code, m)
+	}
+	var shares []map[string]any
+	if code := x.getJSON("/api/v1/accounts/"+realID+"/shares", &shares); code != 200 || len(shares) != 1 || shares[0]["username"] != "bob" {
+		t.Fatalf("shares %d %v", code, shares)
+	}
+	if code, m, _ := x.do("PUT", "/api/v1/accounts/"+realID+"/shares", `{"username":"bob","access":"owner"}`, csrf...); code != 400 {
+		t.Fatalf("share as owner %d %v", code, m)
+	}
+	if code, _, _ := x.do("DELETE", "/api/v1/accounts/"+realID+"/shares/"+shares[0]["userId"].(string), "", csrf...); code != 204 {
+		t.Fatalf("unshare %d", code)
+	}
+	if code, _, _ := x.do("DELETE", "/api/v1/accounts/"+realID, "", csrf...); code != 204 {
+		t.Fatalf("delete %d", code)
+	}
+	if code, _, _ := x.do("DELETE", "/api/v1/accounts/"+realID, "", csrf...); code != 404 {
+		t.Fatalf("delete again %d", code)
+	}
+	if _, m, _ := x.do("GET", "/api/v1/system/status", ""); m["account"].(map[string]any)["id"] != main {
+		t.Fatalf("current account falls back to the remaining one %v", m)
+	}
+	if code, _, _ := x.do("PUT", "/api/v1/accounts/current", `{"accountId":"nope"}`, csrf...); code != 404 {
+		t.Fatalf("switch to unknown %d", code)
 	}
 }

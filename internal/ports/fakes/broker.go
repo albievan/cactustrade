@@ -20,6 +20,9 @@ type Broker struct {
 	Eligible    map[domain.InstrumentID]domain.Eligibility
 	Prices      map[domain.InstrumentID]domain.Quote
 	SearchCalls int
+	// SeeAccount makes Portfolio record the account in the context (LastAccount).
+	SeeAccount  bool
+	LastAccount domain.Account
 }
 
 var (
@@ -34,7 +37,12 @@ func (b *Broker) fail() error {
 }
 
 // Portfolio returns Account.
-func (b *Broker) Portfolio(context.Context) (domain.Portfolio, error) {
+func (b *Broker) Portfolio(ctx context.Context) (domain.Portfolio, error) {
+	if b.SeeAccount {
+		b.mu.Lock()
+		b.LastAccount, _ = ports.AccountFrom(ctx)
+		b.mu.Unlock()
+	}
 	if err := b.fail(); err != nil {
 		return domain.Portfolio{}, err
 	}

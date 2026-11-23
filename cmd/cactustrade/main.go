@@ -44,6 +44,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/system"
 	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 	"github.com/albievan/cactustrade/web"
 )
 
@@ -165,25 +166,29 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	var svc *app.Service
 	broker, err := etoro.New(etoro.Config{
 		HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Random: system.Random{}, Log: log,
-		Mode: func(ctx context.Context) domain.TradingMode { return svc.Mode(ctx) },
 	})
 	if err != nil {
 		return err
 	}
 	// Prices: the WebSocket stream when fresh (≤ 30 s), REST rates otherwise.
-	stream := etoro.NewStream(broker)
+	stream := etoro.NewStream(broker, func(ctx context.Context) (domain.Account, bool) {
+		return streamAccount(ctx, store, secrets)
+	})
 	feed := etoro.NewFeed(broker, stream, 30*time.Second)
 	svc, err = app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
 		Broker: broker, Market: feed, Calendar: cal,
 		Reviewer: llm.New(&http.Client{Timeout: 10 * time.Minute}),
-		Reload: func(context.Context) error {
+		Reload: func(ctx context.Context) error {
 			vals, err := secretstore.FromEnvironment(getenv, os.ReadFile)
 			if err != nil {
 				return err
 			}
 			secrets.Replace(vals)
+			if _, err := svc.EnsureEnvAccount(ctx); err != nil {
+				return err
+			}
 			log.Info("settings reloaded", "credentials_from_environment", len(vals))
 			return nil
 		},
@@ -201,13 +206,15 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	if y := time.Now().Year(); !slices.Contains(cal.Years(domain.MarketLSE), y) || !slices.Contains(cal.Years(domain.MarketNYSE), y) {
 		log.Warn("the market calendar has no holiday table for this year: markets are treated as closed", "year", y)
 	}
-	mode := svc.Mode(ctx)
-	log = log.With("mode", string(mode))
-
 	if created, err := svc.EnsureDefaultAdmin(ctx); err != nil {
 		return err
 	} else if created {
 		log.Warn("first run: created the administrator admin/admin; sign in and change its password (required before anything else)")
+	}
+	if created, err := svc.EnsureEnvAccount(ctx); err != nil {
+		return err
+	} else if created {
+		log.Info("created the eToro account \"Demo (environment)\" from the environment's demo keys")
 	}
 
 	reg := prometheus.NewRegistry()
@@ -238,10 +245,8 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return err
 	}
 	go httpapi.PurgeLoop(ctx, svc, log, 10*time.Minute)
-	if items, err := store.Watchlist().List(ctx); err == nil {
-		for _, it := range items {
-			stream.Watch(it.Instrument.ID)
-		}
+	if ids, err := store.Watchlist().Watched(ctx); err == nil {
+		stream.Watch(ids...)
 	}
 	go stream.Run(ctx)
 
@@ -282,6 +287,38 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return errRestart
 	}
 	return nil
+}
+
+// streamAccount picks the account whose keys the price stream uses: a demo account with
+// both keys set (the environment account first), else any account with keys.
+func streamAccount(ctx context.Context, store *sqlstore.Store, secrets ports.SecretStore) (domain.Account, bool) {
+	accts, err := store.Accounts().List(ctx)
+	if err != nil {
+		return domain.Account{}, false
+	}
+	slices.SortStableFunc(accts, func(a, b domain.Account) int {
+		rank := func(x domain.Account) int {
+			switch {
+			case x.ID == domain.EnvAccountID:
+				return 0
+			case x.Mode != domain.ModeReal:
+				return 1
+			}
+			return 2
+		}
+		return rank(a) - rank(b)
+	})
+	for _, a := range accts {
+		ak, uk := domain.AccountKeyNames(a)
+		if v, err := secrets.Get(ctx, ak); err != nil || v == "" {
+			continue
+		}
+		if v, err := secrets.Get(ctx, uk); err != nil || v == "" {
+			continue
+		}
+		return a, true
+	}
+	return domain.Account{}, false
 }
 
 // openSecrets loads the master key and returns the credential store: encrypted in the

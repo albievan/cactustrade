@@ -83,20 +83,38 @@ type Instruments interface {
 	Get(ctx context.Context, id domain.InstrumentID) (domain.Instrument, domain.Eligibility, error)
 }
 
-// Watchlist holds the instruments the agent may trade.
+// Watchlist holds, per account, the instruments the agent may trade.
 type Watchlist interface {
-	// Add puts a cached instrument on the list: ErrConflict when already there, ErrNotFound
-	// when the instrument is not cached.
-	Add(ctx context.Context, id domain.InstrumentID, addedBy string, at time.Time) error
-	Remove(ctx context.Context, id domain.InstrumentID) error
-	List(ctx context.Context) ([]domain.WatchItem, error) // by symbol
+	// Add puts a cached instrument on an account's list: ErrConflict when already there,
+	// ErrNotFound when the instrument is not cached or the account does not exist.
+	Add(ctx context.Context, accountID string, id domain.InstrumentID, addedBy string, at time.Time) error
+	Remove(ctx context.Context, accountID string, id domain.InstrumentID) error
+	List(ctx context.Context, accountID string) ([]domain.WatchItem, error) // by symbol
+	// Watched lists every instrument on any account's list (for the price stream).
+	Watched(ctx context.Context) ([]domain.InstrumentID, error)
 }
 
-// Events stores the event feed.
+// Accounts stores eToro accounts and their shares.
+type Accounts interface {
+	Create(ctx context.Context, a domain.Account) error // ErrConflict on a duplicate id
+	Get(ctx context.Context, id string) (domain.Account, error)
+	List(ctx context.Context) ([]domain.Account, error) // all, by name
+	// ForUser lists the accounts a user owns or has been given, with the access.
+	ForUser(ctx context.Context, userID string) ([]domain.AccountView, error)
+	Update(ctx context.Context, a domain.Account) error // name, mode
+	Delete(ctx context.Context, id string) error
+	Shares(ctx context.Context, accountID string) ([]domain.AccountShare, error)
+	SetShare(ctx context.Context, s domain.AccountShare) error // add or change
+	RemoveShare(ctx context.Context, accountID, userID string) error
+	CountOwnedBy(ctx context.Context, userID string) (int, error)
+}
+
+// Events stores the event feed. List and CountSince return system events ("" account) and
+// the events of the given accounts.
 type Events interface {
 	Append(ctx context.Context, e domain.Event) error
-	List(ctx context.Context, limit int) ([]domain.Event, error) // newest first
-	CountSince(ctx context.Context, since time.Time) (int, error)
+	List(ctx context.Context, accountIDs []string, limit int) ([]domain.Event, error) // newest first
+	CountSince(ctx context.Context, accountIDs []string, since time.Time) (int, error)
 	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
@@ -111,6 +129,7 @@ type Store interface {
 	Instruments() Instruments
 	Watchlist() Watchlist
 	Events() Events
+	Accounts() Accounts
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error

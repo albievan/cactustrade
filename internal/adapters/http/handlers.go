@@ -145,10 +145,14 @@ func (s *Server) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, SystemStatus{
+	out := SystemStatus{
 		Version: st.Version, Build: st.Build, Mode: TradingMode(st.Mode), AgentState: AgentState(st.AgentState),
 		Database: SystemStatusDatabase(st.Database), StartedAt: st.StartedAt, Now: st.Now,
-	})
+	}
+	if st.Account != nil {
+		out.Account = ptr(toAccount(*st.Account))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ListUsers lists users.

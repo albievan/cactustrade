@@ -3,8 +3,8 @@ package sqlstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -67,7 +67,7 @@ func (r instruments) Get(ctx context.Context, id domain.InstrumentID) (domain.In
 
 type watchlist struct{ db *sql.DB }
 
-func (r watchlist) Add(ctx context.Context, id domain.InstrumentID, addedBy string, at time.Time) (err error) {
+func (r watchlist) Add(ctx context.Context, accountID string, id domain.InstrumentID, addedBy string, at time.Time) (err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("watchlist.Add: %w", err)
@@ -77,16 +77,16 @@ func (r watchlist) Add(ctx context.Context, id domain.InstrumentID, addedBy stri
 			_ = tx.Rollback()
 		}
 	}()
-	// Check the instrument explicitly: foreign-key errors differ between the two databases.
+	// Check both parents explicitly: foreign-key errors differ between the two databases.
 	var n int
-	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM instruments WHERE id = ?", int64(id)).Scan(&n); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT (SELECT COUNT(*) FROM instruments WHERE id = ?) + (SELECT COUNT(*) FROM accounts WHERE id = ?)", int64(id), accountID).Scan(&n); err != nil {
 		return fmt.Errorf("watchlist.Add: %w", err)
 	}
-	if n == 0 {
+	if n != 2 {
 		err = domain.ErrNotFound
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO watchlist (instrument_id, added_by, added_at) VALUES (?, ?, ?)", int64(id), addedBy, us(at))
+	_, err = tx.ExecContext(ctx, "INSERT INTO watchlist (account_id, instrument_id, added_by, added_at) VALUES (?, ?, ?, ?)", accountID, int64(id), addedBy, us(at))
 	if isDuplicate(err) {
 		err = domain.ErrConflict
 		return err
@@ -100,14 +100,14 @@ func (r watchlist) Add(ctx context.Context, id domain.InstrumentID, addedBy stri
 	return nil
 }
 
-func (r watchlist) Remove(ctx context.Context, id domain.InstrumentID) error {
-	return mustAffect(r.db.ExecContext(ctx, "DELETE FROM watchlist WHERE instrument_id = ?", int64(id)))
+func (r watchlist) Remove(ctx context.Context, accountID string, id domain.InstrumentID) error {
+	return mustAffect(r.db.ExecContext(ctx, "DELETE FROM watchlist WHERE account_id = ? AND instrument_id = ?", accountID, int64(id)))
 }
 
-func (r watchlist) List(ctx context.Context) ([]domain.WatchItem, error) {
+func (r watchlist) List(ctx context.Context, accountID string) ([]domain.WatchItem, error) {
 	rows, err := r.db.QueryContext(ctx, "SELECT i.id, i.symbol, i.name, i.type, i.exchange_id, i.market, i.currency, "+
 		"i.eligible_real_long, i.eligibility_reason, i.min_position_cents, i.eligibility_checked_at, w.added_by, w.added_at "+
-		"FROM watchlist w JOIN instruments i ON i.id = w.instrument_id ORDER BY i.symbol, i.id")
+		"FROM watchlist w JOIN instruments i ON i.id = w.instrument_id WHERE w.account_id = ? ORDER BY i.symbol, i.id", accountID)
 	if err != nil {
 		return nil, fmt.Errorf("watchlist.List: %w", err)
 	}
@@ -125,10 +125,24 @@ func (r watchlist) List(ctx context.Context) ([]domain.WatchItem, error) {
 		w.Instrument, w.Eligibility, w.AddedAt = in, el, fromUS(addedAt)
 		out = append(out, w)
 	}
-	if err := rows.Err(); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("watchlist.List: %w", err)
+	return out, rows.Err()
+}
+
+func (r watchlist) Watched(ctx context.Context) ([]domain.InstrumentID, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT DISTINCT instrument_id FROM watchlist ORDER BY instrument_id")
+	if err != nil {
+		return nil, fmt.Errorf("watchlist.Watched: %w", err)
 	}
-	return out, nil
+	defer rows.Close()
+	var out []domain.InstrumentID
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("watchlist.Watched: %w", err)
+		}
+		out = append(out, domain.InstrumentID(id))
+	}
+	return out, rows.Err()
 }
 
 // rowScanner adapts a function to the Scan interface (to scan extra trailing columns).
@@ -141,8 +155,8 @@ func (f rowScanner) Scan(dst ...any) error { return f(dst...) }
 type events struct{ db *sql.DB }
 
 func (r events) Append(ctx context.Context, e domain.Event) error {
-	_, err := r.db.ExecContext(ctx, "INSERT INTO events (id, at, kind, severity, title, detail, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		e.ID, us(e.At), e.Kind, string(e.Severity), clip(e.Title, 255), clip(e.Detail, 2000), clip(e.Actor, 64))
+	_, err := r.db.ExecContext(ctx, "INSERT INTO events (id, at, kind, severity, title, detail, actor, account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		e.ID, us(e.At), e.Kind, string(e.Severity), clip(e.Title, 255), clip(e.Detail, 2000), clip(e.Actor, 64), e.AccountID)
 	if isDuplicate(err) {
 		return domain.ErrConflict
 	}
@@ -152,8 +166,19 @@ func (r events) Append(ctx context.Context, e domain.Event) error {
 	return nil
 }
 
-func (r events) List(ctx context.Context, limit int) ([]domain.Event, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT id, at, kind, severity, title, detail, actor FROM events ORDER BY at DESC, id DESC LIMIT ?", limit)
+// accountFilter is "account_id IN (”, ?, ?…)" with its arguments.
+func accountFilter(ids []string) (string, []any) {
+	args := []any{""}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	return "account_id IN (?" + strings.Repeat(", ?", len(ids)) + ")", args
+}
+
+func (r events) List(ctx context.Context, accountIDs []string, limit int) ([]domain.Event, error) {
+	where, args := accountFilter(accountIDs)
+	rows, err := r.db.QueryContext(ctx, "SELECT id, at, kind, severity, title, detail, actor, account_id FROM events WHERE "+where+
+		" ORDER BY at DESC, id DESC LIMIT ?", append(args, limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("events.List: %w", err)
 	}
@@ -163,7 +188,7 @@ func (r events) List(ctx context.Context, limit int) ([]domain.Event, error) {
 		var e domain.Event
 		var at int64
 		var sev string
-		if err := rows.Scan(&e.ID, &at, &e.Kind, &sev, &e.Title, &e.Detail, &e.Actor); err != nil {
+		if err := rows.Scan(&e.ID, &at, &e.Kind, &sev, &e.Title, &e.Detail, &e.Actor, &e.AccountID); err != nil {
 			return nil, fmt.Errorf("events.List: %w", err)
 		}
 		e.At, e.Severity = fromUS(at), domain.EventSeverity(sev)
@@ -172,9 +197,10 @@ func (r events) List(ctx context.Context, limit int) ([]domain.Event, error) {
 	return out, rows.Err()
 }
 
-func (r events) CountSince(ctx context.Context, since time.Time) (int, error) {
+func (r events) CountSince(ctx context.Context, accountIDs []string, since time.Time) (int, error) {
+	where, args := accountFilter(accountIDs)
 	var n int
-	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events WHERE at > ?", us(since)).Scan(&n)
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events WHERE "+where+" AND at > ?", append(args, us(since))...).Scan(&n)
 	return n, err
 }
 

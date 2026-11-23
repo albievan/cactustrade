@@ -136,8 +136,10 @@ type Store struct {
 	audit    []domain.AuditEntry
 	settings map[string]string
 	instr    map[domain.InstrumentID]instrRec
-	watch    map[domain.InstrumentID]domain.WatchItem
+	watch    map[string]map[domain.InstrumentID]domain.WatchItem // account → instrument
 	events   []domain.Event
+	accounts map[string]domain.Account
+	shares   map[string]map[string]domain.AccountShare // account → user
 	PingErr  error
 }
 
@@ -152,7 +154,8 @@ func NewStore() *Store {
 		users: map[string]domain.User{}, sessions: map[string]domain.Session{},
 		keys: map[string]domain.APIKey{}, secrets: map[string]ports.SecretRecord{},
 		settings: map[string]string{}, instr: map[domain.InstrumentID]instrRec{},
-		watch: map[domain.InstrumentID]domain.WatchItem{},
+		watch:    map[string]map[domain.InstrumentID]domain.WatchItem{},
+		accounts: map[string]domain.Account{}, shares: map[string]map[string]domain.AccountShare{},
 	}
 }
 
@@ -184,6 +187,9 @@ func (s *Store) Watchlist() ports.Watchlist { return watchRepo{s} }
 
 // Events returns the event feed.
 func (s *Store) Events() ports.Events { return eventRepo{s} }
+
+// Accounts returns the accounts repository.
+func (s *Store) Accounts() ports.Accounts { return accountRepo{s} }
 
 // Ping returns PingErr.
 func (s *Store) Ping(context.Context) error { return s.PingErr }
@@ -272,6 +278,11 @@ func (r users) Delete(_ context.Context, id string) error {
 	defer r.s.mu.Unlock()
 	if _, ok := r.s.users[id]; !ok {
 		return domain.ErrNotFound
+	}
+	for _, a := range r.s.accounts {
+		if a.OwnerID == id {
+			return errors.New("fake: the user owns an account (foreign key)")
+		}
 	}
 	delete(r.s.users, id)
 	return nil
@@ -525,41 +536,190 @@ func (r instrRepo) Get(_ context.Context, id domain.InstrumentID) (domain.Instru
 
 type watchRepo struct{ s *Store }
 
-func (r watchRepo) Add(_ context.Context, id domain.InstrumentID, by string, at time.Time) error {
+func (r watchRepo) Add(_ context.Context, acct string, id domain.InstrumentID, by string, at time.Time) error {
 	r.s.mu.Lock()
 	defer r.s.mu.Unlock()
 	x, ok := r.s.instr[id]
-	if !ok {
+	if _, acctOK := r.s.accounts[acct]; !ok || !acctOK {
 		return domain.ErrNotFound
 	}
-	if _, dup := r.s.watch[id]; dup {
+	if r.s.watch[acct] == nil {
+		r.s.watch[acct] = map[domain.InstrumentID]domain.WatchItem{}
+	}
+	if _, dup := r.s.watch[acct][id]; dup {
 		return domain.ErrConflict
 	}
-	r.s.watch[id] = domain.WatchItem{Instrument: x.in, AddedBy: by, AddedAt: at}
+	r.s.watch[acct][id] = domain.WatchItem{Instrument: x.in, AddedBy: by, AddedAt: at}
 	return nil
 }
 
-func (r watchRepo) Remove(_ context.Context, id domain.InstrumentID) error {
+func (r watchRepo) Remove(_ context.Context, acct string, id domain.InstrumentID) error {
 	r.s.mu.Lock()
 	defer r.s.mu.Unlock()
-	if _, ok := r.s.watch[id]; !ok {
+	if _, ok := r.s.watch[acct][id]; !ok {
 		return domain.ErrNotFound
 	}
-	delete(r.s.watch, id)
+	delete(r.s.watch[acct], id)
 	return nil
 }
 
-func (r watchRepo) List(context.Context) ([]domain.WatchItem, error) {
+func (r watchRepo) List(_ context.Context, acct string) ([]domain.WatchItem, error) {
 	r.s.mu.Lock()
 	defer r.s.mu.Unlock()
-	out := make([]domain.WatchItem, 0, len(r.s.watch))
-	for id, w := range r.s.watch {
+	out := make([]domain.WatchItem, 0, len(r.s.watch[acct]))
+	for id, w := range r.s.watch[acct] {
 		x := r.s.instr[id]
 		w.Instrument, w.Eligibility = x.in, x.el
 		out = append(out, w)
 	}
 	slices.SortFunc(out, func(a, b domain.WatchItem) int { return strings.Compare(a.Instrument.Symbol, b.Instrument.Symbol) })
 	return out, nil
+}
+
+func (r watchRepo) Watched(context.Context) ([]domain.InstrumentID, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	seen := map[domain.InstrumentID]bool{}
+	for _, m := range r.s.watch {
+		for id := range m {
+			seen[id] = true
+		}
+	}
+	out := make([]domain.InstrumentID, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+type accountRepo struct{ s *Store }
+
+func (r accountRepo) withOwner(a domain.Account) domain.Account {
+	a.OwnerName = r.s.users[a.OwnerID].Username
+	return a
+}
+
+func (r accountRepo) Create(_ context.Context, a domain.Account) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if _, ok := r.s.accounts[a.ID]; ok {
+		return domain.ErrConflict
+	}
+	r.s.accounts[a.ID] = a
+	return nil
+}
+
+func (r accountRepo) Get(_ context.Context, id string) (domain.Account, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	a, ok := r.s.accounts[id]
+	if !ok {
+		return domain.Account{}, domain.ErrNotFound
+	}
+	return r.withOwner(a), nil
+}
+
+func (r accountRepo) List(context.Context) ([]domain.Account, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	var out []domain.Account
+	for _, a := range r.s.accounts {
+		out = append(out, r.withOwner(a))
+	}
+	slices.SortFunc(out, func(a, b domain.Account) int {
+		return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
+	})
+	return out, nil
+}
+
+func (r accountRepo) ForUser(_ context.Context, userID string) ([]domain.AccountView, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	var out []domain.AccountView
+	for id, a := range r.s.accounts {
+		v := domain.AccountView{Account: r.withOwner(a)}
+		if a.OwnerID == userID {
+			v.Access = domain.AccessOwner
+		} else if sh, ok := r.s.shares[id][userID]; ok {
+			v.Access = sh.Access
+		} else {
+			continue
+		}
+		out = append(out, v)
+	}
+	slices.SortFunc(out, func(a, b domain.AccountView) int {
+		return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
+	})
+	return out, nil
+}
+
+func (r accountRepo) Update(_ context.Context, a domain.Account) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	old, ok := r.s.accounts[a.ID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	old.Name, old.Mode, old.UpdatedAt = a.Name, a.Mode, a.UpdatedAt
+	r.s.accounts[a.ID] = old
+	return nil
+}
+
+func (r accountRepo) Delete(_ context.Context, id string) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if _, ok := r.s.accounts[id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(r.s.accounts, id)
+	delete(r.s.shares, id)
+	delete(r.s.watch, id)
+	return nil
+}
+
+func (r accountRepo) Shares(_ context.Context, id string) ([]domain.AccountShare, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	var out []domain.AccountShare
+	for _, sh := range r.s.shares[id] {
+		sh.Username = r.s.users[sh.UserID].Username
+		out = append(out, sh)
+	}
+	slices.SortFunc(out, func(a, b domain.AccountShare) int { return strings.Compare(a.Username, b.Username) })
+	return out, nil
+}
+
+func (r accountRepo) SetShare(_ context.Context, sh domain.AccountShare) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if r.s.shares[sh.AccountID] == nil {
+		r.s.shares[sh.AccountID] = map[string]domain.AccountShare{}
+	}
+	r.s.shares[sh.AccountID][sh.UserID] = sh
+	return nil
+}
+
+func (r accountRepo) RemoveShare(_ context.Context, acct, user string) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if _, ok := r.s.shares[acct][user]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(r.s.shares[acct], user)
+	return nil
+}
+
+func (r accountRepo) CountOwnedBy(_ context.Context, user string) (int, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	n := 0
+	for _, a := range r.s.accounts {
+		if a.OwnerID == user {
+			n++
+		}
+	}
+	return n, nil
 }
 
 type eventRepo struct{ s *Store }
@@ -571,10 +731,19 @@ func (r eventRepo) Append(_ context.Context, e domain.Event) error {
 	return nil
 }
 
-func (r eventRepo) List(_ context.Context, limit int) ([]domain.Event, error) {
+func visible(e domain.Event, ids []string) bool {
+	return e.AccountID == "" || slices.Contains(ids, e.AccountID)
+}
+
+func (r eventRepo) List(_ context.Context, ids []string, limit int) ([]domain.Event, error) {
 	r.s.mu.Lock()
 	defer r.s.mu.Unlock()
-	out := slices.Clone(r.s.events)
+	var out []domain.Event
+	for _, e := range r.s.events {
+		if visible(e, ids) {
+			out = append(out, e)
+		}
+	}
 	slices.SortStableFunc(out, func(a, b domain.Event) int { return cmp.Or(b.At.Compare(a.At), strings.Compare(b.ID, a.ID)) }) // as SQL: at DESC, id DESC
 	if len(out) > limit {
 		out = out[:limit]
@@ -582,12 +751,12 @@ func (r eventRepo) List(_ context.Context, limit int) ([]domain.Event, error) {
 	return out, nil
 }
 
-func (r eventRepo) CountSince(_ context.Context, since time.Time) (int, error) {
+func (r eventRepo) CountSince(_ context.Context, ids []string, since time.Time) (int, error) {
 	r.s.mu.Lock()
 	defer r.s.mu.Unlock()
 	n := 0
 	for _, e := range r.s.events {
-		if e.At.After(since) {
+		if e.At.After(since) && visible(e, ids) {
 			n++
 		}
 	}

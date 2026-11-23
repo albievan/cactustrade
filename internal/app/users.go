@@ -141,6 +141,11 @@ func (s *Service) DeleteUser(ctx context.Context, p Principal, id string) error 
 			return err
 		}
 	}
+	if n, err := s.d.Store.Accounts().CountOwnedBy(ctx, id); err != nil {
+		return fmt.Errorf("app.DeleteUser: %w", err)
+	} else if n > 0 {
+		return fmt.Errorf("%s owns %d eToro account(s): delete them first: %w", u.Username, n, domain.ErrConflict)
+	}
 	if err := s.d.Store.Sessions().DeleteForUser(ctx, id); err != nil {
 		return fmt.Errorf("app.DeleteUser: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/etoro"
 	"github.com/albievan/cactustrade/internal/adapters/system"
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 	"github.com/albievan/cactustrade/internal/strategy"
 )
 
@@ -61,13 +62,16 @@ func backtestCmd(ctx context.Context, args []string, getenv func(string) string,
 	if err != nil {
 		return err
 	}
-	client, err := etoro.New(etoro.Config{
-		HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Random: system.Random{},
-		Mode: func(context.Context) domain.TradingMode { return domain.ModeDemo }, // research only ever uses demo keys
-	})
+	client, err := etoro.New(etoro.Config{HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Random: system.Random{}})
 	if err != nil {
 		return err
 	}
+	// Research only ever reads with a demo account's keys.
+	acct, ok := streamAccount(ctx, store, secrets)
+	if !ok || acct.Mode == domain.ModeReal {
+		return fmt.Errorf("backtest: no demo eToro account with both keys set: %w: %w", domain.ErrCredentialsMissing, domain.ErrUnavailable)
+	}
+	ctx = ports.WithAccount(ctx, acct)
 	candles, err := client.Candles(ctx, domain.InstrumentID(*id), *interval, *bars)
 	if err != nil {
 		return fmt.Errorf("backtest: candles: %w", err)

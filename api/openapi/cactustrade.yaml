@@ -27,6 +27,7 @@ tags:
   - name: users
   - name: apikeys
   - name: credentials
+  - name: accounts
   - name: broker
   - name: market
   - name: events
@@ -285,6 +286,184 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts:
+    get:
+      tags: [accounts]
+      operationId: listAccounts
+      summary: The eToro accounts you own or were given, with your access
+      responses:
+        "200":
+          description: Accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [accounts]
+      operationId: createAccount
+      summary: Add an eToro account you own (operator or admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAccountRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/current:
+    put:
+      tags: [accounts]
+      operationId: setCurrentAccount
+      summary: Switch the account you are working on
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountRef" }
+      responses:
+        "200":
+          description: Now current
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    patch:
+      tags: [accounts]
+      operationId: renameAccount
+      summary: Rename an account (owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenameAccountRequest" }
+      responses:
+        "200":
+          description: Renamed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [accounts]
+      operationId: deleteAccount
+      summary: Delete an account, its keys, shares and watchlist (owner, web UI)
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/keys:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    get:
+      tags: [accounts]
+      operationId: getAccountKeys
+      summary: Whether the account's eToro keys are set (never their values)
+      responses:
+        "200":
+          description: Key status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountKeys" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [accounts]
+      operationId: setAccountKeys
+      summary: Store the account's eToro key pair, write-only (owner, web UI); an empty value keeps the stored one
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetAccountKeysRequest" }
+      responses:
+        "204": { description: Stored (encrypted) }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/test:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [accounts]
+      operationId: testAccount
+      summary: Test the account's eToro connection (owner; one read-only call)
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerCheck" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/shares:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    get:
+      tags: [accounts]
+      operationId: listAccountShares
+      summary: Who the account is shared with (owner)
+      responses:
+        "200":
+          description: Shares
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AccountShare" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [accounts]
+      operationId: shareAccount
+      summary: Give a user view or trade access (owner, web UI)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ShareAccountRequest" }
+      responses:
+        "204": { description: Shared }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/shares/{userId}:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+      - { name: userId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    delete:
+      tags: [accounts]
+      operationId: unshareAccount
+      summary: Remove a user's access (owner, web UI)
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /api/v1/broker/test:
     post:
       tags: [broker]
@@ -630,6 +809,7 @@ components:
         database: { type: string, enum: [sqlite, mariadb] }
         startedAt: { type: string, format: date-time }
         now: { type: string, format: date-time }
+        account: { $ref: "#/components/schemas/Account" }
     LoginRequest:
       type: object
       required: [username, password]
@@ -899,6 +1079,61 @@ components:
         reason: { type: string }
         error: { type: string }
         latencyMs: { type: integer, format: int64 }
+    Account:
+      type: object
+      required: [id, name, ownerId, ownerName, mode, envKeys, access, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        ownerId: { type: string }
+        ownerName: { type: string }
+        mode: { $ref: "#/components/schemas/TradingMode" }
+        envKeys: { type: boolean, description: "uses the deployment's ETORO_DEMO_PUB / _PK" }
+        access: { type: string, enum: [view, trade, owner] }
+        createdAt: { type: string, format: date-time }
+    CreateAccountRequest:
+      type: object
+      required: [name, mode]
+      properties:
+        name: { type: string, maxLength: 60 }
+        mode: { $ref: "#/components/schemas/TradingMode" }
+    RenameAccountRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 60 }
+    AccountRef:
+      type: object
+      required: [accountId]
+      properties:
+        accountId: { type: string, maxLength: 64 }
+    AccountKeys:
+      type: object
+      required: [apiKeySet, userKeySet, fromEnvironment]
+      properties:
+        apiKeySet: { type: boolean }
+        userKeySet: { type: boolean }
+        fromEnvironment: { type: boolean }
+    SetAccountKeysRequest:
+      type: object
+      required: [apiKey, userKey]
+      properties:
+        apiKey: { type: string, maxLength: 4096, description: "eToro Public API Key (x-api-key); empty = keep" }
+        userKey: { type: string, maxLength: 4096, description: "eToro User Key (x-user-key); empty = keep" }
+    AccountShare:
+      type: object
+      required: [userId, username, access, createdAt]
+      properties:
+        userId: { type: string }
+        username: { type: string }
+        access: { type: string, enum: [view, trade] }
+        createdAt: { type: string, format: date-time }
+    ShareAccountRequest:
+      type: object
+      required: [username, access]
+      properties:
+        username: { type: string, maxLength: 64 }
+        access: { type: string, enum: [view, trade] }
     AuditEntry:
       type: object
       required: [id, at, actor, action, target, details, remoteIp]

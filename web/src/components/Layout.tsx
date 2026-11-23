@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useSession } from "../lib/session";
 import { useMode } from "../lib/mode";
 import { EventsBell } from "./EventsBell";
+import { AccountSwitcher } from "./AccountSwitcher";
 
 interface Item { to: string; icon: string; label: string; perm?: string; end?: boolean }
 
@@ -13,7 +14,7 @@ const sections: { title: string; items: Item[] }[] = [
     { to: "/risk", icon: "bi-shield-check", label: "Risk limits" },
   ] },
   { title: "Setup", items: [
-    { to: "/credentials", icon: "bi-key", label: "eToro keys" },
+    { to: "/accounts", icon: "bi-wallet2", label: "eToro accounts" },
     { to: "/llm", icon: "bi-robot", label: "LLM reviewer" },
     { to: "/api-keys", icon: "bi-plug", label: "API keys" },
   ] },
@@ -38,7 +39,8 @@ export function Layout() {
           <img src="/logo.svg" alt="" />
           <span className="name">cactus<b>trade</b></span>
         </a>
-        <span className="mode-pill" title="Trading mode (from the server)">
+        <AccountSwitcher />
+        <span className="mode-pill" title="The mode of the account you are working on">
           {real ? <><i className="bi bi-exclamation-octagon-fill me-1" />REAL MONEY</> : <><i className="bi bi-mortarboard me-1" />DEMO · practice money</>}
         </span>
         <span className="flex-grow-1" />

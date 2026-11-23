@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -32,10 +33,8 @@ type Config struct {
 	BaseURL string
 	HTTP    *http.Client
 	Secrets ports.SecretStore
-	// Mode returns the current trading mode; it selects both the key pair and the paths.
-	Mode   func(context.Context) domain.TradingMode
-	Random ports.Random
-	Log    *slog.Logger
+	Random  ports.Random
+	Log     *slog.Logger
 	// MaxAttempts for operations that do not change the account (default 3).
 	MaxAttempts int
 	// RequestTimeout per attempt (default 15 s).
@@ -48,13 +47,14 @@ type Config struct {
 type Client struct {
 	cfg  Config
 	base *url.URL
-	lim  *limiter
+	mu   sync.Mutex
+	lims map[string]*limiter // per account: eToro's limits are per user key
 }
 
 // New validates cfg and builds the client.
 func New(cfg Config) (*Client, error) {
-	if cfg.Secrets == nil || cfg.Mode == nil || cfg.Random == nil {
-		return nil, errors.New("etoro.New: Secrets, Mode and Random are required")
+	if cfg.Secrets == nil || cfg.Random == nil {
+		return nil, errors.New("etoro.New: Secrets and Random are required")
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = BaseURL
@@ -81,7 +81,31 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Sleep == nil {
 		cfg.Sleep = sleepCtx
 	}
-	return &Client{cfg: cfg, base: base, lim: newLimiter(cfg.Now, cfg.Sleep)}, nil
+	return &Client{cfg: cfg, base: base, lims: map[string]*limiter{}}, nil
+}
+
+func (c *Client) limiter(accountID string) *limiter {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	l, ok := c.lims[accountID]
+	if !ok {
+		l = newLimiter(c.cfg.Now, c.cfg.Sleep)
+		c.lims[accountID] = l
+	}
+	return l
+}
+
+// account is the eToro account a call is for (set by the app with ports.WithAccount); its
+// mode is real only when the account says so. Without one nothing is sent (fail closed).
+func account(ctx context.Context) (domain.Account, domain.TradingMode, error) {
+	a, ok := ports.AccountFrom(ctx)
+	if !ok || a.ID == "" {
+		return domain.Account{}, "", fmt.Errorf("no eToro account was given for this call: %w", domain.ErrUnavailable)
+	}
+	if a.Mode == domain.ModeReal {
+		return a, domain.ModeReal, nil
+	}
+	return a, domain.ModeDemo, nil
 }
 
 // APIError is a non-2xx answer from eToro. It never contains a key.
@@ -113,16 +137,13 @@ func (e *APIError) Unwrap() error {
 	return domain.ErrUnavailable
 }
 
-// keys returns the key pair of the current mode.
-func (c *Client) keys(ctx context.Context, mode domain.TradingMode) (apiKey, userKey string, err error) {
-	ak, uk := domain.CredEtoroDemoAPIKey, domain.CredEtoroDemoUserKey
-	if mode == domain.ModeReal {
-		ak, uk = domain.CredEtoroRealAPIKey, domain.CredEtoroRealUserKey
-	}
+// keys returns the account's key pair.
+func (c *Client) keys(ctx context.Context, a domain.Account, mode domain.TradingMode) (apiKey, userKey string, err error) {
+	ak, uk := domain.AccountKeyNames(a)
 	apiKey, err1 := c.cfg.Secrets.Get(ctx, ak)
 	userKey, err2 := c.cfg.Secrets.Get(ctx, uk)
 	if errors.Is(err1, domain.ErrNotFound) || errors.Is(err2, domain.ErrNotFound) || (err1 == nil && apiKey == "") || (err2 == nil && userKey == "") {
-		return "", "", fmt.Errorf("the eToro %s API key and user key are not both set: %w: %w", mode, domain.ErrCredentialsMissing, domain.ErrUnavailable)
+		return "", "", fmt.Errorf("the eToro %s API key and user key of %s are not both set: %w: %w", mode, a.Name, domain.ErrCredentialsMissing, domain.ErrUnavailable)
 	}
 	if err := errors.Join(err1, err2); err != nil {
 		return "", "", fmt.Errorf("reading the eToro keys: %w", err)
@@ -140,12 +161,15 @@ func (c *Client) call(ctx context.Context, op Op, path map[string]string, query 
 	if ep.Mutates {
 		return fmt.Errorf("etoro %s: %w", op, ErrNotEnabled)
 	}
-	mode := c.cfg.Mode(ctx)
+	acct, mode, err := account(ctx)
+	if err != nil {
+		return err
+	}
 	p, err := expand(ep.Path(mode), path)
 	if err != nil {
 		return fmt.Errorf("etoro %s: %w", op, err)
 	}
-	apiKey, userKey, err := c.keys(ctx, mode)
+	apiKey, userKey, err := c.keys(ctx, acct, mode)
 	if err != nil {
 		return err
 	}
@@ -160,7 +184,7 @@ func (c *Client) call(ctx context.Context, op Op, path map[string]string, query 
 	u.RawPath = ""
 	u.RawQuery = query.Encode()
 	for attempt := 1; ; attempt++ {
-		retry, wait, err := c.attempt(ctx, op, ep, mode, u.String(), payload, apiKey, userKey, out)
+		retry, wait, err := c.attempt(ctx, c.limiter(acct.ID), op, ep, mode, u.String(), payload, apiKey, userKey, out)
 		if err == nil || !retry || attempt >= c.cfg.MaxAttempts {
 			return err
 		}
@@ -175,8 +199,8 @@ func (c *Client) call(ctx context.Context, op Op, path map[string]string, query 
 
 // attempt sends one request. It reports whether the failure is worth retrying and how long
 // eToro asked us to wait.
-func (c *Client) attempt(ctx context.Context, op Op, ep Endpoint, mode domain.TradingMode, target string, payload []byte, apiKey, userKey string, out any) (retry bool, wait time.Duration, err error) {
-	if err := c.lim.Wait(ctx, ep.Quota); err != nil {
+func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, mode domain.TradingMode, target string, payload []byte, apiKey, userKey string, out any) (retry bool, wait time.Duration, err error) {
+	if err := lim.Wait(ctx, ep.Quota); err != nil {
 		return false, 0, err
 	}
 	actx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
@@ -221,7 +245,7 @@ func (c *Client) attempt(ctx context.Context, op Op, ep Endpoint, mode domain.Tr
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests:
 			wait = retryAfter(resp.Header.Get("Retry-After"))
-			c.lim.Block(ep.Quota, c.cfg.Now().Add(wait))
+			lim.Block(ep.Quota, c.cfg.Now().Add(wait))
 			c.cfg.Log.WarnContext(ctx, "eToro rate limit hit", "op", string(op), "quota", string(ep.Quota), "retry_after_s", wait.Seconds())
 			return true, wait, apiErr
 		case resp.StatusCode >= 500:

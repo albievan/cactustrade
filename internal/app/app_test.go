@@ -516,10 +516,9 @@ func TestAuditAndStatus(t *testing.T) {
 		t.Fatal("anonymous status")
 	}
 	// mode: unknown values fail closed to demo; only exact "real" is real
-	for v, want := range map[string]domain.TradingMode{"real": domain.ModeReal, "REAL": domain.ModeDemo, "": domain.ModeDemo, "demo": domain.ModeDemo} {
-		_ = e.store.Settings().Set(ctx, settingMode, v, time.Time{})
-		if got := e.svc.Mode(ctx); got != want {
-			t.Errorf("Mode(%q) = %s", v, got)
+	for v, want := range map[domain.TradingMode]domain.TradingMode{"real": domain.ModeReal, "REAL": domain.ModeDemo, "": domain.ModeDemo, "demo": domain.ModeDemo} {
+		if got := accountMode(domain.Account{Mode: v}); got != want {
+			t.Errorf("accountMode(%q) = %s", v, got)
 		}
 	}
 	if err := e.svc.Ready(ctx); err != nil {

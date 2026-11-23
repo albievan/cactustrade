@@ -55,6 +55,13 @@ shape the system, in `docs/adr/`.
    rather than a hand-made model; it has its own 20/min quota, so results are cached per
    instrument and size bucket.
 
+5. **Several eToro accounts, per user, shareable** (owner, 2026-11-23) instead of the brief's
+   single account. Each account has its own encrypted key pair and demo/real mode; the
+   watchlist, risk limits, agent state and events are per account; access is owner / trade /
+   view, capped by the user's role. The deployment's `ETORO_DEMO_*` keys become the
+   "Demo (environment)" account of the first admin. Migration 00005 replaced the phase-2
+   global watchlist (it could only hold entries added before accounts existed).
+
 ## Open questions (do not block phase 1)
 
 - Q1 LSE shares: quote unit (GBP vs GBX) in rates/candles, and whether `settlementType: real`
@@ -125,7 +132,7 @@ setup → login → write-only credentials page → users/API keys work for the 
 | R4 | Events icon (top right) | Persisted event feed (`events` table): watchlist added/removed, scanner suggestions, orders, buys, sells, kill switch, limits, restarts. Bell with unread count per user; panel lists the newest. | done |
 | R5 | Restart the app / reload settings | Admin: *Reload settings* re-reads credentials from the environment/secret files and the stored settings without a restart; *Restart* shuts down gracefully and re-executes the binary (containers: exits and the orchestrator restarts it). Audited. | done |
 | R6 | LLM reviewer as its own menu item, choice of provider | Page *LLM reviewer*: provider (Anthropic, OpenAI, DeepSeek, OpenRouter, Kimi (Moonshot), Gemini, Grok (xAI), Ollama remote, Ollama local), model, base URL, write-only key, test button, and a plain explanation of what it does (it can only approve, shrink or reject a trade the model proposed; it never trades). | done |
-| R7 | Each user can have their own eToro account and share it | `accounts` (owner, name, demo/real, keys per account) and `account_shares` (user, view or trade). The environment keys become the "Demo (environment)" account of the first admin. The agent, limits, watchlist and events are per account; a user picks the account in the header. Deviation from the brief's "one account" (owner, 2026-11-23). | todo |
+| R7 | Each user can have their own eToro account and share it | `accounts` (owner, name, demo/real, keys per account) and `account_shares` (user, view or trade). The environment keys become the "Demo (environment)" account of the first admin. The agent, limits, watchlist and events are per account; a user picks the account in the header. Deviation from the brief's "one account" (owner, 2026-11-23). | done |
 | R8 | The trader looks at other stocks, not only the watchlist | A scanner reviews a universe (eToro's tradable LSE/NYSE/NASDAQ shares, by popularity, paced inside the market-data quota) with the regime model and playbooks, and adds stocks that pass every rule to the watchlist (event; removable), up to a cap. | todo |
 | R9 | Dashboard: which stocks are reviewed, against which rules | "Under review" board: every stock the scanner/agent looked at, when, its regime probabilities and each rule with pass/fail and the value. | todo |
 

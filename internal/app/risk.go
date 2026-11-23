@@ -10,11 +10,9 @@ import (
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-// Setting keys for the agent and its limits.
-const (
-	settingAgentState = "agent.state"
-	settingRiskLimits = "risk.limits"
-)
+// Setting keys for an account's agent and limits.
+func agentStateKey(accountID string) string { return "agent.state." + accountID }
+func riskLimitsKey(accountID string) string { return "risk.limits." + accountID }
 
 // limitsJSON is how the limits are stored (durations in seconds, money in cents).
 type limitsJSON struct {
@@ -48,10 +46,10 @@ func (j limitsJSON) domain() domain.RiskLimits {
 	}
 }
 
-// AgentState is the stored agent state; anything unreadable or unknown is "killed" when
-// the stored text says killed, otherwise "stopped" (fail closed: never running by accident).
-func (s *Service) AgentState(ctx context.Context) domain.AgentState {
-	v, err := s.d.Store.Settings().Get(ctx, settingAgentState)
+// agentState is an account's stored agent state; anything unreadable or unknown is
+// "stopped" (fail closed: never running by accident).
+func (s *Service) agentState(ctx context.Context, accountID string) domain.AgentState {
+	v, err := s.d.Store.Settings().Get(ctx, agentStateKey(accountID))
 	if err != nil {
 		if !errors.Is(err, domain.ErrNotFound) {
 			s.d.Log.WarnContext(ctx, "reading the agent state failed; treating it as stopped", "err", err)
@@ -67,9 +65,9 @@ func (s *Service) AgentState(ctx context.Context) domain.AgentState {
 
 // riskLimits returns the stored limits, or the defaults with a zero budget. A stored value
 // that no longer validates is replaced by the defaults with a zero budget (nothing trades).
-func (s *Service) riskLimits(ctx context.Context) domain.RiskLimits {
+func (s *Service) riskLimits(ctx context.Context, accountID string) domain.RiskLimits {
 	def := domain.DefaultRiskLimits
-	v, err := s.d.Store.Settings().Get(ctx, settingRiskLimits)
+	v, err := s.d.Store.Settings().Get(ctx, riskLimitsKey(accountID))
 	if err != nil {
 		return def
 	}
@@ -86,26 +84,28 @@ func (s *Service) riskLimits(ctx context.Context) domain.RiskLimits {
 	return l
 }
 
-// RiskLimits returns the current limits (viewer).
+// RiskLimits returns the current account's limits (view).
 func (s *Service) RiskLimits(ctx context.Context, p Principal) (domain.RiskLimits, error) {
-	if err := s.authorize(p, domain.PermView); err != nil {
+	v, err := s.account(ctx, p, "", domain.AccessView)
+	if err != nil {
 		return domain.RiskLimits{}, err
 	}
-	return s.riskLimits(ctx), nil
+	return s.riskLimits(ctx, v.ID), nil
 }
 
-// SetRiskLimits changes the limits (admin, web session only). Only while the agent is
-// stopped; the trading budget may not exceed the account's equity as eToro reports it now
-// (a budget above zero therefore needs a working eToro connection). Audited with the old
-// and new values.
+// SetRiskLimits changes the current account's limits (owner, web session only). Only while
+// its agent is stopped; the trading budget may not exceed the account's equity as eToro
+// reports it now (a budget above zero therefore needs a working eToro connection). Audited
+// with the old and new values.
 func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskLimits) (domain.RiskLimits, error) {
-	if err := s.authorize(p, domain.PermManageSettings); err != nil {
+	v, err := s.account(ctx, p, "", domain.AccessOwner)
+	if err != nil {
 		return domain.RiskLimits{}, err
 	}
 	if p.Via != ViaSession {
 		return domain.RiskLimits{}, fmt.Errorf("risk limits can only be changed in the web UI: %w", domain.ErrForbidden)
 	}
-	if st := s.AgentState(ctx); st != domain.AgentStopped {
+	if st := s.agentState(ctx, v.ID); st != domain.AgentStopped {
 		return domain.RiskLimits{}, fmt.Errorf("stop the agent before changing the limits (it is %s): %w", st, domain.ErrConflict)
 	}
 	if err := l.Validate(); err != nil {
@@ -115,7 +115,7 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 		if err := s.needBroker(); err != nil {
 			return domain.RiskLimits{}, err
 		}
-		pf, err := s.d.Broker.Portfolio(ctx)
+		pf, err := s.d.Broker.Portfolio(brokerCtx(ctx, v))
 		if err != nil {
 			return domain.RiskLimits{}, fmt.Errorf("checking the budget against equity: %w", err)
 		}
@@ -123,16 +123,16 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 			return domain.RiskLimits{}, domain.Invalid("tradingBudgetCents", fmt.Sprintf("must not exceed the account equity ($%s)", eq))
 		}
 	}
-	old := s.riskLimits(ctx)
+	old := s.riskLimits(ctx, v.ID)
 	b, err := json.Marshal(toLimitsJSON(l))
 	if err != nil {
 		return domain.RiskLimits{}, fmt.Errorf("app.SetRiskLimits: %w", err)
 	}
-	if err := s.d.Store.Settings().Set(ctx, settingRiskLimits, string(b), s.d.Clock.Now().UTC()); err != nil {
+	if err := s.d.Store.Settings().Set(ctx, riskLimitsKey(v.ID), string(b), s.d.Clock.Now().UTC()); err != nil {
 		return domain.RiskLimits{}, fmt.Errorf("app.SetRiskLimits: %w", err)
 	}
 	ob, _ := json.Marshal(toLimitsJSON(old))
-	s.audit(ctx, p, "risk.limits_changed", "", "old="+string(ob)+" new="+string(b))
-	s.emit(ctx, p.Username, "risk.limits_changed", domain.SeverityWarning, "Risk limits changed", "trading budget $"+l.TradingBudget.String())
+	s.audit(ctx, p, "risk.limits_changed", v.ID, "old="+string(ob)+" new="+string(b))
+	s.emitFor(ctx, v.ID, p.Username, "risk.limits_changed", domain.SeverityWarning, "Risk limits of "+v.Name+" changed", "trading budget $"+l.TradingBudget.String())
 	return l, nil
 }

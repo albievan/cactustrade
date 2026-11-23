@@ -46,6 +46,16 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 The `Broker` port has no money-movement operation. Its `Open` takes a `domain.OrderIntent`,
 which has no leverage, direction or settlement field.
 
+## Accounts
+
+Every eToro call is made for one account: the app checks the caller's access (owner / trade /
+view, capped by the role: a viewer never trades) and passes the account to the adapter with
+`ports.WithAccount`. The eToro client takes the mode and the key pair from it, keeps one rate
+limiter per account (eToro's limits are per key) and refuses calls without an account. The
+watchlist, risk limits, agent state and events are per account; system events have no
+account and everyone sees them. The price stream authenticates with any account that has
+keys (market data is the same for all).
+
 ## Two databases
 
 `CACTUSTRADE_DB_DRIVER` selects `sqlite` (default; `modernc.org/sqlite`, pure Go, so the
