@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -194,6 +195,7 @@ func (s *Service) AddToWatchlist(ctx context.Context, p Principal, id domain.Ins
 		return domain.WatchItem{}, fmt.Errorf("app.AddToWatchlist: %w", err)
 	}
 	s.audit(ctx, p, "watchlist.add", strconv.FormatInt(int64(id), 10), in.Symbol)
+	s.emit(ctx, p.Username, "watchlist.added", domain.SeverityInfo, in.Symbol+" added to the watchlist", in.Name+" ("+string(in.Market)+")")
 	return domain.WatchItem{Instrument: in, Eligibility: el, AddedBy: p.Username, AddedAt: now}, nil
 }
 
@@ -202,10 +204,12 @@ func (s *Service) RemoveFromWatchlist(ctx context.Context, p Principal, id domai
 	if err := s.authorize(p, domain.PermManageSettings); err != nil {
 		return err
 	}
+	in, _, _ := s.d.Store.Instruments().Get(ctx, id)
 	if err := s.d.Store.Watchlist().Remove(ctx, id); err != nil {
 		return fmt.Errorf("app.RemoveFromWatchlist: %w", err)
 	}
-	s.audit(ctx, p, "watchlist.remove", strconv.FormatInt(int64(id), 10), "")
+	s.audit(ctx, p, "watchlist.remove", strconv.FormatInt(int64(id), 10), in.Symbol)
+	s.emit(ctx, p.Username, "watchlist.removed", domain.SeverityInfo, cmp.Or(in.Symbol, "#"+strconv.FormatInt(int64(id), 10))+" removed from the watchlist", "")
 	return nil
 }
 

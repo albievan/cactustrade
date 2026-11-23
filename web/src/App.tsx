@@ -9,6 +9,10 @@ import { Users } from "./pages/Users";
 import { ApiKeys } from "./pages/ApiKeys";
 import { Audit } from "./pages/Audit";
 import { Watchlist } from "./pages/Watchlist";
+import { System } from "./pages/System";
+import { RiskLimits } from "./pages/RiskLimits";
+import { LlmReviewer } from "./pages/LlmReviewer";
+import { ModeProvider } from "./lib/mode";
 import { Account } from "./pages/Account";
 
 export function App() {
@@ -18,8 +22,12 @@ export function App() {
   // The built-in admin/admin must choose a new password before anything else.
   if (me.user.mustChangePassword) return <ChangeDefaultPassword />;
   return (
+    <ModeProvider>
     <Routes>
       <Route element={<Layout />}>
+        <Route path="risk" element={<RiskLimits />} />
+        <Route path="llm" element={<LlmReviewer />} />
+        <Route path="system" element={<System />} />
         <Route index element={<Dashboard />} />
         <Route path="watchlist" element={<Watchlist />} />
         <Route path="credentials" element={<Credentials />} />
@@ -30,5 +38,6 @@ export function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+    </ModeProvider>
   );
 }

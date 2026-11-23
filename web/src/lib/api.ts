@@ -19,6 +19,9 @@ export type MarketSession = components["schemas"]["MarketSession"];
 export type Instrument = components["schemas"]["Instrument"];
 export type WatchItem = components["schemas"]["WatchItem"];
 export type Quote = components["schemas"]["Quote"];
+export type EventFeed = components["schemas"]["EventFeed"];
+export type AppEvent = components["schemas"]["Event"];
+export type RiskLimits = components["schemas"]["RiskLimits"];
 
 export class ApiError extends Error {
   constructor(
@@ -99,6 +102,12 @@ export const api = {
   addToWatchlist: (instrumentId: number) => request<WatchItem>("POST", "/api/v1/watchlist", { instrumentId }),
   removeFromWatchlist: (instrumentId: number) => request<void>("DELETE", `/api/v1/watchlist/${instrumentId}`),
   watchlistQuotes: () => request<Quote[]>("GET", "/api/v1/watchlist/quotes"),
+  events: (limit = 50) => request<EventFeed>("GET", `/api/v1/events?limit=${limit}`),
+  eventsSeen: () => request<void>("POST", "/api/v1/events/seen"),
+  riskLimits: () => request<RiskLimits>("GET", "/api/v1/risk/limits"),
+  setRiskLimits: (l: RiskLimits) => request<RiskLimits>("PUT", "/api/v1/risk/limits", l),
+  reloadSettings: () => request<void>("POST", "/api/v1/system/reload"),
+  restart: () => request<void>("POST", "/api/v1/system/restart"),
 };
 
 // usd formats US-dollar cents, e.g. 123456 → "$1,234.56".

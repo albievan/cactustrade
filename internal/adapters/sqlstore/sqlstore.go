@@ -200,6 +200,9 @@ func mustAffect(res sql.Result, err error) error {
 // Instruments returns the instrument cache.
 func (s *Store) Instruments() ports.Instruments { return instruments{s.db} }
 
+// Events returns the event feed.
+func (s *Store) Events() ports.Events { return events{s.db} }
+
 // Watchlist returns the watchlist repository.
 func (s *Store) Watchlist() ports.Watchlist { return watchlist{s.db} }
 

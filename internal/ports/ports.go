@@ -92,6 +92,14 @@ type Watchlist interface {
 	List(ctx context.Context) ([]domain.WatchItem, error) // by symbol
 }
 
+// Events stores the event feed.
+type Events interface {
+	Append(ctx context.Context, e domain.Event) error
+	List(ctx context.Context, limit int) ([]domain.Event, error) // newest first
+	CountSince(ctx context.Context, since time.Time) (int, error)
+	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -102,6 +110,7 @@ type Store interface {
 	Settings() Settings
 	Instruments() Instruments
 	Watchlist() Watchlist
+	Events() Events
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error

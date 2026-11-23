@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
@@ -177,7 +178,22 @@ func (s *DB) Status(ctx context.Context) (map[domain.CredentialName]ports.Secret
 // credential wins over a stored one and cannot be changed or deleted through the store.
 type Env struct {
 	base ports.SecretStore
+	mu   sync.RWMutex
 	vals map[domain.CredentialName]string
+}
+
+// Replace swaps in freshly read environment values ("reload settings").
+func (e *Env) Replace(vals map[domain.CredentialName]string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.vals = maps.Clone(vals)
+}
+
+func (e *Env) lookup(n domain.CredentialName) (string, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	v, ok := e.vals[n]
+	return v, ok
 }
 
 var _ ports.SecretStore = (*Env)(nil)
@@ -192,7 +208,7 @@ func WithEnv(base ports.SecretStore, vals map[domain.CredentialName]string) *Env
 
 // Put stores in the base store unless the environment provides the credential.
 func (e *Env) Put(ctx context.Context, n domain.CredentialName, v string) error {
-	if _, ok := e.vals[n]; ok {
+	if _, ok := e.lookup(n); ok {
 		return ErrFromEnvironment
 	}
 	return e.base.Put(ctx, n, v)
@@ -200,7 +216,7 @@ func (e *Env) Put(ctx context.Context, n domain.CredentialName, v string) error 
 
 // Get prefers the environment.
 func (e *Env) Get(ctx context.Context, n domain.CredentialName) (string, error) {
-	if v, ok := e.vals[n]; ok {
+	if v, ok := e.lookup(n); ok {
 		return v, nil
 	}
 	return e.base.Get(ctx, n)
@@ -208,7 +224,7 @@ func (e *Env) Get(ctx context.Context, n domain.CredentialName) (string, error) 
 
 // Delete removes from the base store unless the environment provides the credential.
 func (e *Env) Delete(ctx context.Context, n domain.CredentialName) error {
-	if _, ok := e.vals[n]; ok {
+	if _, ok := e.lookup(n); ok {
 		return ErrFromEnvironment
 	}
 	return e.base.Delete(ctx, n)
@@ -220,6 +236,8 @@ func (e *Env) Status(ctx context.Context) (map[domain.CredentialName]ports.Secre
 	if err != nil {
 		return nil, err
 	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	for n := range e.vals {
 		st[n] = ports.SecretMeta{Source: ports.SourceEnv}
 	}

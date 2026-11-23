@@ -53,6 +53,11 @@ type Deps struct {
 	Broker   ports.Broker
 	Market   ports.MarketData
 	Calendar ports.MarketCalendar
+	// Reload re-reads settings that live outside the database (credentials from the
+	// environment / secret files). Restart asks the process to restart gracefully. Both are
+	// supplied by cmd/cactustrade; nil = not supported.
+	Reload  func(ctx context.Context) error
+	Restart func()
 }
 
 // Config holds use-case settings.

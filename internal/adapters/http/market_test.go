@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,4 +153,41 @@ func (x *tc) getJSON(path string, out any) int {
 	defer resp.Body.Close()
 	_ = json.NewDecoder(resp.Body).Decode(out)
 	return resp.StatusCode
+}
+
+func TestEventsSystemAndRiskEndpoints(t *testing.T) {
+	x, _ := newMarketTC(t)
+	csrf := []string{"X-CSRF-Token", x.csrf}
+	if code, _, _ := x.do("POST", "/api/v1/watchlist", `{"instrumentId":1}`, csrf...); code != 201 {
+		t.Fatal("add")
+	}
+	code, m, _ := x.do("GET", "/api/v1/events?limit=5", "")
+	evs := m["events"].([]any)
+	if code != 200 || m["unread"] != 1.0 || len(evs) != 1 || evs[0].(map[string]any)["kind"] != "watchlist.added" || evs[0].(map[string]any)["severity"] != "info" {
+		t.Fatalf("events %d %v", code, m)
+	}
+	if code, _, _ := x.do("POST", "/api/v1/events/seen", "", csrf...); code != 204 {
+		t.Fatalf("seen %d", code)
+	}
+	if _, m, _ := x.do("GET", "/api/v1/events", ""); m["unread"] != 0.0 {
+		t.Fatalf("after seen %v", m)
+	}
+	// reload and restart are not wired in this test server
+	if code, _, _ := x.do("POST", "/api/v1/system/reload", "", csrf...); code != 503 {
+		t.Fatalf("reload %d", code)
+	}
+	if code, _, _ := x.do("POST", "/api/v1/system/restart", "", csrf...); code != 503 {
+		t.Fatalf("restart %d", code)
+	}
+	code, m, _ = x.do("GET", "/api/v1/risk/limits", "")
+	if code != 200 || m["dailyLossBp"] != 200.0 || m["tradingBudgetCents"] != 0.0 || m["noEntryBeforeCloseMinutes"] != 30.0 {
+		t.Fatalf("limits %d %v", code, m)
+	}
+	body := `{"tradingBudgetCents":50000,"dailyLossBp":150,"drawdownBp":1000,"maxPositionBp":2000,"maxOpenPositions":5,"noEntryBeforeCloseMinutes":30,"flattenBeforeCloseMinutes":10,"maxPortfolioAgeSeconds":5,"maxQuoteAgeSeconds":30}`
+	if code, m, _ := x.do("PUT", "/api/v1/risk/limits", body, csrf...); code != 200 || m["maxOpenPositions"] != 5.0 {
+		t.Fatalf("set limits %d %v", code, m)
+	}
+	if code, m, _ := x.do("PUT", "/api/v1/risk/limits", strings.Replace(body, `"maxOpenPositions":5`, `"maxOpenPositions":99`, 1), csrf...); code != 400 || m["field"] != "maxOpenPositions" {
+		t.Fatalf("invalid limits %d %v", code, m)
+	}
 }

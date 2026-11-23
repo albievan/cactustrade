@@ -13,6 +13,7 @@ describe("Login", () => {
     });
     render(<MemoryRouter><SessionProvider><Login /></SessionProvider></MemoryRouter>);
     expect(await screen.findByText("v0.1.0")).toBeInTheDocument();
+    expect(screen.getByText("Sign in", { selector: "h2" })).toBeInTheDocument();
     expect(screen.getByLabelText("Username")).toBeInTheDocument();
     expect(screen.getByText(/you will be asked to choose a new password/)).toBeInTheDocument();
   });

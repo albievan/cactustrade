@@ -50,6 +50,29 @@ func ValidateKeyName(s string) error {
 	return nil
 }
 
+// EventSeverity colours an event in the UI.
+type EventSeverity string
+
+// Event severities.
+const (
+	SeverityInfo    EventSeverity = "info"
+	SeveritySuccess EventSeverity = "success"
+	SeverityWarning EventSeverity = "warning"
+	SeverityDanger  EventSeverity = "danger"
+)
+
+// Event is one entry of the feed behind the bell (what happened, not who may do what:
+// that is the audit log).
+type Event struct {
+	ID       string
+	At       time.Time
+	Kind     string // e.g. watchlist.added, scanner.suggested, order.filled, killswitch
+	Severity EventSeverity
+	Title    string
+	Detail   string
+	Actor    string // username, or "agent" / "system"
+}
+
 // AuditEntry records who did what. Details never hold secrets.
 type AuditEntry struct {
 	ID       int64

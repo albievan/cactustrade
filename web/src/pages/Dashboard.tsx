@@ -26,7 +26,7 @@ export function Dashboard() {
       </div>
       {!demoReady && (
         <div className="alert alert-warning">
-          The eToro <strong>demo</strong> keys are not set yet. Add them on the <Link to="/credentials">Credentials</Link> page,
+          The eToro <strong>demo</strong> keys are not set yet. Add them under <Link to="/credentials">eToro keys</Link>,
           or start cactusTrade with <code>ETORO_DEMO_PUB</code> and <code>ETORO_DEMO_PK</code>.
         </div>
       )}

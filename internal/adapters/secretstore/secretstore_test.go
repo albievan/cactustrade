@@ -159,3 +159,24 @@ func TestFromEnvironment(t *testing.T) {
 		t.Fatal("control characters must fail")
 	}
 }
+
+func TestEnvReplace(t *testing.T) {
+	ctx := context.Background()
+	e := WithEnv(&memStoreForReplace{}, map[domain.CredentialName]string{domain.CredEtoroDemoAPIKey: "old"})
+	if v, _ := e.Get(ctx, domain.CredEtoroDemoAPIKey); v != "old" {
+		t.Fatal("before")
+	}
+	e.Replace(map[domain.CredentialName]string{domain.CredEtoroDemoUserKey: "new"})
+	if v, _ := e.Get(ctx, domain.CredEtoroDemoUserKey); v != "new" {
+		t.Fatal("after")
+	}
+	if _, err := e.Get(ctx, domain.CredEtoroDemoAPIKey); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("a removed variable must no longer override")
+	}
+}
+
+type memStoreForReplace struct{ ports.SecretStore }
+
+func (memStoreForReplace) Get(context.Context, domain.CredentialName) (string, error) {
+	return "", domain.ErrNotFound
+}

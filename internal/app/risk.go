@@ -133,5 +133,6 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	}
 	ob, _ := json.Marshal(toLimitsJSON(old))
 	s.audit(ctx, p, "risk.limits_changed", "", "old="+string(ob)+" new="+string(b))
+	s.emit(ctx, p.Username, "risk.limits_changed", domain.SeverityWarning, "Risk limits changed", "trading budget $"+l.TradingBudget.String())
 	return l, nil
 }

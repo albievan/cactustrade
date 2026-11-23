@@ -20,11 +20,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -41,7 +43,6 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/system"
 	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
-	"github.com/albievan/cactustrade/internal/ports"
 	"github.com/albievan/cactustrade/web"
 )
 
@@ -80,7 +81,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		}
 		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return serve(ctx, cfg, getenv)
+		err = serve(ctx, cfg, getenv)
+		if errors.Is(err, errRestart) {
+			return restartSelf(cfg.Container, args)
+		}
+		return err
 	}
 	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest)", cmd)
 }
@@ -101,8 +106,32 @@ func openStore(ctx context.Context, cfg config) (*sqlstore.Store, error) {
 	return sqlstore.OpenSQLite(ctx, cfg.DBPath)
 }
 
+// errRestart is returned by serve after a restart was requested from the UI.
+var errRestart = errors.New("restart requested")
+
+// restartSelf starts a fresh copy of this binary with the same arguments (standalone), or
+// just exits in a container, where the orchestrator's restart policy starts it again.
+func restartSelf(container bool, args []string) error {
+	if container {
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("restart: %w", err)
+	}
+	cmd := exec.CommandContext(context.Background(), exe, append([]string{"serve"}, args...)...) // never cancelled: the child outlives us
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, os.Environ()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("restart: %w", err)
+	}
+	return cmd.Process.Release()
+}
+
 func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	log := newLogger(cfg.LogLevel)
+	ctx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+	var restarting atomic.Bool
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("data folder: %w", err)
 	}
@@ -147,6 +176,22 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
 		Broker: broker, Market: feed, Calendar: cal,
+		Reload: func(context.Context) error {
+			vals, err := secretstore.FromEnvironment(getenv, os.ReadFile)
+			if err != nil {
+				return err
+			}
+			secrets.Replace(vals)
+			log.Info("settings reloaded", "credentials_from_environment", len(vals))
+			return nil
+		},
+		Restart: func() {
+			restarting.Store(true)
+			go func() { // let the HTTP answer reach the browser first
+				time.Sleep(500 * time.Millisecond)
+				cancelServe()
+			}()
+		},
 	}, app.Config{Version: version, Build: build})
 	if err != nil {
 		return err
@@ -227,12 +272,19 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	if redirect != nil {
 		_ = redirect.Shutdown(sctx)
 	}
-	return srv.Shutdown(sctx)
+	if err := srv.Shutdown(sctx); err != nil {
+		return err
+	}
+	if restarting.Load() {
+		log.Info("restarting")
+		return errRestart
+	}
+	return nil
 }
 
 // openSecrets loads the master key and returns the credential store: encrypted in the
 // database, overlaid by credentials from the environment (ETORO_DEMO_PUB / _PK…).
-func openSecrets(cfg config, store *sqlstore.Store, getenv func(string) string, clock system.Clock, log *slog.Logger) (ports.SecretStore, map[domain.CredentialName]string, error) {
+func openSecrets(cfg config, store *sqlstore.Store, getenv func(string) string, clock system.Clock, log *slog.Logger) (*secretstore.Env, map[domain.CredentialName]string, error) {
 	// Master key: explicit (containers) or generated in the data folder (standalone only).
 	gen := ""
 	if !cfg.Container {

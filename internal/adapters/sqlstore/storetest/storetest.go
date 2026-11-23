@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
@@ -346,6 +348,42 @@ func Run(t *testing.T, s ports.Store) {
 		}
 		if items, _ := wl.List(ctx); len(items) != 1 {
 			t.Fatalf("after Remove = %+v", items)
+		}
+	})
+
+	t.Run("events", func(t *testing.T) {
+		ev := s.Events()
+		if n, err := ev.CountSince(ctx, time.Time{}); err != nil || n != 0 {
+			t.Fatalf("CountSince on empty = %d %v", n, err)
+		}
+		long := strings.Repeat("é", 2000) // 4000 bytes: clipped on a rune boundary
+		for i, e := range []domain.Event{
+			{ID: "e1", At: t0, Kind: "watchlist.added", Severity: domain.SeverityInfo, Title: "AAPL added", Actor: "admin"},
+			{ID: "e2", At: t0.Add(time.Minute), Kind: "order.filled", Severity: domain.SeveritySuccess, Title: "Bought", Detail: long},
+			{ID: "e3", At: t0.Add(2 * time.Minute), Kind: "killswitch", Severity: domain.SeverityDanger, Title: "Kill"},
+		} {
+			if err := ev.Append(ctx, e); err != nil {
+				t.Fatalf("Append %d: %v", i, err)
+			}
+		}
+		if err := ev.Append(ctx, domain.Event{ID: "e1", At: t0, Kind: "x", Severity: domain.SeverityInfo, Title: "dup"}); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("duplicate id: %v", err)
+		}
+		list, err := ev.List(ctx, 2)
+		if err != nil || len(list) != 2 || list[0].ID != "e3" || list[1].ID != "e2" || list[0].Severity != domain.SeverityDanger {
+			t.Fatalf("List = %+v %v", list, err)
+		}
+		if !utf8.ValidString(list[1].Detail) || len(list[1].Detail) > 2000 || len(list[1].Detail) < 1990 {
+			t.Fatalf("detail not clipped on a rune boundary: %d bytes", len(list[1].Detail))
+		}
+		if n, _ := ev.CountSince(ctx, t0); n != 2 {
+			t.Fatalf("CountSince = %d", n)
+		}
+		if n, err := ev.DeleteBefore(ctx, t0.Add(90*time.Second)); err != nil || n != 2 {
+			t.Fatalf("DeleteBefore = %d %v", n, err)
+		}
+		if list, _ := ev.List(ctx, 10); len(list) != 1 {
+			t.Fatalf("after delete = %+v", list)
 		}
 	})
 }

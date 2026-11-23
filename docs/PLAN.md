@@ -114,6 +114,20 @@ setup → login → write-only credentials page → users/API keys work for the 
 | 1.12 | Dockerfile (distroless, non-root, read-only), `docker-compose.yml` (app + MariaDB), `deploy/k8s/cactustrade.yaml`, `.env`, `deploy.sh` | `--install --dockerdesktop` healthy | done |
 | 1.13 | README (setup, risk warning, eToro keys), ADR-001…006 | reviewed | done |
 
+## Owner requests 2026-11-23 (between phases 3 and 4)
+
+| Id | Request | Decision | Status |
+|---|---|---|---|
+| R1 | Sign-in page like cactusDB, same logo | Split page: green panel saying what cactusTrade is, the form on "paper"; cactusDB's circuit-cactus logo and palette (owner asked to reuse the logo; the code is new). | done |
+| R2 | Left navigation instead of the top menu | Sidebar with sections (Trading, Research, Settings, Admin); header keeps brand, mode, events, user. | done |
+| R3 | Clear view of demo vs real | DEMO: teal "DEMO · practice money" pill and teal top stripe. REAL: red header band, red frame round the page and "REAL MONEY" pill. On every page, from the server's mode. | done |
+| R4 | Events icon (top right) | Persisted event feed (`events` table): watchlist added/removed, scanner suggestions, orders, buys, sells, kill switch, limits, restarts. Bell with unread count per user; panel lists the newest. | done |
+| R5 | Restart the app / reload settings | Admin: *Reload settings* re-reads credentials from the environment/secret files and the stored settings without a restart; *Restart* shuts down gracefully and re-executes the binary (containers: exits and the orchestrator restarts it). Audited. | done |
+| R6 | LLM reviewer as its own menu item, choice of provider | Page *LLM reviewer*: provider (Anthropic, OpenAI, DeepSeek, OpenRouter, Kimi (Moonshot), Gemini, Grok (xAI), Ollama remote, Ollama local), model, base URL, write-only key, test button, and a plain explanation of what it does (it can only approve, shrink or reject a trade the model proposed; it never trades). | todo |
+| R7 | Each user can have their own eToro account and share it | `accounts` (owner, name, demo/real, keys per account) and `account_shares` (user, view or trade). The environment keys become the "Demo (environment)" account of the first admin. The agent, limits, watchlist and events are per account; a user picks the account in the header. Deviation from the brief's "one account" (owner, 2026-11-23). | todo |
+| R8 | The trader looks at other stocks, not only the watchlist | A scanner reviews a universe (eToro's tradable LSE/NYSE/NASDAQ shares, by popularity, paced inside the market-data quota) with the regime model and playbooks, and adds stocks that pass every rule to the watchlist (event; removable), up to a cap. | todo |
+| R9 | Dashboard: which stocks are reviewed, against which rules | "Under review" board: every stock the scanner/agent looked at, when, its regime probabilities and each rule with pass/fail and the value. | todo |
+
 ## Phase 2 — eToro adapter (read-only) and market calendar — `done` (2.7 waits for the owner's demo keys)
 
 | Step | What | Status |

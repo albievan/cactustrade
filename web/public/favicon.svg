@@ -1,1 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1f7a4d"/><path d="M14 26V8a2 2 0 0 1 4 0v18zM18 15h3a1 1 0 0 0 1-1v-3a1.5 1.5 0 0 1 3 0v3a4 4 0 0 1-4 4h-3zM14 18h-3a4 4 0 0 1-4-4v-2a1.5 1.5 0 0 1 3 0v2a1 1 0 0 0 1 1h3z" fill="#fff"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-35 77 460 460" role="img" aria-label="cactusTrade">
+  <title>cactusTrade</title>
+  <!-- a cactus drawn as two circuit traces, each ending in a ring -->
+  <g fill="none" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#8fcbb0">
+      <path d="M160 295V145a37 37 0 0 1 74 0V385l30-13q26-12 26-40V260"/>
+      <circle cx="290" cy="243" r="15"/>
+    </g>
+    <g stroke="#5a9174">
+      <path d="M97 209V280q0 22 22 31l20 9q23 10 23 34V475a37 37 0 0 0 74 0V430"/>
+      <circle cx="97" cy="192" r="15"/>
+    </g>
+  </g>
+</svg>

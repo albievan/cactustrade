@@ -192,6 +192,11 @@ func PurgeLoop(ctx context.Context, svc *app.Service, log *slog.Logger, every ti
 			} else if n > 0 {
 				log.InfoContext(ctx, "purged expired sessions", "count", n)
 			}
+			if n, err := svc.PurgeOldEvents(ctx); err != nil {
+				log.WarnContext(ctx, "purging old events failed", "err", err)
+			} else if n > 0 {
+				log.InfoContext(ctx, "purged old events", "count", n)
+			}
 		}
 	}
 }

@@ -85,6 +85,10 @@ linters:
       - path: (internal/adapters/secretstore/secretstore\.go|cmd/cactustrade/)
         text: "G30[4]|G70[34]"
         linters: [gosec]
+      # Reviewed: "restart" re-executes our own binary (os.Executable) with our own arguments.
+      - path: cmd/cactustrade/main\.go
+        text: "G204|G702"
+        linters: [gosec]
       # Reviewed: the HTTP->HTTPS redirect targets the client's own validated Host header.
       - path: cmd/cactustrade/demux\.go
         text: "G710"

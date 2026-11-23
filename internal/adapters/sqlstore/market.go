@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/albievan/cactustrade/internal/domain"
 )
@@ -134,3 +135,64 @@ func (r watchlist) List(ctx context.Context) ([]domain.WatchItem, error) {
 type rowScanner func(dst ...any) error
 
 func (f rowScanner) Scan(dst ...any) error { return f(dst...) }
+
+// ---- events --------------------------------------------------------------------------
+
+type events struct{ db *sql.DB }
+
+func (r events) Append(ctx context.Context, e domain.Event) error {
+	_, err := r.db.ExecContext(ctx, "INSERT INTO events (id, at, kind, severity, title, detail, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		e.ID, us(e.At), e.Kind, string(e.Severity), clip(e.Title, 255), clip(e.Detail, 2000), clip(e.Actor, 64))
+	if isDuplicate(err) {
+		return domain.ErrConflict
+	}
+	if err != nil {
+		return fmt.Errorf("events.Append: %w", err)
+	}
+	return nil
+}
+
+func (r events) List(ctx context.Context, limit int) ([]domain.Event, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT id, at, kind, severity, title, detail, actor FROM events ORDER BY at DESC, id DESC LIMIT ?", limit)
+	if err != nil {
+		return nil, fmt.Errorf("events.List: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.Event
+	for rows.Next() {
+		var e domain.Event
+		var at int64
+		var sev string
+		if err := rows.Scan(&e.ID, &at, &e.Kind, &sev, &e.Title, &e.Detail, &e.Actor); err != nil {
+			return nil, fmt.Errorf("events.List: %w", err)
+		}
+		e.At, e.Severity = fromUS(at), domain.EventSeverity(sev)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (r events) CountSince(ctx context.Context, since time.Time) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events WHERE at > ?", us(since)).Scan(&n)
+	return n, err
+}
+
+func (r events) DeleteBefore(ctx context.Context, before time.Time) (int64, error) {
+	res, err := r.db.ExecContext(ctx, "DELETE FROM events WHERE at < ?", us(before))
+	if err != nil {
+		return 0, fmt.Errorf("events.DeleteBefore: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// clip shortens s to at most n bytes on a rune boundary.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}

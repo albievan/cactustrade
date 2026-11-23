@@ -29,6 +29,8 @@ tags:
   - name: credentials
   - name: broker
   - name: market
+  - name: events
+  - name: risk
   - name: audit
 security:
   - sessionCookie: []
@@ -408,6 +410,80 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/system/reload:
+    post:
+      tags: [system]
+      operationId: reloadSettings
+      summary: Re-read credentials from the environment and secret files (admin, web UI)
+      responses:
+        "204": { description: Reloaded }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/system/restart:
+    post:
+      tags: [system]
+      operationId: restartServer
+      summary: Restart cactusTrade gracefully (admin, web UI)
+      responses:
+        "202": { description: Restarting; the page reconnects when it is back }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/events:
+    get:
+      tags: [events]
+      operationId: listEvents
+      summary: The newest events and the caller's unread count (viewer)
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200":
+          description: Events, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EventFeed" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /api/v1/events/seen:
+    post:
+      tags: [events]
+      operationId: markEventsSeen
+      summary: Mark every event as seen by the caller
+      responses:
+        "204": { description: Marked }
+        "401": { $ref: "#/components/responses/Problem" }
+  /api/v1/risk/limits:
+    get:
+      tags: [risk]
+      operationId: getRiskLimits
+      summary: The risk limits (viewer)
+      responses:
+        "200":
+          description: Limits
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RiskLimits" }
+        "401": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [risk]
+      operationId: setRiskLimits
+      summary: Change the risk limits (admin, web UI, only while the agent is stopped)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RiskLimits" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RiskLimits" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/audit:
     get:
       tags: [audit]
@@ -686,6 +762,38 @@ components:
         ask: { $ref: "#/components/schemas/Decimal" }
         at: { type: string, format: date-time }
         delayed: { type: boolean }
+    Event:
+      type: object
+      required: [id, at, kind, severity, title, actor]
+      properties:
+        id: { type: string }
+        at: { type: string, format: date-time }
+        kind: { type: string }
+        severity: { type: string, enum: [info, success, warning, danger] }
+        title: { type: string }
+        detail: { type: string }
+        actor: { type: string }
+    EventFeed:
+      type: object
+      required: [events, unread]
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/Event" }
+        unread: { type: integer }
+    RiskLimits:
+      type: object
+      required: [tradingBudgetCents, dailyLossBp, drawdownBp, maxPositionBp, maxOpenPositions, noEntryBeforeCloseMinutes, flattenBeforeCloseMinutes, maxPortfolioAgeSeconds, maxQuoteAgeSeconds]
+      properties:
+        tradingBudgetCents: { $ref: "#/components/schemas/Cents" }
+        dailyLossBp: { type: integer, description: "stop new entries at this loss from the start-of-day equity (bp; 200 = 2 %)" }
+        drawdownBp: { type: integer, description: "kill switch at this fall from the high-water mark (bp)" }
+        maxPositionBp: { type: integer, description: "largest position as a share of equity (bp; 0 = off)" }
+        maxOpenPositions: { type: integer }
+        noEntryBeforeCloseMinutes: { type: integer }
+        flattenBeforeCloseMinutes: { type: integer }
+        maxPortfolioAgeSeconds: { type: integer }
+        maxQuoteAgeSeconds: { type: integer }
     AuditEntry:
       type: object
       required: [id, at, actor, action, target, details, remoteIp]

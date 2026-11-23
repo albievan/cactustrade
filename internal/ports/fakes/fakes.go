@@ -2,6 +2,7 @@
 package fakes
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -136,6 +137,7 @@ type Store struct {
 	settings map[string]string
 	instr    map[domain.InstrumentID]instrRec
 	watch    map[domain.InstrumentID]domain.WatchItem
+	events   []domain.Event
 	PingErr  error
 }
 
@@ -179,6 +181,9 @@ func (s *Store) Instruments() ports.Instruments { return instrRepo{s} }
 
 // Watchlist returns the watchlist.
 func (s *Store) Watchlist() ports.Watchlist { return watchRepo{s} }
+
+// Events returns the event feed.
+func (s *Store) Events() ports.Events { return eventRepo{s} }
 
 // Ping returns PingErr.
 func (s *Store) Ping(context.Context) error { return s.PingErr }
@@ -555,4 +560,52 @@ func (r watchRepo) List(context.Context) ([]domain.WatchItem, error) {
 	}
 	slices.SortFunc(out, func(a, b domain.WatchItem) int { return strings.Compare(a.Instrument.Symbol, b.Instrument.Symbol) })
 	return out, nil
+}
+
+type eventRepo struct{ s *Store }
+
+func (r eventRepo) Append(_ context.Context, e domain.Event) error {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	r.s.events = append(r.s.events, e)
+	return nil
+}
+
+func (r eventRepo) List(_ context.Context, limit int) ([]domain.Event, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	out := slices.Clone(r.s.events)
+	slices.SortStableFunc(out, func(a, b domain.Event) int { return cmp.Or(b.At.Compare(a.At), strings.Compare(b.ID, a.ID)) }) // as SQL: at DESC, id DESC
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r eventRepo) CountSince(_ context.Context, since time.Time) (int, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	n := 0
+	for _, e := range r.s.events {
+		if e.At.After(since) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (r eventRepo) DeleteBefore(_ context.Context, before time.Time) (int64, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	keep := r.s.events[:0]
+	var n int64
+	for _, e := range r.s.events {
+		if e.At.Before(before) {
+			n++
+			continue
+		}
+		keep = append(keep, e)
+	}
+	r.s.events = keep
+	return n, nil
 }

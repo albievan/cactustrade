@@ -83,6 +83,30 @@ func (e CredentialName) Valid() bool {
 	}
 }
 
+// Defines values for EventSeverity.
+const (
+	Danger  EventSeverity = "danger"
+	Info    EventSeverity = "info"
+	Success EventSeverity = "success"
+	Warning EventSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the EventSeverity enum.
+func (e EventSeverity) Valid() bool {
+	switch e {
+	case Danger:
+		return true
+	case Info:
+		return true
+	case Success:
+		return true
+	case Warning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	Ok          HealthStatus = "ok"
@@ -315,6 +339,26 @@ type Eligibility struct {
 	Reason   *string `json:"reason,omitempty"`
 }
 
+// Event defines model for Event.
+type Event struct {
+	Actor    string        `json:"actor"`
+	At       time.Time     `json:"at"`
+	Detail   *string       `json:"detail,omitempty"`
+	Id       string        `json:"id"`
+	Kind     string        `json:"kind"`
+	Severity EventSeverity `json:"severity"`
+	Title    string        `json:"title"`
+}
+
+// EventSeverity defines model for Event.Severity.
+type EventSeverity string
+
+// EventFeed defines model for EventFeed.
+type EventFeed struct {
+	Events []Event `json:"events"`
+	Unread int     `json:"unread"`
+}
+
 // Health defines model for Health.
 type Health struct {
 	Detail *string      `json:"detail,omitempty"`
@@ -444,6 +488,26 @@ type Quote struct {
 	InstrumentId int64   `json:"instrumentId"`
 }
 
+// RiskLimits defines model for RiskLimits.
+type RiskLimits struct {
+	// DailyLossBp stop new entries at this loss from the start-of-day equity (bp; 200 = 2 %)
+	DailyLossBp int `json:"dailyLossBp"`
+
+	// DrawdownBp kill switch at this fall from the high-water mark (bp)
+	DrawdownBp                int `json:"drawdownBp"`
+	FlattenBeforeCloseMinutes int `json:"flattenBeforeCloseMinutes"`
+	MaxOpenPositions          int `json:"maxOpenPositions"`
+	MaxPortfolioAgeSeconds    int `json:"maxPortfolioAgeSeconds"`
+
+	// MaxPositionBp largest position as a share of equity (bp; 0 = off)
+	MaxPositionBp             int `json:"maxPositionBp"`
+	MaxQuoteAgeSeconds        int `json:"maxQuoteAgeSeconds"`
+	NoEntryBeforeCloseMinutes int `json:"noEntryBeforeCloseMinutes"`
+
+	// TradingBudgetCents US dollars in cents (the eToro account currency is USD)
+	TradingBudgetCents Cents `json:"tradingBudgetCents"`
+}
+
 // Role defines model for Role.
 type Role string
 
@@ -505,6 +569,11 @@ type ListAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListEventsParams defines parameters for ListEvents.
+type ListEventsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // SearchInstrumentsParams defines parameters for SearchInstruments.
 type SearchInstrumentsParams struct {
 	Q string `form:"q" json:"q"`
@@ -521,6 +590,9 @@ type ChangePasswordJSONRequestBody = ChangePasswordRequest
 
 // SetCredentialJSONRequestBody defines body for SetCredential for application/json ContentType.
 type SetCredentialJSONRequestBody = SetCredentialRequest
+
+// SetRiskLimitsJSONRequestBody defines body for SetRiskLimits for application/json ContentType.
+type SetRiskLimitsJSONRequestBody = RiskLimits
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequest
@@ -572,6 +644,12 @@ type ServerInterface interface {
 	// SetCredential Set a credential (admin, web UI session only); write-only
 	// (PUT /api/v1/credentials/{name})
 	SetCredential(w http.ResponseWriter, r *http.Request, name CredentialName)
+	// ListEvents The newest events and the caller's unread count (viewer)
+	// (GET /api/v1/events)
+	ListEvents(w http.ResponseWriter, r *http.Request, params ListEventsParams)
+	// MarkEventsSeen Mark every event as seen by the caller
+	// (POST /api/v1/events/seen)
+	MarkEventsSeen(w http.ResponseWriter, r *http.Request)
 	// SearchInstruments Search eToro instruments by name or symbol (admin)
 	// (GET /api/v1/instruments/search)
 	SearchInstruments(w http.ResponseWriter, r *http.Request, params SearchInstrumentsParams)
@@ -581,6 +659,18 @@ type ServerInterface interface {
 	// GetPublicStatus What the sign-in page needs before anyone is signed in
 	// (GET /api/v1/public/status)
 	GetPublicStatus(w http.ResponseWriter, r *http.Request)
+	// GetRiskLimits The risk limits (viewer)
+	// (GET /api/v1/risk/limits)
+	GetRiskLimits(w http.ResponseWriter, r *http.Request)
+	// SetRiskLimits Change the risk limits (admin, web UI, only while the agent is stopped)
+	// (PUT /api/v1/risk/limits)
+	SetRiskLimits(w http.ResponseWriter, r *http.Request)
+	// ReloadSettings Re-read credentials from the environment and secret files (admin, web UI)
+	// (POST /api/v1/system/reload)
+	ReloadSettings(w http.ResponseWriter, r *http.Request)
+	// RestartServer Restart cactusTrade gracefully (admin, web UI)
+	// (POST /api/v1/system/restart)
+	RestartServer(w http.ResponseWriter, r *http.Request)
 	// GetSystemStatus Version, trading mode and agent state (viewer)
 	// (GET /api/v1/system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
@@ -862,6 +952,53 @@ func (siw *ServerInterfaceWrapper) SetCredential(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ListEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListEventsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListEvents(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MarkEventsSeen operation middleware
+func (siw *ServerInterfaceWrapper) MarkEventsSeen(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkEventsSeen(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SearchInstruments operation middleware
 func (siw *ServerInterfaceWrapper) SearchInstruments(w http.ResponseWriter, r *http.Request) {
 
@@ -914,6 +1051,62 @@ func (siw *ServerInterfaceWrapper) GetPublicStatus(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPublicStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRiskLimits operation middleware
+func (siw *ServerInterfaceWrapper) GetRiskLimits(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRiskLimits(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetRiskLimits operation middleware
+func (siw *ServerInterfaceWrapper) SetRiskLimits(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetRiskLimits(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReloadSettings operation middleware
+func (siw *ServerInterfaceWrapper) ReloadSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReloadSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RestartServer operation middleware
+func (siw *ServerInterfaceWrapper) RestartServer(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestartServer(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1259,6 +1452,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist", wrapper.AddToWatchlist)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/quotes", wrapper.ListWatchlistQuotes)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/watchlist/{instrumentId}", wrapper.RemoveFromWatchlist)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/reload", wrapper.ReloadSettings)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/restart", wrapper.RestartServer)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/events", wrapper.ListEvents)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/events/seen", wrapper.MarkEventsSeen)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.GetRiskLimits)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.SetRiskLimits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.ListAudit)
 
 	return m

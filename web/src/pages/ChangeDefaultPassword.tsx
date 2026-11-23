@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api, errorText } from "../lib/api";
 import { useSession } from "../lib/session";
+import { AuthLayout } from "../components/AuthLayout";
 
 // Shown instead of the app while the account still has the default password (admin/admin).
 // The server refuses everything else until the password is changed.
@@ -29,9 +30,9 @@ export function ChangeDefaultPassword() {
     }
   }
   return (
-    <div className="card auth-card shadow-sm">
-      <div className="card-body p-4">
-        <h1 className="h4 mb-3"><i className="bi bi-shield-lock text-success me-2" />Choose a new password</h1>
+    <AuthLayout>
+      <div>
+        <h2><i className="bi bi-shield-lock me-2" />Choose a new password</h2>
         <p>
           <strong>{me?.user.username}</strong> still has the default password. Choose your own (at least 12
           characters) before using cactusTrade. You will then sign in again.
@@ -54,6 +55,6 @@ export function ChangeDefaultPassword() {
           <button type="button" className="btn btn-link w-100 mt-2" onClick={() => void signOut()}>Sign out</button>
         </form>
       </div>
-    </div>
+    </AuthLayout>
   );
 }
