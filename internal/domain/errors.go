@@ -17,10 +17,11 @@ var (
 	ErrUnauthenticated = errors.New("unauthenticated")
 	// ErrForbidden means the caller is authenticated but lacks the permission.
 	ErrForbidden = errors.New("forbidden")
-	// ErrSetupDone means first-run setup was attempted after a user already exists.
+	// ErrSetupDone means the first user was to be created but a user already exists.
 	ErrSetupDone = errors.New("setup already completed")
-	// ErrSetupRequired means no user exists yet: only first-run setup is possible.
-	ErrSetupRequired = errors.New("setup required")
+	// ErrPasswordChangeRequired means the account still has the default password: it may
+	// only change it or sign out.
+	ErrPasswordChangeRequired = errors.New("password change required")
 	// ErrInvalid is wrapped by every ValidationError.
 	ErrInvalid = errors.New("invalid input")
 	// ErrUnavailable means a dependency (secret store, master key…) is not usable now.

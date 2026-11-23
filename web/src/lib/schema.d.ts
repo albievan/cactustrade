@@ -55,27 +55,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * First-run setup — create the first administrator
-         * @description Works only while no user exists and only with the setup token, which the install
-         *     printed (`deploy.sh`) or wrote to `setup_token` in the data folder (standalone).
-         */
-        post: operations["setup"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -315,7 +294,6 @@ export interface components {
         AgentState: "stopped" | "running" | "paused" | "killed";
         PublicStatus: {
             version: string;
-            setupRequired: boolean;
         };
         SystemStatus: {
             version: string;
@@ -328,11 +306,6 @@ export interface components {
             startedAt: string;
             /** Format: date-time */
             now: string;
-        };
-        SetupRequest: {
-            setupToken: string;
-            username: string;
-            password: string;
         };
         LoginRequest: {
             username: string;
@@ -347,6 +320,12 @@ export interface components {
             username: string;
             role: components["schemas"]["Role"];
             disabled: boolean;
+            /**
+             * @description The account still has the default password (the built-in admin/admin). Until it
+             *     is changed, every endpoint except /auth/me, /auth/password and /auth/logout
+             *     answers 403 with the title "Password change required".
+             */
+            mustChangePassword: boolean;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -496,34 +475,6 @@ export interface operations {
                     "application/json": components["schemas"]["PublicStatus"];
                 };
             };
-        };
-    };
-    setup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetupRequest"];
-            };
-        };
-        responses: {
-            /** @description Administrator created; sign in next */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"];
-                };
-            };
-            400: components["responses"]["Problem"];
-            401: components["responses"]["Problem"];
-            409: components["responses"]["Problem"];
-            429: components["responses"]["Problem"];
         };
     };
     login: {

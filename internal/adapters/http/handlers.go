@@ -26,7 +26,7 @@ func (s *Server) clearCookie(w http.ResponseWriter) {
 }
 
 func toUser(u domain.User) User {
-	return User{Id: u.ID, Username: u.Username, Role: Role(u.Role), Disabled: u.Disabled, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt}
+	return User{Id: u.ID, Username: u.Username, Role: Role(u.Role), Disabled: u.Disabled, MustChangePassword: u.MustChangePassword, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt}
 }
 
 func toKey(k domain.APIKey) ApiKey {
@@ -49,38 +49,9 @@ func (s *Server) Readyz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Health{Status: Ok})
 }
 
-// GetPublicStatus tells the sign-in page whether setup is needed.
-func (s *Server) GetPublicStatus(w http.ResponseWriter, r *http.Request) {
-	req, err := s.svc.SetupRequired(r.Context())
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, PublicStatus{Version: s.svc.Version(), SetupRequired: req})
-}
-
-// Setup creates the first administrator (rate-limited like sign-in).
-func (s *Server) Setup(w http.ResponseWriter, r *http.Request) {
-	var req SetupRequest
-	if !decode(w, r, &req) {
-		return
-	}
-	ip := state(r).ip
-	if ok, wait := s.limiter.Allow(ip, ""); !ok {
-		tooMany(w, r, wait)
-		return
-	}
-	u, err := s.svc.Setup(r.Context(), req.SetupToken, req.Username, req.Password, ip)
-	if err != nil {
-		if errors.Is(err, domain.ErrUnauthenticated) {
-			s.limiter.Fail(ip, "")
-			writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "wrong setup token", "")
-			return
-		}
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, toUser(u))
+// GetPublicStatus gives the sign-in page the version.
+func (s *Server) GetPublicStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, PublicStatus{Version: s.svc.Version()})
 }
 
 func tooMany(w http.ResponseWriter, r *http.Request, wait time.Duration) {

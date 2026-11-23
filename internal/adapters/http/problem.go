@@ -45,8 +45,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeProblem(w, r, http.StatusForbidden, "Forbidden", detail(err, domain.ErrForbidden), "")
 	case errors.Is(err, domain.ErrNotFound):
 		writeProblem(w, r, http.StatusNotFound, "Not found", "", "")
-	case errors.Is(err, domain.ErrSetupDone):
-		writeProblem(w, r, http.StatusConflict, "Setup already completed", "sign in instead", "")
+	case errors.Is(err, domain.ErrPasswordChangeRequired):
+		writeProblem(w, r, http.StatusForbidden, "Password change required", "change the default password first", "")
 	case errors.Is(err, domain.ErrConflict):
 		writeProblem(w, r, http.StatusConflict, "Conflict", detail(err, domain.ErrConflict), "")
 	case errors.Is(err, domain.ErrUnavailable):

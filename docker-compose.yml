@@ -58,7 +58,7 @@ services:
       # eToro demo keys (empty files when not provided; then set them in the web UI).
       ETORO_DEMO_PUB_FILE: /run/secrets/etoro_demo_pub
       ETORO_DEMO_PK_FILE: /run/secrets/etoro_demo_pk
-    secrets: [db_password, master_key, setup_token, metrics_token, etoro_demo_pub, etoro_demo_pk]
+    secrets: [db_password, master_key, metrics_token, etoro_demo_pub, etoro_demo_pk]
     volumes:
       - ${DATA_DIR}:/data
     ports:
@@ -68,7 +68,6 @@ secrets:
   db_password: { file: "${SECRETS_DIR}/db_password" }
   db_root_password: { file: "${SECRETS_DIR}/db_root_password" }
   master_key: { file: "${SECRETS_DIR}/master_key" }
-  setup_token: { file: "${SECRETS_DIR}/setup_token" }
   metrics_token: { file: "${SECRETS_DIR}/metrics_token" }
   etoro_demo_pub: { file: "${SECRETS_DIR}/etoro_demo_pub" }
   etoro_demo_pk: { file: "${SECRETS_DIR}/etoro_demo_pk" }

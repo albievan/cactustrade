@@ -290,8 +290,7 @@ type Problem struct {
 
 // PublicStatus defines model for PublicStatus.
 type PublicStatus struct {
-	SetupRequired bool   `json:"setupRequired"`
-	Version       string `json:"version"`
+	Version string `json:"version"`
 }
 
 // Role defines model for Role.
@@ -301,13 +300,6 @@ type Role string
 type SetCredentialRequest struct {
 	// Value Write-only: never returned
 	Value string `json:"value"`
-}
-
-// SetupRequest defines model for SetupRequest.
-type SetupRequest struct {
-	Password   string `json:"password"`
-	SetupToken string `json:"setupToken"`
-	Username   string `json:"username"`
 }
 
 // SystemStatus defines model for SystemStatus.
@@ -339,9 +331,14 @@ type User struct {
 	CreatedAt time.Time `json:"createdAt"`
 	Disabled  bool      `json:"disabled"`
 	Id        string    `json:"id"`
-	Role      Role      `json:"role"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Username  string    `json:"username"`
+
+	// MustChangePassword The account still has the default password (the built-in admin/admin). Until it
+	// is changed, every endpoint except /auth/me, /auth/password and /auth/logout
+	// answers 403 with the title "Password change required".
+	MustChangePassword bool      `json:"mustChangePassword"`
+	Role               Role      `json:"role"`
+	UpdatedAt          time.Time `json:"updatedAt"`
+	Username           string    `json:"username"`
 }
 
 // ListAuditParams defines parameters for ListAudit.
@@ -360,9 +357,6 @@ type ChangePasswordJSONRequestBody = ChangePasswordRequest
 
 // SetCredentialJSONRequestBody defines body for SetCredential for application/json ContentType.
 type SetCredentialJSONRequestBody = SetCredentialRequest
-
-// SetupJSONRequestBody defines body for Setup for application/json ContentType.
-type SetupJSONRequestBody = SetupRequest
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequest
@@ -408,9 +402,6 @@ type ServerInterface interface {
 	// GetPublicStatus What the sign-in page needs before anyone is signed in
 	// (GET /api/v1/public/status)
 	GetPublicStatus(w http.ResponseWriter, r *http.Request)
-	// Setup First-run setup — create the first administrator
-	// (POST /api/v1/setup)
-	Setup(w http.ResponseWriter, r *http.Request)
 	// GetSystemStatus Version, trading mode and agent state (viewer)
 	// (GET /api/v1/system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
@@ -666,20 +657,6 @@ func (siw *ServerInterfaceWrapper) GetPublicStatus(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
-// Setup operation middleware
-func (siw *ServerInterfaceWrapper) Setup(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.Setup(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // GetSystemStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 
@@ -925,7 +902,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.Healthz)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.Readyz)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/public/status", wrapper.GetPublicStatus)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/setup", wrapper.Setup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/me", wrapper.GetMe)

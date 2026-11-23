@@ -14,8 +14,11 @@ type User struct {
 	Role         Role
 	PasswordHash string
 	Disabled     bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// MustChangePassword is set on the built-in default administrator (admin/admin): until
+	// the password is changed, the account can do nothing but change it or sign out.
+	MustChangePassword bool
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // Password length bounds. Long passphrases are encouraged; the upper bound only stops
@@ -23,6 +26,13 @@ type User struct {
 const (
 	MinPasswordLen = 12
 	MaxPasswordLen = 128
+)
+
+// The built-in administrator created on first start when no user exists. Its password must
+// be changed at first sign-in (User.MustChangePassword) before anything else is allowed.
+const (
+	DefaultAdminUsername = "admin"
+	DefaultAdminPassword = "admin"
 )
 
 var usernameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,31}$`)

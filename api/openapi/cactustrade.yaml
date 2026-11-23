@@ -61,30 +61,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PublicStatus" }
-  /api/v1/setup:
-    post:
-      tags: [auth]
-      operationId: setup
-      summary: First-run setup — create the first administrator
-      description: |
-        Works only while no user exists and only with the setup token, which the install
-        printed (`deploy.sh`) or wrote to `setup_token` in the data folder (standalone).
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/SetupRequest" }
-      responses:
-        "201":
-          description: Administrator created; sign in next
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/User" }
-        "400": { $ref: "#/components/responses/Problem" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
-        "429": { $ref: "#/components/responses/Problem" }
   /api/v1/auth/login:
     post:
       tags: [auth]
@@ -369,10 +345,9 @@ components:
       enum: [stopped, running, paused, killed]
     PublicStatus:
       type: object
-      required: [version, setupRequired]
+      required: [version]
       properties:
         version: { type: string }
-        setupRequired: { type: boolean }
     SystemStatus:
       type: object
       required: [version, build, mode, agentState, database, startedAt, now]
@@ -384,13 +359,6 @@ components:
         database: { type: string, enum: [sqlite, mariadb] }
         startedAt: { type: string, format: date-time }
         now: { type: string, format: date-time }
-    SetupRequest:
-      type: object
-      required: [setupToken, username, password]
-      properties:
-        setupToken: { type: string, maxLength: 256 }
-        username: { type: string, maxLength: 64 }
-        password: { type: string, maxLength: 256 }
     LoginRequest:
       type: object
       required: [username, password]
@@ -405,12 +373,18 @@ components:
         newPassword: { type: string, maxLength: 256 }
     User:
       type: object
-      required: [id, username, role, disabled, createdAt, updatedAt]
+      required: [id, username, role, disabled, mustChangePassword, createdAt, updatedAt]
       properties:
         id: { type: string }
         username: { type: string }
         role: { $ref: "#/components/schemas/Role" }
         disabled: { type: boolean }
+        mustChangePassword:
+          type: boolean
+          description: |
+            The account still has the default password (the built-in admin/admin). Until it
+            is changed, every endpoint except /auth/me, /auth/password and /auth/logout
+            answers 403 with the title "Password change required".
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     Me:

@@ -11,8 +11,6 @@ import (
 	"github.com/albievan/cactustrade/internal/ports/fakes"
 )
 
-const setupToken = "the-setup-token"
-
 type env struct {
 	svc   *Service
 	store *fakes.Store
@@ -27,13 +25,21 @@ func newEnv(t *testing.T) *env {
 	clk := &fakes.Clock{T: time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)}
 	sec := &fakes.SecretStore{Now: clk.Now}
 	svc, err := New(Deps{Store: st, Secrets: sec, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: clk},
-		Config{SetupToken: setupToken, Version: "0.1.0", Build: "7"})
+		Config{Version: "0.1.0", Build: "7"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	e := &env{svc: svc, store: st, clock: clk, sec: sec}
-	u, err := svc.Setup(context.Background(), setupToken, "Admin", "admin password 1", "10.0.0.1")
+	ctx := context.Background()
+	if created, err := svc.EnsureDefaultAdmin(ctx); err != nil || !created {
+		t.Fatalf("EnsureDefaultAdmin = %v %v", created, err)
+	}
+	u, err := st.Users().GetByUsername(ctx, "admin")
 	if err != nil {
+		t.Fatal(err)
+	}
+	first := Principal{UserID: u.ID, Username: u.Username, Role: u.Role, Via: ViaSession, RemoteIP: "10.0.0.1", MustChangePassword: true}
+	if err := svc.ChangePassword(ctx, first, "admin", "admin password 1"); err != nil {
 		t.Fatal(err)
 	}
 	e.admin = Principal{UserID: u.ID, Username: u.Username, Role: u.Role, Via: ViaSession}
@@ -60,46 +66,89 @@ func TestNewValidates(t *testing.T) {
 	}
 }
 
-func TestSetup(t *testing.T) {
+func TestDefaultAdmin(t *testing.T) {
 	ctx := context.Background()
 	st := fakes.NewStore()
-	mk := func(token string) *Service {
-		s, err := New(Deps{Store: st, Secrets: &fakes.SecretStore{}, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: &fakes.Clock{}}, Config{SetupToken: token})
-		if err != nil {
-			t.Fatal(err)
+	s, err := New(Deps{Store: st, Secrets: &fakes.SecretStore{}, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: &fakes.Clock{}}, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created, err := s.EnsureDefaultAdmin(ctx); err != nil || !created {
+		t.Fatalf("first start: %v %v", created, err)
+	}
+	if created, err := s.EnsureDefaultAdmin(ctx); err != nil || created {
+		t.Fatalf("second start: %v %v", created, err)
+	}
+	if n, _ := st.Users().Count(ctx); n != 1 {
+		t.Fatalf("users = %d", n)
+	}
+
+	// admin/admin signs in, but can do nothing except Me, change password, sign out
+	res, err := s.Login(ctx, "admin", "admin", "")
+	if err != nil || !res.User.MustChangePassword || res.User.Role != domain.RoleAdmin {
+		t.Fatalf("default login = %+v %v", res.User, err)
+	}
+	p, _, err := s.SessionPrincipal(ctx, res.Token, "")
+	if err != nil || !p.MustChangePassword {
+		t.Fatalf("principal = %+v %v", p, err)
+	}
+	if _, err := s.Status(ctx, p); !errors.Is(err, domain.ErrPasswordChangeRequired) {
+		t.Fatalf("status before change: %v", err)
+	}
+	if _, err := s.ListUsers(ctx, p); !errors.Is(err, domain.ErrPasswordChangeRequired) {
+		t.Fatalf("users before change: %v", err)
+	}
+	if _, err := s.Me(ctx, p); err != nil {
+		t.Fatalf("me before change: %v", err)
+	}
+	for _, bad := range []string{"admin", "short", "Admin"} {
+		if err := s.ChangePassword(ctx, p, "admin", bad); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("new password %q: %v", bad, err)
 		}
-		return s
 	}
-	if _, err := mk("").Setup(ctx, "", "admin", "admin password 1", ""); !errors.Is(err, domain.ErrUnavailable) {
-		t.Fatalf("no token configured: %v", err)
+	if err := s.ChangePassword(ctx, p, "admin", "a much better password"); err != nil {
+		t.Fatal(err)
 	}
-	s := mk(setupToken)
-	if req, _ := s.SetupRequired(ctx); !req {
-		t.Fatal("setup should be required")
+	if _, _, err := s.SessionPrincipal(ctx, res.Token, ""); !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatal("session survived the password change")
 	}
-	tests := []struct {
-		name, token, user, pw string
-		want                  error
-	}{
-		{"wrong token", "nope", "admin", "admin password 1", domain.ErrUnauthenticated},
-		{"bad username", setupToken, "-x", "admin password 1", domain.ErrInvalid},
-		{"short password", setupToken, "admin", "short", domain.ErrInvalid},
-		{"ok", setupToken, "admin", "admin password 1", nil},
-		{"second time", setupToken, "admin2", "admin password 1", domain.ErrSetupDone},
+	if _, err := s.Login(ctx, "admin", "admin", ""); !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatal("default password still works")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			u, err := s.Setup(ctx, tt.token, tt.user, tt.pw, "")
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("err = %v, want %v", err, tt.want)
-			}
-			if err == nil && u.Role != domain.RoleAdmin {
-				t.Fatal("first user must be admin")
-			}
-		})
+	res, err = s.Login(ctx, "admin", "a much better password", "")
+	if err != nil || res.User.MustChangePassword {
+		t.Fatalf("login after change = %+v %v", res.User, err)
 	}
-	if req, _ := s.SetupRequired(ctx); req {
-		t.Fatal("setup should be done")
+	p, _, _ = s.SessionPrincipal(ctx, res.Token, "")
+	if _, err := s.Status(ctx, p); err != nil {
+		t.Fatalf("status after change: %v", err)
+	}
+
+	broken, _ := New(Deps{Store: fakes.NewStore(), Secrets: &fakes.SecretStore{}, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: &fakes.Clock{}}, Config{})
+	broken.d.Hasher = fakes.Hasher{Fail: true}
+	if _, err := broken.EnsureDefaultAdmin(ctx); err == nil {
+		t.Fatal("hash failure ignored")
+	}
+}
+
+func TestAPIKeyOfDefaultAdminIsLocked(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	k, err := e.svc.CreateAPIKey(ctx, e.admin, "ci", domain.RoleViewer, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := e.store.Users().Get(ctx, e.admin.UserID)
+	u.MustChangePassword = true
+	if err := e.store.Users().Update(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	p, err := e.svc.APIKeyPrincipal(ctx, k.Secret, "")
+	if err != nil || !p.MustChangePassword {
+		t.Fatalf("principal = %+v %v", p, err)
+	}
+	if _, err := e.svc.Status(ctx, p); !errors.Is(err, domain.ErrPasswordChangeRequired) {
+		t.Fatalf("status: %v", err)
 	}
 }
 
@@ -456,7 +505,7 @@ func TestAuditAndStatus(t *testing.T) {
 		t.Fatalf("audit = %+v %v", es, err)
 	}
 	es, _ = e.svc.AuditLog(ctx, e.admin, 1000)
-	if len(es) != 2 || es[1].Action != "setup.admin_created" || es[1].RemoteIP != "10.0.0.1" {
+	if len(es) != 3 || es[1].Action != "auth.password_changed" || es[1].RemoteIP != "10.0.0.1" || es[2].Action != "setup.default_admin_created" {
 		t.Fatalf("audit = %+v", es)
 	}
 	st, err := e.svc.Status(ctx, op)

@@ -21,13 +21,12 @@ func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "db_password"), []byte("pw\n"), 0o600)
 	_ = os.WriteFile(filepath.Join(dir, "master_key"), []byte(strings.Repeat("ab", 32)), 0o600)
-	_ = os.WriteFile(filepath.Join(dir, "setup_token"), []byte("tok\n"), 0o600)
 	c, err = loadConfig([]string{"--addr", ":9000"}, envOf(map[string]string{
 		"CACTUSTRADE_CONTAINER": "1", "CACTUSTRADE_DB_DRIVER": "mariadb", "CACTUSTRADE_SECRETS_DIR": dir,
 		"CACTUSTRADE_TLS": "off", "CACTUSTRADE_TRUSTED_PROXIES": "10.42.0.0/16, 192.0.2.1", "CACTUSTRADE_COOKIE_SECURE": "false",
 		"CACTUSTRADE_LOG_LEVEL": "debug",
 	}))
-	if err != nil || c.DBPassword != "pw" || c.SetupToken != "tok" || c.MasterKeyFile == "" || c.DataDir != "/data" ||
+	if err != nil || c.DBPassword != "pw" || c.MasterKeyFile == "" || c.DataDir != "/data" ||
 		c.Addr != ":9000" || len(c.TrustedProxies) != 2 || c.CookieSecure {
 		t.Fatalf("container %+v %v", c, err)
 	}
@@ -72,7 +71,7 @@ func TestMigrateAndTLS(t *testing.T) {
 			t.Fatalf("%v: %v", args, err)
 		}
 	}
-	if !strings.HasPrefix(out.String(), "schema 0, newest 1") {
+	if !strings.HasPrefix(out.String(), "schema 0, newest 2") {
 		t.Fatalf("status %q", out.String())
 	}
 	for _, args := range [][]string{{"migrate"}, {"migrate", "sideways"}, {"migrate", "down-to", "x"}} {
@@ -93,14 +92,5 @@ func TestMigrateAndTLS(t *testing.T) {
 	}
 	if tc, err := trustOwnCert(filepath.Join(dir, "tls", "cert.pem")); err != nil || tc.ServerName != "localhost" {
 		t.Fatal("trustOwnCert", err)
-	}
-	c := config{DataDir: dir}
-	if err := ensureSetupToken(&c); err != nil || len(c.SetupToken) < 20 {
-		t.Fatal("setup token")
-	}
-	first := c.SetupToken
-	c.SetupToken = ""
-	if err := ensureSetupToken(&c); err != nil || c.SetupToken != first {
-		t.Fatal("setup token must persist")
 	}
 }

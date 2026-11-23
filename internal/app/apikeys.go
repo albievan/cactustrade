@@ -136,5 +136,5 @@ func (s *Service) APIKeyPrincipal(ctx context.Context, bearer, remoteIP string) 
 			s.d.Log.WarnContext(ctx, "api key touch failed", "key", k.ID, "err", err)
 		}
 	}
-	return Principal{UserID: u.ID, Username: u.Username, Role: role, Via: ViaAPIKey, APIKeyID: k.ID, RemoteIP: remoteIP}, nil
+	return Principal{UserID: u.ID, Username: u.Username, Role: role, Via: ViaAPIKey, APIKeyID: k.ID, RemoteIP: remoteIP, MustChangePassword: u.MustChangePassword}, nil
 }

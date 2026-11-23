@@ -2,7 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { useSession } from "./lib/session";
 import { Login } from "./pages/Login";
-import { Setup } from "./pages/Setup";
+import { ChangeDefaultPassword } from "./pages/ChangeDefaultPassword";
 import { Dashboard } from "./pages/Dashboard";
 import { Credentials } from "./pages/Credentials";
 import { Users } from "./pages/Users";
@@ -13,14 +13,9 @@ import { Account } from "./pages/Account";
 export function App() {
   const { me, loading } = useSession();
   if (loading) return <div className="p-5 text-center text-secondary">Loading…</div>;
-  if (!me) {
-    return (
-      <Routes>
-        <Route path="/setup" element={<Setup />} />
-        <Route path="*" element={<Login />} />
-      </Routes>
-    );
-  }
+  if (!me) return <Login />;
+  // The built-in admin/admin must choose a new password before anything else.
+  if (me.user.mustChangePassword) return <ChangeDefaultPassword />;
   return (
     <Routes>
       <Route element={<Layout />}>

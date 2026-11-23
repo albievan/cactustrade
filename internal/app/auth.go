@@ -2,47 +2,41 @@ package app
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-// SetupRequired reports whether no user exists yet.
-func (s *Service) SetupRequired(ctx context.Context) (bool, error) {
+// EnsureDefaultAdmin creates the built-in administrator admin/admin when no user exists
+// (first start). The account must change its password at first sign-in before it can do
+// anything else. It reports whether the account was created; a concurrent creator (another
+// replica) is not an error.
+func (s *Service) EnsureDefaultAdmin(ctx context.Context) (bool, error) {
 	n, err := s.d.Store.Users().Count(ctx)
 	if err != nil {
-		return false, fmt.Errorf("app.SetupRequired: %w", err)
+		return false, fmt.Errorf("app.EnsureDefaultAdmin: %w", err)
 	}
-	return n == 0, nil
-}
-
-// Setup creates the first administrator. It needs the setup token (so nobody else on the
-// network can claim a fresh install) and works only while no user exists.
-func (s *Service) Setup(ctx context.Context, token, username, password, remoteIP string) (domain.User, error) {
-	// Once done, setup is closed whatever the input (no token guessing afterwards).
-	if req, err := s.SetupRequired(ctx); err != nil {
-		return domain.User{}, err
-	} else if !req {
-		return domain.User{}, domain.ErrSetupDone
+	if n > 0 {
+		return false, nil
 	}
-	if s.cfg.SetupToken == "" {
-		return domain.User{}, fmt.Errorf("app.Setup: no setup token configured: %w", domain.ErrUnavailable)
-	}
-	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(s.cfg.SetupToken)) != 1 {
-		return domain.User{}, domain.ErrUnauthenticated
-	}
-	u, err := s.newUser(username, password, domain.RoleAdmin)
+	hash, err := s.d.Hasher.Hash(domain.DefaultAdminPassword)
 	if err != nil {
-		return domain.User{}, err
+		return false, fmt.Errorf("app.EnsureDefaultAdmin: %w", err)
+	}
+	now := s.d.Clock.Now().UTC()
+	u := domain.User{
+		ID: s.d.Random.ID(), Username: domain.DefaultAdminUsername, Role: domain.RoleAdmin,
+		PasswordHash: hash, MustChangePassword: true, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.d.Store.Users().CreateFirst(ctx, u); err != nil {
-		return domain.User{}, fmt.Errorf("app.Setup: %w", err)
+		if errors.Is(err, domain.ErrSetupDone) {
+			return false, nil
+		}
+		return false, fmt.Errorf("app.EnsureDefaultAdmin: %w", err)
 	}
-	s.audit(ctx, Principal{UserID: u.ID, Username: u.Username, RemoteIP: remoteIP}, "setup.admin_created", u.ID, "")
-	return u, nil
+	s.audit(ctx, Principal{}, "setup.default_admin_created", u.ID, "")
+	return true, nil
 }
 
 func (s *Service) newUser(username, password string, role domain.Role) (domain.User, error) {
@@ -148,7 +142,10 @@ func (s *Service) SessionPrincipal(ctx context.Context, token, remoteIP string) 
 			s.d.Log.WarnContext(ctx, "session touch failed", "err", err)
 		}
 	}
-	return Principal{UserID: u.ID, Username: u.Username, Role: u.Role, Via: ViaSession, RemoteIP: remoteIP}, sess.CSRFToken, nil
+	return Principal{
+		UserID: u.ID, Username: u.Username, Role: u.Role, Via: ViaSession, RemoteIP: remoteIP,
+		MustChangePassword: u.MustChangePassword,
+	}, sess.CSRFToken, nil
 }
 
 // ChangePassword changes the caller's own password and signs out their other sessions.
@@ -173,6 +170,7 @@ func (s *Service) ChangePassword(ctx context.Context, p Principal, current, next
 	if u.PasswordHash, err = s.d.Hasher.Hash(next); err != nil {
 		return fmt.Errorf("app.ChangePassword: %w", err)
 	}
+	u.MustChangePassword = false
 	u.UpdatedAt = s.d.Clock.Now().UTC()
 	if err := s.d.Store.Users().Update(ctx, u); err != nil {
 		return fmt.Errorf("app.ChangePassword: %w", err)

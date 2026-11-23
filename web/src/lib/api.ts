@@ -53,8 +53,6 @@ export async function request<T>(method: string, path: string, body?: unknown): 
 
 export const api = {
   publicStatus: () => request<PublicStatus>("GET", "/api/v1/public/status"),
-  setup: (setupToken: string, username: string, password: string) =>
-    request<User>("POST", "/api/v1/setup", { setupToken, username, password }),
   login: async (username: string, password: string) => {
     const me = await request<Me>("POST", "/api/v1/auth/login", { username, password });
     setCsrf(me.csrfToken);

@@ -73,6 +73,10 @@ linters:
       - path: (internal/adapters/secretstore/secretstore\.go|cmd/cactustrade/)
         text: "G30[4]|G70[34]"
         linters: [gosec]
+      # Reviewed: the HTTP->HTTPS redirect targets the client's own validated Host header.
+      - path: cmd/cactustrade/demux\.go
+        text: "G710"
+        linters: [gosec]
       # Reviewed: the session cookie's Secure flag is CACTUSTRADE_COOKIE_SECURE (true by default).
       - path: internal/adapters/http/handlers\.go
         text: "G124"

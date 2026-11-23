@@ -9,10 +9,8 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -140,28 +138,17 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	svc, err := app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
-	}, app.Config{SetupToken: cfg.SetupToken, Version: version, Build: build})
+	}, app.Config{Version: version, Build: build})
 	if err != nil {
 		return err
 	}
 	mode := svc.Mode(ctx)
 	log = log.With("mode", string(mode))
 
-	if need, err := svc.SetupRequired(ctx); err != nil {
+	if created, err := svc.EnsureDefaultAdmin(ctx); err != nil {
 		return err
-	} else if need {
-		if err := ensureSetupToken(&cfg); err != nil {
-			return err
-		}
-		svc, err = app.New(app.Deps{
-			Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
-			Random: system.Random{}, Clock: clock, Log: log,
-		}, app.Config{SetupToken: cfg.SetupToken, Version: version, Build: build})
-		if err != nil {
-			return err
-		}
-		log.Warn("first run: open the web UI and create the administrator with the setup token",
-			"setup_token_file", setupTokenHint(cfg))
+	} else if created {
+		log.Warn("first run: created the administrator admin/admin; sign in and change its password (required before anything else)")
 	}
 
 	reg := prometheus.NewRegistry()
@@ -193,14 +180,20 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	}
 	go httpapi.PurgeLoop(ctx, svc, log, 10*time.Minute)
 
-	errc := make(chan error, 1)
-	go func() {
-		if srv.TLSConfig != nil {
-			errc <- srv.ServeTLS(ln, "", "")
-		} else {
-			errc <- srv.Serve(ln)
+	errc := make(chan error, 2)
+	var redirect *http.Server
+	if srv.TLSConfig != nil {
+		// One port, both schemes: plain HTTP on the HTTPS port is redirected to HTTPS.
+		d := newDemux(ln, 10*time.Second)
+		redirect = &http.Server{
+			Handler: http.HandlerFunc(redirectToHTTPS), ReadHeaderTimeout: 10 * time.Second,
+			MaxHeaderBytes: 16 << 10, ErrorLog: srv.ErrorLog,
 		}
-	}()
+		go func() { errc <- srv.ServeTLS(d.tls, "", "") }()
+		go func() { errc <- redirect.Serve(d.plain) }()
+	} else {
+		go func() { errc <- srv.Serve(ln) }()
+	}
 	log.Info("cactusTrade started", "version", version, "build", build, "addr", cfg.Addr, "scheme", scheme,
 		"database", store.Driver(), "container", cfg.Container)
 	select {
@@ -213,34 +206,10 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	log.Info("shutting down")
 	sctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	if redirect != nil {
+		_ = redirect.Shutdown(sctx)
+	}
 	return srv.Shutdown(sctx)
-}
-
-// ensureSetupToken makes sure a first-run setup token exists: the configured one, or a new
-// one written (0600) to setup_token in the data folder. Its value is never logged.
-func ensureSetupToken(cfg *config) error {
-	if cfg.SetupToken != "" {
-		return nil
-	}
-	p := filepath.Join(cfg.DataDir, "setup_token")
-	if b, err := os.ReadFile(p); err == nil && strings.TrimSpace(string(b)) != "" {
-		cfg.SetupToken = strings.TrimSpace(string(b))
-		return nil
-	}
-	buf := make([]byte, 18)
-	_, _ = rand.Read(buf)
-	cfg.SetupToken = base64.RawURLEncoding.EncodeToString(buf)
-	if err := os.WriteFile(p, []byte(cfg.SetupToken+"\n"), 0o600); err != nil {
-		return fmt.Errorf("setup token: %w", err)
-	}
-	return nil
-}
-
-func setupTokenHint(cfg config) string {
-	if cfg.SecretsDir != "" && fileExists(filepath.Join(cfg.SecretsDir, "setup_token")) {
-		return filepath.Join(cfg.SecretsDir, "setup_token")
-	}
-	return filepath.Join(cfg.DataDir, "setup_token")
 }
 
 // healthcheck asks the local server's /healthz (the container HEALTHCHECK). Over TLS it

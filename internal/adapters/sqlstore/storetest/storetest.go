@@ -27,7 +27,7 @@ func Run(t *testing.T, s ports.Store) {
 		}
 	})
 
-	admin := domain.User{ID: "u-admin", Username: "admin", Role: domain.RoleAdmin, PasswordHash: "h1", CreatedAt: t0, UpdatedAt: t0}
+	admin := domain.User{ID: "u-admin", Username: "admin", Role: domain.RoleAdmin, PasswordHash: "h1", MustChangePassword: true, CreatedAt: t0, UpdatedAt: t0}
 	t.Run("users", func(t *testing.T) {
 		u := s.Users()
 		if n, err := u.Count(ctx); err != nil || n != 0 {
@@ -90,7 +90,7 @@ func Run(t *testing.T, s ports.Store) {
 		if _, err := u.GetByUsername(ctx, "ghost"); !errors.Is(err, domain.ErrNotFound) {
 			t.Fatal("GetByUsername missing")
 		}
-		op.Role, op.Disabled, op.UpdatedAt = domain.RoleAdmin, true, t0.Add(time.Minute)
+		op.Role, op.Disabled, op.MustChangePassword, op.UpdatedAt = domain.RoleAdmin, true, true, t0.Add(time.Minute)
 		if err := u.Update(ctx, op); err != nil {
 			t.Fatal(err)
 		}

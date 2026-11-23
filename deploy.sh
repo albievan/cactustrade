@@ -238,7 +238,18 @@ compose() { "$DOCKER" compose --project-directory "$ROOT" -f "$ROOT/docker-compo
 
 abs_dir() { case "$1" in /*) printf '%s' "${1%/}" ;; *) printf '%s/%s' "$ROOT" "${1#./}" ;; esac; }
 
-NEW_SETUP=0
+NEW_INSTALL=0
+FIRST_RUN_NOTE="    first run:     sign in as admin / admin; you must choose a new password straight away"
+
+# lan_address: the address other machines on the network use for this host (best effort).
+lan_address() {
+  if [[ -n "${SSH_HOST:-}" ]]; then printf '%s' "${SSH_HOST#*@}"; return; fi
+  local a=""
+  if command -v ipconfig >/dev/null 2>&1; then a="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"; fi
+  if [[ -z "$a" ]] && command -v hostname >/dev/null 2>&1; then a="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"; fi
+  printf '%s' "${a:-localhost}"
+}
+
 ensure_secrets_dir() {
   mkdir -p "$SECRETS_DIR"
   chmod 700 "$SECRETS_DIR"
@@ -247,12 +258,9 @@ ensure_secrets_dir() {
     [[ -s "$SECRETS_DIR/$s" ]] || { random_secret >"$SECRETS_DIR/$s"; ok "generated $SECRETS_DIR/$s"; }
   done
   if [[ ! -s "$SECRETS_DIR/master_key" ]]; then
+    NEW_INSTALL=1
     random_key >"$SECRETS_DIR/master_key"
     ok "generated $SECRETS_DIR/master_key (encrypts the eToro and LLM keys; BACK IT UP off this machine)"
-  fi
-  if [[ ! -s "$SECRETS_DIR/setup_token" ]]; then
-    random_secret >"$SECRETS_DIR/setup_token"
-    NEW_SETUP=1
   fi
   for s in etoro_demo_pub etoro_demo_pk; do
     local v; v="$(etoro_value "$s")"
@@ -309,13 +317,9 @@ docker_install() {
     id="$(compose ps -q app 2>/dev/null || true)"
     state="$("$DOCKER" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id" 2>/dev/null || true)"
     if [[ "$state" == healthy ]]; then
-      ok "cactusTrade is running at https://localhost:${HTTPS_PORT} (self-signed certificate unless you set your own)"
-      if [[ $NEW_SETUP -eq 1 ]]; then
-        echo "    first run:     open the page and create the administrator with this setup token:"
-        echo "                   $(cat "$SECRETS_DIR/setup_token")"
-      else
-        echo "    setup token:   $(abs_dir "$SECRETS_DIR")/setup_token (only needed before the first administrator exists)"
-      fi
+      ok "cactusTrade is running at https://$(lan_address):${HTTPS_PORT} (also https://localhost:${HTTPS_PORT})"
+      echo "    certificate:   self-signed unless you set your own; accept the browser warning once"
+      [[ $NEW_INSTALL -eq 1 ]] && echo "$FIRST_RUN_NOTE"
       echo "    master_key:    keep a copy of $(abs_dir "$SECRETS_DIR")/master_key OFF this machine"
       return 0
     fi
@@ -474,12 +478,11 @@ stringData:
   db_password: "$(random_secret)"
   db_root_password: "$(random_secret)"
   master_key: "$(random_key)"
-  setup_token: "$(random_secret)"
   metrics_token: "$(random_secret)"
   etoro_demo_pub: ""
   etoro_demo_pk: ""
 YAML
-    NEW_SETUP=1
+    NEW_INSTALL=1
     ok "generated the passwords and the master key in secret cactustrade-secrets"
   fi
   local s v
@@ -558,10 +561,7 @@ k8s_install() {
   else
     ok "cactusTrade is running at http://${host}:${K8S_NODE_PORT} (sign-in needs HTTPS unless CACTUSTRADE_COOKIE_SECURE=false)"
   fi
-  if [[ $NEW_SETUP -eq 1 ]]; then
-    echo "    first run:     create the administrator with the setup token:"
-    echo "                   kubectl -n ${K8S_NAMESPACE} get secret cactustrade-secrets -o jsonpath='{.data.setup_token}' | base64 -d"
-  fi
+  [[ $NEW_INSTALL -eq 1 ]] && echo "$FIRST_RUN_NOTE"
   echo "    master_key:    copy it OFF the cluster: kubectl -n ${K8S_NAMESPACE} get secret cactustrade-secrets -o jsonpath='{.data.master_key}' | base64 -d"
 }
 

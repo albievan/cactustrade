@@ -20,14 +20,13 @@ import (
 	"github.com/albievan/cactustrade/internal/ports/fakes"
 )
 
-const token = "setup-token-for-tests"
-
 type tc struct {
 	t     *testing.T
 	srv   *httptest.Server
 	c     *http.Client
 	csrf  string
 	store *fakes.Store
+	svc   *app.Service
 }
 
 func newTC(t *testing.T, web fstest.MapFS) *tc {
@@ -35,7 +34,7 @@ func newTC(t *testing.T, web fstest.MapFS) *tc {
 	st := fakes.NewStore()
 	clk := &fakes.Clock{T: time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)}
 	svc, err := app.New(app.Deps{Store: st, Secrets: &fakes.SecretStore{Now: clk.Now}, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: clk},
-		app.Config{SetupToken: token, Version: "9.9.9"})
+		app.Config{Version: "9.9.9"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +46,7 @@ func newTC(t *testing.T, web fstest.MapFS) *tc {
 	t.Cleanup(srv.Close)
 	c := srv.Client()
 	c.Jar, _ = cookiejar.New(nil)
-	return &tc{t: t, srv: srv, c: c, store: st}
+	return &tc{t: t, srv: srv, c: c, store: st, svc: svc}
 }
 
 func (x *tc) do(method, path, body string, hdr ...string) (int, map[string]any, http.Header) {
@@ -87,12 +86,10 @@ func (x *tc) anon(method, path, body string) int {
 	return resp.StatusCode
 }
 
-func (x *tc) setupAndLogin() {
+// login signs in and checks the session cookie's attributes.
+func (x *tc) login(user, pw string) map[string]any {
 	x.t.Helper()
-	if code, m, _ := x.do("POST", "/api/v1/setup", `{"setupToken":"`+token+`","username":"albie","password":"a long password"}`); code != 201 {
-		x.t.Fatalf("setup %d %v", code, m)
-	}
-	code, m, h := x.do("POST", "/api/v1/auth/login", `{"username":"albie","password":"a long password"}`)
+	code, m, h := x.do("POST", "/api/v1/auth/login", `{"username":"`+user+`","password":"`+pw+`"}`)
 	if code != 200 {
 		x.t.Fatalf("login %d %v", code, m)
 	}
@@ -103,22 +100,45 @@ func (x *tc) setupAndLogin() {
 		}
 	}
 	x.csrf = m["csrfToken"].(string)
+	return m
 }
 
-func TestSetupLoginCSRFAndRBAC(t *testing.T) {
-	x := newTC(t, nil)
-	if code, m, _ := x.do("GET", "/api/v1/public/status", ""); code != 200 || m["setupRequired"] != true || m["version"] != "9.9.9" {
-		t.Fatalf("public %d %v", code, m)
+// setupAndLogin is a first start: the default admin/admin signs in, is held to changing
+// the password, changes it, and signs in again with the new one.
+func (x *tc) setupAndLogin() {
+	x.t.Helper()
+	if _, err := x.svc.EnsureDefaultAdmin(context.Background()); err != nil {
+		x.t.Fatal(err)
 	}
-	if code, _, _ := x.do("POST", "/api/v1/setup", `{"setupToken":"wrong","username":"albie","password":"a long password"}`); code != 401 {
-		t.Fatalf("wrong token %d", code)
+	m := x.login("admin", "admin")
+	if u, _ := m["user"].(map[string]any); u["mustChangePassword"] != true {
+		x.t.Fatalf("default admin login %v", m)
+	}
+	if code, m, _ := x.do("GET", "/api/v1/system/status", ""); code != 403 || m["title"] != "Password change required" {
+		x.t.Fatalf("status before change %d %v", code, m)
+	}
+	if code, m, _ := x.do("GET", "/api/v1/auth/me", ""); code != 200 || m["user"].(map[string]any)["mustChangePassword"] != true {
+		x.t.Fatalf("me before change %d %v", code, m)
+	}
+	if code, m, _ := x.do("POST", "/api/v1/auth/password", `{"currentPassword":"admin","newPassword":"a long password"}`, "X-CSRF-Token", x.csrf); code != 204 {
+		x.t.Fatalf("change password %d %v", code, m)
+	}
+	if u := x.login("admin", "a long password")["user"].(map[string]any); u["mustChangePassword"] != false {
+		x.t.Fatalf("after change %v", u)
+	}
+}
+
+func TestDefaultAdminLoginCSRFAndRBAC(t *testing.T) {
+	x := newTC(t, nil)
+	if code, m, _ := x.do("GET", "/api/v1/public/status", ""); code != 200 || m["version"] != "9.9.9" {
+		t.Fatalf("public %d %v", code, m)
 	}
 	if code, _, _ := x.do("GET", "/api/v1/system/status", ""); code != 401 {
 		t.Fatalf("anonymous %d", code)
 	}
 	x.setupAndLogin()
-	if code := x.anon("POST", "/api/v1/setup", `{"setupToken":"`+token+`","username":"x","password":"a long password"}`); code != 409 {
-		t.Fatalf("second setup %d", code)
+	if code := x.anon("POST", "/api/v1/setup", `{"username":"x","password":"a long password"}`); code == 201 {
+		t.Fatal("a setup endpoint still exists")
 	}
 	if code, m, _ := x.do("GET", "/api/v1/auth/me", ""); code != 200 || m["via"] != "session" || m["csrfToken"] != x.csrf {
 		t.Fatalf("me %d %v", code, m)
@@ -245,7 +265,8 @@ func TestSetupLoginCSRFAndRBAC(t *testing.T) {
 	}
 
 	// self-delete refused with a readable reason, then delete the other user
-	me := x.store.AuditEntries()[0].ActorID
+	_, mm, _ := x.do("GET", "/api/v1/auth/me", "")
+	me := mm["user"].(map[string]any)["id"].(string)
 	if code, m, _ := x.do("DELETE", "/api/v1/users/"+me, "", "X-CSRF-Token", x.csrf); code != 409 || m["detail"] != "you cannot delete yourself" {
 		t.Fatalf("self delete %d %v", code, m)
 	}
@@ -271,7 +292,7 @@ func TestLoginRateLimit(t *testing.T) {
 	x.c.Jar, _ = cookiejar.New(nil) // signed out
 	codes := ""
 	for range 6 {
-		code, _, h := x.do("POST", "/api/v1/auth/login", `{"username":"albie","password":"wrong password!"}`)
+		code, _, h := x.do("POST", "/api/v1/auth/login", `{"username":"admin","password":"wrong password!"}`)
 		codes += fmt.Sprint(code, " ")
 		if code == 429 && h.Get("Retry-After") == "" {
 			t.Fatal("429 without Retry-After")
@@ -281,7 +302,7 @@ func TestLoginRateLimit(t *testing.T) {
 		t.Fatalf("codes: %s", codes)
 	}
 	// the right password is refused too while limited (no oracle)
-	if code := x.anon("POST", "/api/v1/auth/login", `{"username":"albie","password":"a long password"}`); code != 429 {
+	if code := x.anon("POST", "/api/v1/auth/login", `{"username":"admin","password":"a long password"}`); code != 429 {
 		t.Fatalf("limited login = %d", code)
 	}
 }

@@ -15,17 +15,18 @@ import (
 
 type users struct{ db *sql.DB }
 
-const userCols = "id, username, role, password_hash, disabled, created_at, updated_at"
+const userCols = "id, username, role, password_hash, disabled, must_change_password, created_at, updated_at"
 
 func scanUser(row interface{ Scan(...any) error }) (domain.User, error) {
 	var u domain.User
 	var role string
-	var disabled bool
+	var disabled, mustChange bool
 	var c, up int64
-	if err := row.Scan(&u.ID, &u.Username, &role, &u.PasswordHash, &disabled, &c, &up); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &role, &u.PasswordHash, &disabled, &mustChange, &c, &up); err != nil {
 		return domain.User{}, notFound(err)
 	}
-	u.Role, u.Disabled, u.CreatedAt, u.UpdatedAt = domain.Role(role), disabled, fromUS(c), fromUS(up)
+	u.Role, u.Disabled, u.MustChangePassword = domain.Role(role), disabled, mustChange
+	u.CreatedAt, u.UpdatedAt = fromUS(c), fromUS(up)
 	return u, nil
 }
 
@@ -33,8 +34,8 @@ func insertUser(ctx context.Context, q interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, u domain.User,
 ) error {
-	_, err := q.ExecContext(ctx, "INSERT INTO users ("+userCols+") VALUES (?, ?, ?, ?, ?, ?, ?)",
-		u.ID, u.Username, string(u.Role), u.PasswordHash, u.Disabled, us(u.CreatedAt), us(u.UpdatedAt))
+	_, err := q.ExecContext(ctx, "INSERT INTO users ("+userCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		u.ID, u.Username, string(u.Role), u.PasswordHash, u.Disabled, u.MustChangePassword, us(u.CreatedAt), us(u.UpdatedAt))
 	if isDuplicate(err) {
 		return domain.ErrConflict
 	}
@@ -111,8 +112,8 @@ func (r users) List(ctx context.Context) ([]domain.User, error) {
 
 func (r users) Update(ctx context.Context, u domain.User) error {
 	err := mustAffect(r.db.ExecContext(ctx,
-		"UPDATE users SET username = ?, role = ?, password_hash = ?, disabled = ?, updated_at = ? WHERE id = ?",
-		u.Username, string(u.Role), u.PasswordHash, u.Disabled, us(u.UpdatedAt), u.ID))
+		"UPDATE users SET username = ?, role = ?, password_hash = ?, disabled = ?, must_change_password = ?, updated_at = ? WHERE id = ?",
+		u.Username, string(u.Role), u.PasswordHash, u.Disabled, u.MustChangePassword, us(u.UpdatedAt), u.ID))
 	if isDuplicate(err) {
 		return domain.ErrConflict
 	}

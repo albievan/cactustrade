@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// loginLimiter counts failed sign-ins (and setup attempts) per client address and per
+// loginLimiter counts failed sign-ins per client address and per
 // username in a sliding window. Over the limit, requests are refused with 429 before the
 // password is even checked.
 type loginLimiter struct {

@@ -45,8 +45,11 @@ On first start, the data folder (`./data`) gets:
 |---|---|
 | `cactustrade.db` | The SQLite database |
 | `master.key` | The AES-256 key that encrypts your eToro/LLM keys. **Back it up off the machine.** |
-| `setup_token` | Open the web page, choose *create the administrator*, and paste this token |
 | `tls/` | A self-signed certificate. Set `CACTUSTRADE_TLS_CERT` / `CACTUSTRADE_TLS_KEY` to use your own. |
+
+Open the page (`http://` is redirected to `https://`), accept the certificate warning, and sign
+in as **`admin` / `admin`**. You must choose a new password (12+ characters) before anything
+else works.
 
 ## Quick start: containers (MariaDB)
 
@@ -57,9 +60,9 @@ export ETORO_DEMO_PK=…     # optional: eToro demo "User Key"
 ```
 
 `deploy.sh` builds the image (everything is built inside containers) and starts MariaDB 11
-and the app. It generates the database passwords, the master key, the setup token and the
-metrics token into `SECRETS_DIR` (k8s: secret `cactustrade-secrets`), then prints the URL and
-the setup token. Other actions:
+and the app. It generates the database passwords, the master key and the metrics
+token into `SECRETS_DIR` (k8s: secret `cactustrade-secrets`), then prints the URL. Sign in
+as `admin` / `admin` and choose a new password. Other actions:
 
 ```
 ./deploy.sh --version|--status|--backup-now|--upgrade [--to REF]|--uninstall|--delete-uninstall  --<target>
@@ -91,14 +94,13 @@ banner on every page.
 | Variable | Default | Meaning |
 |---|---|---|
 | `CACTUSTRADE_DB_DRIVER` | `sqlite` | `sqlite` (standalone) or `mariadb` (containers) |
-| `CACTUSTRADE_DATA_DIR` | `./data` (`/data` in the image) | Database, master key, setup token, certificate |
+| `CACTUSTRADE_DATA_DIR` | `./data` (`/data` in the image) | Database, master key, certificate |
 | `CACTUSTRADE_ADDR` | `:8443`, or `:8080` with TLS off | Listen address |
-| `CACTUSTRADE_TLS` | `auto` | `auto` = your certificate or a self-signed one; `off` = behind a TLS proxy |
+| `CACTUSTRADE_TLS` | `auto` | `auto` = your certificate or a self-signed one (plain HTTP on the same port redirects to HTTPS); `off` = behind a TLS proxy |
 | `CACTUSTRADE_TLS_CERT` / `_KEY` | — | PEM certificate and key |
 | `CACTUSTRADE_MASTER_KEY` / `_FILE` | generated (standalone only) | 64 hex characters |
-| `CACTUSTRADE_SECRETS_DIR` | — | Folder holding `db_password`, `master_key`, `setup_token`, `metrics_token` |
+| `CACTUSTRADE_SECRETS_DIR` | — | Folder holding `db_password`, `master_key`, `metrics_token` |
 | `CACTUSTRADE_DB_HOST`, `_NAME`, `_USER`, `_PASSWORD[_FILE]` | `localhost`, `cactustrade`, `cactustrade` | MariaDB connection |
-| `CACTUSTRADE_SETUP_TOKEN[_FILE]` | generated into the data folder | First-run setup token |
 | `CACTUSTRADE_METRICS_TOKEN[_FILE]` | — | Bearer token that `/metrics` requires, when set |
 | `CACTUSTRADE_COOKIE_SECURE` | `true` | Secure session cookie (keep it on) |
 | `CACTUSTRADE_TRUSTED_PROXIES` | — | CIDRs allowed to set `X-Forwarded-For` |

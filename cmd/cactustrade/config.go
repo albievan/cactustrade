@@ -24,7 +24,6 @@ type config struct {
 	SecretsDir     string
 	MasterKey      string
 	MasterKeyFile  string
-	SetupToken     string
 	TLS            string // auto | off
 	TLSCert        string
 	TLSKey         string
@@ -141,9 +140,6 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 		if c.DBPassword == "" {
 			return c, errors.New("mariadb needs CACTUSTRADE_DB_PASSWORD, CACTUSTRADE_DB_PASSWORD_FILE or db_password in CACTUSTRADE_SECRETS_DIR")
 		}
-	}
-	if c.SetupToken, err = secret(getenv, "CACTUSTRADE_SETUP_TOKEN", c.SecretsDir, "setup_token"); err != nil {
-		return c, err
 	}
 	if c.MetricsToken, err = secret(getenv, "CACTUSTRADE_METRICS_TOKEN", c.SecretsDir, "metrics_token"); err != nil {
 		return c, err

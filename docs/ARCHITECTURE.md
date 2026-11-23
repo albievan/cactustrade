@@ -52,8 +52,8 @@ container deployment). One SQL dialect subset serves both:
 - No `RETURNING`, `ON CONFLICT` or `ON DUPLICATE KEY`. Upserts are update-then-insert in one
   transaction.
 - MariaDB connects with `clientFoundRows` so "rows affected" means "rows matched", as in SQLite.
-- First-run setup is made atomic in both databases by inserting the `setup.completed`
-  settings row: its primary key lets exactly one concurrent setup win.
+- Creating the default administrator is made atomic in both databases by inserting the
+  `setup.completed` settings row: its primary key lets exactly one concurrent start win.
 
 `migrations/sqlite` and `migrations/mariadb` hold the same versions (`TestMigrationParity`).
 `internal/adapters/sqlstore/storetest` is one repository suite. It runs against SQLite in
@@ -71,9 +71,11 @@ container deployment). One SQL dialect subset serves both:
 - **API keys:** `ctk_<id>_<secret>`; only SHA-256(secret) is stored and compared in constant
   time. A key's role never exceeds its owner's (demotion revokes keys above the new role).
   Keys cannot create keys or change credentials.
-- **Rate limits:** sign-in and setup are limited per client IP (20 failures / 15 min) and per
+- **Rate limits:** sign-in is limited per client IP (20 failures / 15 min) and per
   username (5). A limited request is refused before any password check.
-- **First run:** setup needs the setup token and is closed for good once a user exists.
+- **First run:** the server creates `admin` / `admin`, which must choose a new password
+  before it can do anything else (403 "Password change required").
+- **One port:** with TLS on, plain HTTP on the same port gets a 308 redirect to HTTPS.
 - **Credentials:** write-only. Encrypted with AES-256-GCM under the master key (env, file or
   generated 0600). The ciphertext is bound to its name. Never logged, audited or returned.
 - **Headers:** strict CSP (`default-src 'self'`), `X-Frame-Options: DENY`, `nosniff`,

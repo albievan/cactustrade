@@ -1,6 +1,6 @@
 # cactusTrade on k3s / Kubernetes. Rendered by deploy.sh, which fills the ${…} placeholders
 # from .env. The Secret cactustrade-secrets (db_password, db_root_password, master_key,
-# setup_token, metrics_token, etoro_demo_pub, etoro_demo_pk) is created by deploy.sh.
+# metrics_token, etoro_demo_pub, etoro_demo_pk) is created by deploy.sh.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -148,7 +148,6 @@ spec:
             items:
               - { key: db_password, path: db_password }
               - { key: master_key, path: master_key }
-              - { key: setup_token, path: setup_token }
               - { key: metrics_token, path: metrics_token }
               - { key: etoro_demo_pub, path: etoro_demo_pub }
               - { key: etoro_demo_pk, path: etoro_demo_pk }

@@ -32,6 +32,9 @@ type Principal struct {
 	Via      Via
 	APIKeyID string
 	RemoteIP string
+	// MustChangePassword: the account still has the default password, so every use case
+	// except Me, ChangePassword and sign-out is refused (domain.ErrPasswordChangeRequired).
+	MustChangePassword bool
 }
 
 // Can reports whether the principal has permission p.
@@ -49,11 +52,9 @@ type Deps struct {
 
 // Config holds use-case settings.
 type Config struct {
-	// SetupToken must accompany first-run setup. Empty disables setup (fail closed).
-	SetupToken string
-	Sessions   domain.SessionPolicy
-	Version    string
-	Build      string
+	Sessions domain.SessionPolicy
+	Version  string
+	Build    string
 }
 
 // Service implements the use cases.
@@ -85,6 +86,9 @@ func New(d Deps, cfg Config) (*Service, error) {
 func (s *Service) authorize(p Principal, perm domain.Permission) error {
 	if p.UserID == "" {
 		return domain.ErrUnauthenticated
+	}
+	if p.MustChangePassword {
+		return domain.ErrPasswordChangeRequired
 	}
 	if !p.Can(perm) {
 		return domain.ErrForbidden
