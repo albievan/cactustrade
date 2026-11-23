@@ -145,7 +145,11 @@ type Store struct {
 	outbox   []domain.OutboxMail
 	resets   map[string]domain.PasswordReset
 	equity   []domain.EquitySnapshot
+	exec     execState
 	PingErr  error
+	// OrdersErr makes every Orders write (Create, Update) fail, e.g. to prove that nothing is
+	// sent when the order row cannot be persisted.
+	OrdersErr error
 }
 
 type instrRec struct {
@@ -699,6 +703,7 @@ func (r accountRepo) Delete(_ context.Context, id string) error {
 	delete(r.s.shares, id)
 	delete(r.s.watch, id)
 	r.s.equity = slices.DeleteFunc(r.s.equity, func(e domain.EquitySnapshot) bool { return e.AccountID == id })
+	r.s.exec.deleteAccount(id)
 	return nil
 }
 

@@ -24,9 +24,9 @@ import (
 // maxResponse bounds a response body; the largest (portfolio, 1000 candles) are far smaller.
 const maxResponse = 8 << 20
 
-// ErrNotEnabled is returned for operations that change the account before the phase that
-// enables them (orders: phase 4). The client is read-only until then.
-var ErrNotEnabled = errors.New("eToro order operations are not enabled in this version")
+// ErrNotEnabled is returned for an account-changing operation this version does not perform
+// (setting stops), and for any account change attempted through the read path.
+var ErrNotEnabled = errors.New("this eToro operation is not enabled in this version")
 
 // Config builds a Client. Only tests set BaseURL, Sleep or Now.
 type Config struct {
@@ -66,6 +66,12 @@ func New(cfg Config) (*Client, error) {
 	if cfg.HTTP == nil {
 		cfg.HTTP = &http.Client{}
 	}
+	// Never follow a redirect: it would carry the keys (custom headers are forwarded, even to
+	// another host) and could turn an order into a request to a path outside the allowlist.
+	// A 3xx is answered like any other unexpected status (fail closed).
+	hc := *cfg.HTTP
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	cfg.HTTP = &hc
 	if cfg.Log == nil {
 		cfg.Log = slog.New(slog.DiscardHandler)
 	}
@@ -161,7 +167,7 @@ func (c *Client) call(ctx context.Context, op Op, path map[string]string, query 
 	if !ok {
 		return fmt.Errorf("etoro: operation %q is not allowlisted", op)
 	}
-	if ep.Mutates {
+	if ep.Mutates { // account changes go through mutate (execute.go), never through here
 		return fmt.Errorf("etoro %s: %w", op, ErrNotEnabled)
 	}
 	acct, mode, err := account(ctx)
@@ -201,11 +207,67 @@ func (c *Client) call(ctx context.Context, op Op, path map[string]string, query 
 }
 
 // attempt sends one request. It reports whether the failure is worth retrying and how long
-// eToro asked us to wait.
+// eToro asked us to wait. Only operations that change nothing come here (each attempt has a
+// new x-request-id); account changes go through mutate, which never retries.
 func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, mode domain.TradingMode, target string, payload []byte, apiKey, userKey string, out any) (retry bool, wait time.Duration, err error) {
 	if err := lim.Wait(ctx, ep.Quota); err != nil {
 		return false, 0, err
 	}
+	reqID := c.cfg.Random.ID()
+	tr := c.roundTrip(ctx, op, ep, mode, target, payload, apiKey, userKey, reqID)
+	switch tr.kind {
+	case tripNotSent:
+		return false, 0, fmt.Errorf("etoro %s: %w", op, tr.err)
+	case tripLost:
+		if ctx.Err() != nil {
+			return false, 0, ctx.Err()
+		}
+		return !tr.tooLarge, 0, fmt.Errorf("etoro %s: %w: %w", op, domain.ErrUnavailable, tr.err)
+	}
+	if tr.status < 200 || tr.status > 299 {
+		apiErr := parseError(op, tr.status, tr.data)
+		switch {
+		case tr.status == http.StatusTooManyRequests:
+			wait = retryAfter(tr.header.Get("Retry-After"))
+			lim.Block(ep.Quota, c.cfg.Now().Add(wait))
+			c.cfg.Log.WarnContext(ctx, "eToro rate limit hit", "op", string(op), "quota", string(ep.Quota), "retry_after_s", wait.Seconds())
+			return true, wait, apiErr
+		case tr.status >= 500:
+			return true, 0, apiErr
+		}
+		c.cfg.Log.WarnContext(ctx, "eToro refused a request", "op", string(op), "mode", string(mode), "request_id", reqID,
+			"status", tr.status, "code", apiErr.Code)
+		return false, 0, apiErr
+	}
+	if out == nil || len(bytes.TrimSpace(tr.data)) == 0 {
+		return false, 0, nil
+	}
+	if err := json.Unmarshal(tr.data, out); err != nil {
+		return false, 0, fmt.Errorf("etoro %s: unexpected response: %w: %w", op, domain.ErrUnavailable, err)
+	}
+	return false, 0, nil
+}
+
+// Round-trip outcomes.
+const (
+	tripAnswered = iota // a complete answer (any status) was read
+	tripNotSent         // the request could not be built: nothing left this process
+	tripLost            // sent, or maybe sent, without a complete answer
+)
+
+// trip is the result of one HTTP exchange.
+type trip struct {
+	kind     int
+	status   int
+	header   http.Header
+	data     []byte
+	tooLarge bool // the answer exceeded maxResponse (tripLost)
+	err      error
+}
+
+// roundTrip sends exactly one request with the given x-request-id and reads the answer
+// (capped at maxResponse). It never retries and never logs a key.
+func (c *Client) roundTrip(ctx context.Context, op Op, ep Endpoint, mode domain.TradingMode, target string, payload []byte, apiKey, userKey, reqID string) trip {
 	actx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
 	defer cancel()
 	var rd io.Reader
@@ -214,9 +276,8 @@ func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, 
 	}
 	req, err := http.NewRequestWithContext(actx, ep.Method, target, rd)
 	if err != nil {
-		return false, 0, fmt.Errorf("etoro %s: %w", op, err)
+		return trip{kind: tripNotSent, err: err}
 	}
-	reqID := c.cfg.Random.ID()
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("x-user-key", userKey)
 	req.Header.Set("x-request-id", reqID)
@@ -228,43 +289,19 @@ func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, 
 	resp, err := c.cfg.HTTP.Do(req)
 	if err != nil {
 		c.cfg.Log.WarnContext(ctx, "eToro request failed", "op", string(op), "mode", string(mode), "request_id", reqID, "err", err)
-		if ctx.Err() != nil {
-			return false, 0, ctx.Err()
-		}
-		return true, 0, fmt.Errorf("etoro %s: %w: %w", op, domain.ErrUnavailable, err)
+		return trip{kind: tripLost, err: err}
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	c.cfg.Log.DebugContext(ctx, "eToro request", "op", string(op), "mode", string(mode), "request_id", reqID,
 		"status", resp.StatusCode, "duration_ms", c.cfg.Now().Sub(start).Milliseconds())
 	if err != nil {
-		return true, 0, fmt.Errorf("etoro %s: reading the response: %w: %w", op, domain.ErrUnavailable, err)
+		return trip{kind: tripLost, err: fmt.Errorf("reading the response: %w", err)}
 	}
 	if len(data) > maxResponse {
-		return false, 0, fmt.Errorf("etoro %s: response larger than %d bytes: %w", op, maxResponse, domain.ErrUnavailable)
+		return trip{kind: tripLost, tooLarge: true, err: fmt.Errorf("response larger than %d bytes", maxResponse)}
 	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		apiErr := parseError(op, resp.StatusCode, data)
-		switch {
-		case resp.StatusCode == http.StatusTooManyRequests:
-			wait = retryAfter(resp.Header.Get("Retry-After"))
-			lim.Block(ep.Quota, c.cfg.Now().Add(wait))
-			c.cfg.Log.WarnContext(ctx, "eToro rate limit hit", "op", string(op), "quota", string(ep.Quota), "retry_after_s", wait.Seconds())
-			return true, wait, apiErr
-		case resp.StatusCode >= 500:
-			return true, 0, apiErr
-		}
-		c.cfg.Log.WarnContext(ctx, "eToro refused a request", "op", string(op), "mode", string(mode), "request_id", reqID,
-			"status", resp.StatusCode, "code", apiErr.Code)
-		return false, 0, apiErr
-	}
-	if out == nil || len(bytes.TrimSpace(data)) == 0 {
-		return false, 0, nil
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return false, 0, fmt.Errorf("etoro %s: unexpected response: %w: %w", op, domain.ErrUnavailable, err)
-	}
-	return false, 0, nil
+	return trip{kind: tripAnswered, status: resp.StatusCode, header: resp.Header, data: data}
 }
 
 // expand fills a path template; values are path-escaped and none may be left unfilled.

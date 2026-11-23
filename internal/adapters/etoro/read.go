@@ -406,13 +406,33 @@ func (c *Client) TradeHistory(ctx context.Context, since time.Time) ([]domain.Cl
 	return out, nil
 }
 
-// eToro order status ids (orders:lookup).
+// eToro order status ids (orders:lookup and close-orders): 1 Received, 2 Placed,
+// 3 Filled, 4 Rejected, 5 PartiallyFilled, 6 PendingCancel, 7 Canceled, 8 Expired,
+// 9 CanceledPartiallyFilled, 10 RejectedPartiallyFilled, 11 WaitingForMarket,
+// 12 PendingTriggeredRate. Any other id is unknown (fail closed).
 var orderStates = map[int]domain.OrderState{
-	1: domain.OrderPending, 2: domain.OrderPending, 11: domain.OrderPending, 12: domain.OrderPending,
-	3: domain.OrderFilled, 5: domain.OrderPartial, 10: domain.OrderPartial, 4: domain.OrderRejected,
+	1: domain.OrderPending, 2: domain.OrderPending, 6: domain.OrderPending, 11: domain.OrderPending, 12: domain.OrderPending,
+	3: domain.OrderFilled, 4: domain.OrderRejected, 5: domain.OrderPartial, 7: domain.OrderCancelled, 8: domain.OrderCancelled,
+	9: domain.OrderPartial, 10: domain.OrderPartial,
 }
 
-// Lookup finds an order by the x-request-id it was sent with (eToro's referenceId).
+// finalStatus are the terminal ids: the order can no longer execute.
+var finalStatus = map[int]bool{3: true, 4: true, 7: true, 8: true, 9: true, 10: true}
+
+// side reads eToro's asset side ("long"/"short"; "buy"/"sell" accepted too).
+func side(s string) domain.Direction {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "long", "buy":
+		return domain.Long
+	case "short", "sell", "sellshort":
+		return domain.Short
+	}
+	return ""
+}
+
+// Lookup finds an order by the x-request-id it was sent with (eToro's referenceId), with
+// what eToro actually opened: the asset's settlement type, leverage and side, and each
+// resulting position with its units, invested amount, average price and stop-loss.
 func (c *Client) Lookup(ctx context.Context, requestID string) (domain.OrderStatus, error) {
 	if requestID == "" {
 		return domain.OrderStatus{}, domain.Invalid("requestId", "is required")
@@ -424,39 +444,47 @@ func (c *Client) Lookup(ctx context.Context, requestID string) (domain.OrderStat
 			Name         string  `json:"name"`
 			ErrorMessage *string `json:"errorMessage"`
 		} `json:"status"`
+		Asset struct {
+			InstrumentID   int64  `json:"instrumentId"`
+			SettlementType string `json:"settlementType"`
+			Leverage       int    `json:"leverage"`
+			Side           string `json:"side"`
+		} `json:"asset"`
 		PositionExecutions []struct {
-			PositionID int64 `json:"positionId"`
+			PositionID     int64    `json:"positionId"`
+			Invested       float64  `json:"investedAmountCurrency"`
+			RemainingUnits float64  `json:"remainingUnits"`
+			StopLossRate   *float64 `json:"stopLossRate"`
+			OpeningData    struct {
+				Units    *float64 `json:"units"`
+				AvgPrice float64  `json:"avgPrice"`
+			} `json:"openingData"`
 		} `json:"positionExecutions"`
 	}
 	if err := c.call(ctx, OpOrderLookup, nil, url.Values{"referenceId": {requestID}}, nil, &resp); err != nil {
 		return domain.OrderStatus{RequestID: requestID, State: domain.OrderUnknown}, err
 	}
-	st := domain.OrderStatus{RequestID: requestID, OrderID: resp.OrderID, State: domain.OrderUnknown, Reason: resp.Status.Name}
+	st := domain.OrderStatus{
+		RequestID: requestID, OrderID: resp.OrderID, State: domain.OrderUnknown, Reason: resp.Status.Name,
+		Instrument: domain.InstrumentID(resp.Asset.InstrumentID), Settlement: domain.Settlement(strings.ToLower(resp.Asset.SettlementType)),
+		Leverage: resp.Asset.Leverage, Side: side(resp.Asset.Side),
+	}
 	if s, ok := orderStates[resp.Status.ID]; ok {
-		st.State = s
+		st.State, st.Final = s, finalStatus[resp.Status.ID]
 	}
 	if resp.Status.ErrorMessage != nil && *resp.Status.ErrorMessage != "" {
 		st.Reason = *resp.Status.ErrorMessage
 	}
 	for _, pe := range resp.PositionExecutions {
-		st.PositionIDs = append(st.PositionIDs, pe.PositionID)
+		units := pe.RemainingUnits
+		if pe.OpeningData.Units != nil {
+			units = *pe.OpeningData.Units
+		}
+		e := domain.PositionExecution{PositionID: pe.PositionID, Units: toMicros(units), Amount: toCents(pe.Invested), OpenRate: toMicros(pe.OpeningData.AvgPrice)}
+		if pe.StopLossRate != nil {
+			e.StopLossRate = toMicros(*pe.StopLossRate)
+		}
+		st.Executions = append(st.Executions, e)
 	}
 	return st, nil
-}
-
-// --- account changes: phase 4 ------------------------------------------------------------
-
-// Open is not enabled before phase 4 (demo orders).
-func (c *Client) Open(context.Context, domain.OrderIntent) (domain.OrderStatus, error) {
-	return domain.OrderStatus{}, fmt.Errorf("etoro %s: %w", OpOpenOrder, ErrNotEnabled)
-}
-
-// Cancel is not enabled before phase 4.
-func (c *Client) Cancel(context.Context, int64) error {
-	return fmt.Errorf("etoro %s: %w", OpCancelOrder, ErrNotEnabled)
-}
-
-// Close is not enabled before phase 4.
-func (c *Client) Close(context.Context, int64, domain.InstrumentID) (domain.OrderStatus, error) {
-	return domain.OrderStatus{}, fmt.Errorf("etoro %s: %w", OpClosePosition, ErrNotEnabled)
 }

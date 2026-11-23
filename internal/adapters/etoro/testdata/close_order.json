@@ -1,0 +1,4 @@
+{"token":"3c9e1d7a-5f2b-4a6c-8e1d-9b7a6c5d4e30","orderID":800001,"CID":1,"statusID":3,"referenceID":"5b1c9e2d-3f4a-4b6c-8d7e-1a2b3c4d5e6f",
+ "orderType":17,"closeActionType":null,"operationType":2,"errorCode":null,"errorMessage":null,"assetCurrencyID":1,"accountCurrencyID":1,
+ "instrumentID":1001,"requestOccurred":"2026-11-23T20:50:00Z","proceeds":503.25,"externalOperationType":0,"externalOperationData":null,
+ "positions":[{"positionID":1001,"occurred":"2026-11-23T20:50:01Z","rate":190.23,"units":2.645503,"conversionRate":1.0,"amount":503.25}]}

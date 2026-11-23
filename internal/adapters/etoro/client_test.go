@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +20,12 @@ import (
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
 	"github.com/albievan/cactustrade/internal/ports/fakes"
+)
+
+// Special route statuses of fakeEtoro.
+const (
+	dropConnection = -1 // close the connection without answering
+	stall          = -2 // never answer (the client's timeout fires)
 )
 
 // fakeEtoro serves fixtures by path and records every request.
@@ -31,14 +39,17 @@ type fakeEtoro struct {
 }
 
 var fixtureFor = map[string]string{
-	"/api/v1/trading/info/demo/pnl":           "pnl.json",
-	"/api/v1/trading/info/real/pnl":           "pnl.json",
-	"/api/v2/market-data/rates":               "rates.json",
-	"/api/v2/market-data/instruments/search":  "search.json",
-	"/api/v2/trading/info/demo/eligibility":   "eligibility.json",
-	"/api/v2/trading/info/demo/costs":         "costs.json",
-	"/api/v2/trading/info/demo/orders:lookup": "lookup.json",
-	"/api/v1/trading/info/trade/demo/history": "history.json",
+	"/api/v1/trading/info/demo/pnl":                                     "pnl.json",
+	"/api/v1/trading/info/real/pnl":                                     "pnl.json",
+	"/api/v2/market-data/rates":                                         "rates.json",
+	"/api/v2/market-data/instruments/search":                            "search.json",
+	"/api/v2/trading/info/demo/eligibility":                             "eligibility.json",
+	"/api/v2/trading/info/demo/costs":                                   "costs.json",
+	"/api/v2/trading/info/demo/orders:lookup":                           "lookup.json",
+	"/api/v1/trading/info/trade/demo/history":                           "history.json",
+	"/api/v2/trading/execution/demo/orders":                             "open.json",
+	"/api/v1/trading/info/demo/close-orders/800001":                     "close_order.json",
+	"/api/v1/trading/execution/demo/market-close-orders/positions/1001": "close.json",
 }
 
 func (f *fakeEtoro) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,9 +58,24 @@ func (f *fakeEtoro) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.reqs = append(f.reqs, r)
 	f.bodies = append(f.bodies, string(b))
 	n := len(f.reqs)
+	route := f.route
 	f.mu.Unlock()
-	if f.route != nil {
-		if status, body, h := f.route(r, n); status != 0 {
+	if route != nil {
+		status, body, h := route(r, n)
+		switch status {
+		case dropConnection: // the answer is lost: the connection closes without a response
+			if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				_ = conn.Close()
+			}
+			return
+		case stall: // no answer until the client gives up
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		if status != 0 {
 			for k, v := range h {
 				w.Header()[k] = v
 			}
@@ -74,6 +100,20 @@ func (f *fakeEtoro) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+// requests returns the requests seen so far (safe while handlers still run).
+func (f *fakeEtoro) requests() []*http.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.reqs)
+}
+
+// setRoute replaces the route while handlers may still be running.
+func (f *fakeEtoro) setRoute(r func(*http.Request, int) (int, string, http.Header)) {
+	f.mu.Lock()
+	f.route = r
+	f.mu.Unlock()
+}
+
 type env struct {
 	c     *Client
 	fake  *fakeEtoro
@@ -82,7 +122,7 @@ type env struct {
 	slept []time.Duration
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T, opts ...func(*Config)) *env {
 	t.Helper()
 	e := &env{fake: &fakeEtoro{t: t}, sec: &fakes.SecretStore{}}
 	e.mode.Store(domain.ModeDemo)
@@ -93,7 +133,7 @@ func newEnv(t *testing.T) *env {
 	_ = e.sec.Put(ctx, domain.CredEtoroDemoUserKey, "demo-user")
 	var mu sync.Mutex
 	now := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
-	c, err := New(Config{
+	cfg := Config{
 		BaseURL: srv.URL, HTTP: srv.Client(), Secrets: e.sec, Random: &fakes.Random{},
 		Now: func() time.Time {
 			mu.Lock()
@@ -107,7 +147,11 @@ func newEnv(t *testing.T) *env {
 			mu.Unlock()
 			return nil
 		},
-	})
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	c, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,8 +426,16 @@ func TestLookupAndHistory(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.ctx()
 	st, err := e.c.Lookup(ctx, "req-1")
-	if err != nil || st.State != domain.OrderFilled || st.OrderID != 555 || len(st.PositionIDs) != 1 {
-		t.Fatalf("lookup = %+v %v", st, err)
+	want := domain.OrderStatus{
+		RequestID: "req-1", OrderID: 555, State: domain.OrderFilled, Final: true, Instrument: 1001,
+		Settlement: domain.SettlementReal, Leverage: 1, Side: domain.Long, Reason: "Filled",
+		Executions: []domain.PositionExecution{{PositionID: 1001, Units: 2_645_503, Amount: 500_00, OpenRate: 189_000_000, StopLossRate: 185_000_000}},
+	}
+	if err != nil || !reflect.DeepEqual(st, want) {
+		t.Fatalf("lookup = %+v %v\nwant %+v", st, err, want)
+	}
+	if ok, why := st.Conforms(domain.Long); !ok {
+		t.Fatalf("a real/long/x1 fill with a stop must conform: %s", why)
 	}
 	if e.last().URL.Query().Get("referenceId") != "req-1" {
 		t.Fatal("lookup must use referenceId = our x-request-id")
@@ -401,13 +453,18 @@ func TestLookupAndHistory(t *testing.T) {
 }
 
 func TestLookupStates(t *testing.T) {
-	for id, want := range map[int]domain.OrderState{1: domain.OrderPending, 3: domain.OrderFilled, 4: domain.OrderRejected, 5: domain.OrderPartial, 10: domain.OrderPartial, 99: domain.OrderUnknown} {
+	for id, want := range map[int]domain.OrderState{
+		1: domain.OrderPending, 2: domain.OrderPending, 3: domain.OrderFilled, 4: domain.OrderRejected, 5: domain.OrderPartial,
+		6: domain.OrderPending, 7: domain.OrderCancelled, 8: domain.OrderCancelled, 9: domain.OrderPartial, 10: domain.OrderPartial,
+		11: domain.OrderPending, 12: domain.OrderPending, 99: domain.OrderUnknown,
+	} {
 		e := newEnv(t)
 		e.fake.route = func(*http.Request, int) (int, string, http.Header) {
 			return 200, fmt.Sprintf(`{"orderId":1,"status":{"id":%d,"name":"x","errorMessage":"why"}}`, id), nil
 		}
 		st, err := e.c.Lookup(e.ctx(), "r")
-		if err != nil || st.State != want || st.Reason != "why" {
+		final := id == 3 || id == 4 || id == 7 || id == 8 || id == 9 || id == 10
+		if err != nil || st.State != want || st.Reason != "why" || st.Final != final {
 			t.Errorf("status %d → %+v %v", id, st, err)
 		}
 	}
@@ -484,19 +541,12 @@ func TestBadResponses(t *testing.T) {
 	}
 }
 
-func TestOrdersAreNotEnabled(t *testing.T) {
+// TestReadPathRefusesAccountChanges: the generic read path (with its retries and fresh
+// request ids) refuses every account-changing operation before any I/O, and setting stops is
+// not enabled at all.
+func TestReadPathRefusesAccountChanges(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.ctx()
-	if _, err := e.c.Open(ctx, domain.OrderIntent{RequestID: "r", Instrument: 1, Amount: 100}); !errors.Is(err, ErrNotEnabled) {
-		t.Fatal("open")
-	}
-	if err := e.c.Cancel(ctx, 1); !errors.Is(err, ErrNotEnabled) {
-		t.Fatal("cancel")
-	}
-	if _, err := e.c.Close(ctx, 1, 1); !errors.Is(err, ErrNotEnabled) {
-		t.Fatal("close")
-	}
-	// even through the generic call, every mutating operation is refused before any I/O
 	for op, ep := range Allowlist {
 		if !ep.Mutates {
 			continue
@@ -505,11 +555,20 @@ func TestOrdersAreNotEnabled(t *testing.T) {
 			t.Errorf("%s: %v", op, err)
 		}
 	}
+	if err := e.c.mutate(ctx, OpSetStopLossTake, map[string]string{"positionId": "1"}, testRequestID, nil, nil); !errors.Is(err, ErrNotEnabled) {
+		t.Fatalf("set SL/TP: %v", err)
+	}
+	if err := e.c.mutate(ctx, OpPortfolio, nil, testRequestID, nil, nil); !errors.Is(err, ErrNotEnabled) {
+		t.Fatalf("a read through mutate: %v", err)
+	}
 	if err := e.c.call(ctx, Op("transfer"), nil, nil, nil, nil); err == nil {
 		t.Fatal("non-allowlisted op")
 	}
+	if err := e.c.mutate(ctx, Op("transfer"), nil, testRequestID, nil, nil); !errors.Is(err, ErrNotEnabled) {
+		t.Fatal("non-allowlisted mutation")
+	}
 	if len(e.fake.reqs) != 0 {
-		t.Fatal("a mutating request reached eToro")
+		t.Fatal("a refused request reached eToro")
 	}
 }
 

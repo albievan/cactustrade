@@ -1,3 +1,11 @@
-{"orderId":555,"action":"open","transaction":"buy","status":{"id":3,"name":"Filled","errorCode":0,"errorMessage":null},
- "asset":{"symbol":"EXMP","instrumentId":1001,"currency":"USD","settlementType":"real","leverage":1,"side":"buy"},
- "positionExecutions":[{"positionId":1001,"state":"open"}]}
+{"accountId":1,"gcid":2,"portfolioId":1,"orderId":555,"action":"open","transaction":"buy","type":"mkt","etoroOrderTypeId":17,
+ "status":{"id":3,"name":"Filled","errorCode":0,"errorMessage":null},
+ "asset":{"symbol":"EXMP","instrumentId":1001,"currency":"USD","settlementType":"real","leverage":1,"side":"long"},
+ "orderCurrency":"usd","requestedAmount":500.0,"requestedUnits":null,"requestedContracts":null,"frozenAmount":500.0,
+ "requestedTriggerRate":null,"openStopLossRate":185.0,"openTakeProfitRate":199.5,"stopLossType":"fixed","totalCosts":0.0,"positionsToClose":[],
+ "positionExecutions":[{"positionId":1001,"state":"open","investedAmountCurrency":500.0,"initialExposureAccountCurrency":500.0,
+   "initialExposureAssetCurrency":500.0,"addedFunds":0.0,"marginAccountCurrency":500.0,"marginAssetCurrency":500.0,
+   "remainingUnits":2.6455,"remainingContracts":null,"stopLossRate":185.0,"takeProfitRate":199.5,
+   "openingData":{"openTime":"2026-11-23T15:00:00Z","orderId":555,"executionTime":"2026-11-23T15:00:01Z","units":2.645503,
+     "contracts":null,"avgPrice":189.0,"avgConversionRate":1.0,"marketSpread":0.02,"markup":0.0,"priceId":1,"fees":0.0,"taxes":0.0}}],
+ "requestTime":"2026-11-23T15:00:00Z","lastUpdate":"2026-11-23T15:00:01Z","openActionType":"customer","requestType":"byAmount"}

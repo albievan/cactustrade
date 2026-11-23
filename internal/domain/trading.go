@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -264,13 +265,74 @@ type OrderIntent struct {
 	TakeProfitRate Micros
 }
 
-// OrderStatus is the broker's answer to an order lookup.
+// Settlement is how eToro settles a position: the real share or a CFD. Only two values
+// conform (a long as the real share, a short as a CFD); anything else eToro reports is kept
+// as it came and never conforms.
+type Settlement string
+
+// Settlements cactusTrade trades (CLAUDE.md §2.3).
+const (
+	SettlementReal Settlement = "real"
+	SettlementCFD  Settlement = "cfd"
+)
+
+// PositionExecution is one position an order produced (open) or closed (close).
+type PositionExecution struct {
+	PositionID int64
+	Units      Micros // executed units (open) or units closed (close)
+	Amount     Cents  // invested (open) or the closed amount (close), USD
+	// OpenRate is the average execution price of an open; 0 for a close.
+	OpenRate Micros
+	// StopLossRate is the position's stop after an open (0 = none); 0 for a close.
+	StopLossRate Micros
+	// CloseRate is the execution price of a close; 0 for an open.
+	CloseRate Micros
+}
+
+// OrderStatus is the broker's answer about one order: the reply to an open, close or a
+// lookup. Settlement, Leverage and Side describe what eToro actually opened (lookup), so the
+// executor can check a fill against the two allowed order shapes.
 type OrderStatus struct {
-	RequestID   string
-	OrderID     int64
-	State       OrderState
-	PositionIDs []int64
-	Reason      string
+	RequestID string // our x-request-id (eToro's referenceId), when the answer carries it
+	OrderID   int64  // eToro's order id
+	State     OrderState
+	// Final: eToro reports a terminal status (the order can no longer execute), e.g. filled,
+	// rejected, cancelled, expired, or cancelled/rejected after a partial fill.
+	Final      bool
+	Instrument InstrumentID
+	Settlement Settlement
+	Leverage   int
+	Side       Direction // "" when eToro did not say
+	Executions []PositionExecution
+	Reason     string
+}
+
+// Conforms reports whether what eToro executed is the order shape cactusTrade sent for
+// direction d: a real share held long or a CFD held short, at leverage 1, with a stop on
+// every execution. A non-conforming fill is closed at once and its instrument blocked.
+func (s OrderStatus) Conforms(d Direction) (bool, string) {
+	want := map[Direction]Settlement{Long: SettlementReal, Short: SettlementCFD}[d]
+	switch {
+	case want == "":
+		return false, "unknown direction"
+	case s.Side != d:
+		return false, fmt.Sprintf("eToro opened side %q, not %s", s.Side, d)
+	case s.Settlement != want:
+		return false, fmt.Sprintf("eToro settled as %q, not %s", s.Settlement, want)
+	case s.Leverage != 1:
+		return false, fmt.Sprintf("eToro applied leverage %d, not 1", s.Leverage)
+	}
+	for _, e := range s.Executions {
+		switch {
+		case e.StopLossRate <= 0:
+			return false, fmt.Sprintf("position %d has no stop-loss", e.PositionID)
+		case e.OpenRate <= 0:
+			return false, fmt.Sprintf("position %d has no open rate", e.PositionID)
+		case d == Long && e.StopLossRate >= e.OpenRate, d == Short && e.StopLossRate <= e.OpenRate:
+			return false, fmt.Sprintf("position %d: stop %s on the wrong side of the open rate %s", e.PositionID, e.StopLossRate, e.OpenRate)
+		}
+	}
+	return true, ""
 }
 
 // Regime is a hidden-Markov state of a market.

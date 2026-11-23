@@ -38,17 +38,37 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `EventBus` | `eventbus` (in-process, never blocks a publisher) |
 | `MarketCalendar` | `calendar` (LSE, NYSE/NASDAQ; tables 2026–2027) |
 | `MarketData` | `etoro.Feed` (WebSocket stream, REST fallback) |
-| `Broker` | `etoro.Client` (read-only until phase 4) |
+| `Broker` | `etoro.Client`: reads, plus open / close / cancel for **demo accounts only** (phase 4.6); `fakes.SimBroker` simulates a demo account for executor tests |
+| `Orders`, `AgentPositions`, `RiskStates`, `InstrumentBlocks`, `AgentLeases` (repository) | `sqlstore` (migration 00009): our orders keyed by `x-request-id`, the positions cactusTrade opened, the risk state per account (versioned), blocked instruments, the single-writer lease (D22) |
 | `Holdings` | read-only holdings of platforms cactusTrade shows but does not trade: `trading212.Client` (GET account summary and positions only; own allowlist and allowlist test). eToro holdings are built in the app from `Broker.Portfolio` + instrument names |
 | `EquitySnapshots` (repository) | `sqlstore` (`equity_snapshots`, migration 00008): equity every 15 minutes per account, kept 400 days |
 | `SignalModel` | phase 3 |
-| `RiskEngine` | phase 4 |
 | `Reviewer` | `adapters/llm` (Anthropic SDK; OpenAI-compatible for the others); profiles in settings, keys `llm.<id>.api_key` |
 | `Mailer` | `adapters/mail` (net/smtp: STARTTLS required / implicit TLS / plain to localhost; header-injection checks); `Outbox` and `PasswordResets` repositories |
 
 The `Broker` port has no money-movement operation. Its `Open` takes a `domain.OrderIntent`,
 which has no leverage or settlement field: its direction picks one of the adapter's two
 constant order shapes (long = buy + real, short = sellShort + cfd; leverage 1 for both, D19).
+
+There is no `RiskEngine` port (D20): the risk engine is the pure `domain.AssessEntry`, so no
+wiring can swap in a laxer one.
+
+### Execution (phase 4)
+
+- Every account change (`Open`, `Close`, `Cancel`) takes the request id the caller persisted
+  first (`orders.request_id`, CLAUDE.md §2.7) and sends it as `x-request-id`. The eToro client
+  refuses a real-mode or non-eToro account, a non-UUID id and an intent without a stop
+  **before any I/O** (`domain.ErrRealModeGated` for real).
+- One request per call, never retried by the adapter: a network error, timeout, 5xx or
+  unreadable answer is `domain.ErrOutcomeUnknown` (resolve with `Lookup` / `CloseOrder`, never
+  resend blindly, OD2); a 4xx is `*domain.NotAcceptedError` (a 429 is `RateLimited` with
+  `RetryAfter`, and pauses the account's execution quota group).
+- The client never follows a redirect (custom key headers would be forwarded).
+- `Lookup` reports what eToro executed (settlement, leverage, side, and per position units,
+  amount, open rate, stop) so `OrderStatus.Conforms` can check a fill against the two shapes.
+- `orders.Update(prev, next)` is a compare-and-set on (state, sends); `risk_state` carries a
+  version (stale write → `ErrConflict`, so a kill is never overwritten by an older read);
+  `agent_leases.Acquire` lets exactly one holder win.
 
 ## Accounts
 

@@ -1,0 +1,6 @@
+{"accountId":1,"gcid":2,"portfolioId":1,"orderId":700002,"action":"open","transaction":"buy","type":"mkt","etoroOrderTypeId":17,
+ "status":{"id":4,"name":"Rejected","errorCode":621,"errorMessage":"Insufficient funds"},
+ "asset":{"symbol":"EXMP","instrumentId":1001,"currency":"USD","settlementType":"real","leverage":1,"side":"long"},
+ "orderCurrency":"usd","requestedAmount":500.0,"frozenAmount":0.0,"openStopLossRate":185.0,"openTakeProfitRate":null,
+ "stopLossType":"fixed","totalCosts":0.0,"positionsToClose":[],"positionExecutions":[],
+ "requestTime":"2026-11-23T15:00:00Z","lastUpdate":"2026-11-23T15:00:01Z","openActionType":"customer","requestType":"byAmount"}

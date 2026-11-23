@@ -1,0 +1,10 @@
+{"accountId":1,"gcid":2,"portfolioId":1,"orderId":700004,"action":"open","transaction":"sellShort","type":"mkt","etoroOrderTypeId":17,
+ "status":{"id":3,"name":"Filled","errorCode":0,"errorMessage":null},
+ "asset":{"symbol":"EXMP","instrumentId":2002,"currency":"USD","settlementType":"cfd","leverage":1,"side":"short"},
+ "orderCurrency":"usd","requestedAmount":120.5,"frozenAmount":120.5,"openStopLossRate":52.25,"openTakeProfitRate":null,
+ "stopLossType":"fixed","totalCosts":0.1,"positionsToClose":[],
+ "positionExecutions":[{"positionId":1003,"state":"open","investedAmountCurrency":120.5,"remainingUnits":2.4,"remainingContracts":null,
+   "stopLossRate":52.25,"takeProfitRate":null,
+   "openingData":{"openTime":"2026-11-23T15:00:00Z","orderId":700004,"executionTime":"2026-11-23T15:00:01Z","units":2.4,"contracts":null,
+     "avgPrice":50.208333,"avgConversionRate":1.0,"marketSpread":0.02,"markup":0.0,"priceId":1,"fees":0.0,"taxes":0.0}}],
+ "requestTime":"2026-11-23T15:00:00Z","lastUpdate":"2026-11-23T15:00:01Z","openActionType":"customer","requestType":"byAmount"}

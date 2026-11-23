@@ -177,7 +177,7 @@ func TestIntentFor(t *testing.T) {
 		change func(*Order)
 		is     error
 	}{
-		{"real mode", func(o *Order) { o.Mode = ModeReal }, ErrForbidden},
+		{"real mode", func(o *Order) { o.Mode = ModeReal }, ErrRealModeGated},
 		{"close order", func(o *Order) { o.Kind = OrderClose }, ErrInvalid},
 		{"pending", func(o *Order) { o.State = OrderPending }, ErrConflict},
 		{"unknown", func(o *Order) { o.State = OrderUnknown }, ErrConflict},

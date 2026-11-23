@@ -198,7 +198,7 @@ func IntentFor(o Order) (OrderIntent, error) {
 	case o.Kind != OrderOpen:
 		return OrderIntent{}, Invalid("kind", "only an open order has an intent")
 	case o.Mode != ModeDemo:
-		return OrderIntent{}, fmt.Errorf("order %s: real mode is gated (phase 7): %w", o.RequestID, ErrForbidden)
+		return OrderIntent{}, fmt.Errorf("order %s: %w", o.RequestID, ErrRealModeGated)
 	case o.State != OrderCreated && o.State != OrderSent:
 		return OrderIntent{}, fmt.Errorf("order %s is %s: %w", o.RequestID, o.State, ErrIllegalTransition)
 	}

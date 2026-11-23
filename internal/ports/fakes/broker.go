@@ -12,7 +12,8 @@ import (
 )
 
 // Broker is an in-memory ports.Broker and ports.MarketData. Set Err to make every call
-// fail. It never places orders: Open/Cancel/Close fail like the phase-2 client.
+// fail. It never places orders: Open, Cancel and Close are always refused (use SimBroker to
+// simulate execution).
 type Broker struct {
 	mu          sync.Mutex
 	Err         error
@@ -108,11 +109,16 @@ func (b *Broker) Lookup(_ context.Context, id string) (domain.OrderStatus, error
 }
 
 // Cancel is refused.
-func (b *Broker) Cancel(context.Context, int64) error { return domain.ErrUnavailable }
+func (b *Broker) Cancel(context.Context, int64, string) error { return domain.ErrUnavailable }
 
 // Close is refused.
-func (b *Broker) Close(context.Context, int64, domain.InstrumentID) (domain.OrderStatus, error) {
+func (b *Broker) Close(context.Context, int64, domain.InstrumentID, string) (domain.OrderStatus, error) {
 	return domain.OrderStatus{}, domain.ErrUnavailable
+}
+
+// CloseOrder knows no close order.
+func (b *Broker) CloseOrder(context.Context, int64) (domain.OrderStatus, error) {
+	return domain.OrderStatus{}, domain.ErrNotFound
 }
 
 // Quotes returns Prices for the ids that have one.

@@ -1,0 +1,10 @@
+{"accountId":1,"gcid":2,"portfolioId":1,"orderId":700003,"action":"open","transaction":"buy","type":"mkt","etoroOrderTypeId":17,
+ "status":{"id":10,"name":"RejectedPartiallyFilled","errorCode":0,"errorMessage":null},
+ "asset":{"symbol":"EXMP","instrumentId":1001,"currency":"USD","settlementType":"real","leverage":1,"side":"long"},
+ "orderCurrency":"usd","requestedAmount":500.0,"frozenAmount":250.0,"openStopLossRate":185.0,"openTakeProfitRate":null,
+ "stopLossType":"fixed","totalCosts":0.0,"positionsToClose":[],
+ "positionExecutions":[{"positionId":1002,"state":"open","investedAmountCurrency":250.0,"remainingUnits":1.322751,"remainingContracts":null,
+   "stopLossRate":185.0,"takeProfitRate":null,
+   "openingData":{"openTime":"2026-11-23T15:00:00Z","orderId":700003,"executionTime":"2026-11-23T15:00:01Z","units":null,"contracts":null,
+     "avgPrice":189.0,"avgConversionRate":1.0,"marketSpread":0.02,"markup":0.0,"priceId":1,"fees":0.0,"taxes":0.0}}],
+ "requestTime":"2026-11-23T15:00:00Z","lastUpdate":"2026-11-23T15:00:01Z","openActionType":"customer","requestType":"byAmount"}

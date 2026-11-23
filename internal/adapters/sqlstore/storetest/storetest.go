@@ -750,4 +750,6 @@ func Run(t *testing.T, s ports.Store) {
 			t.Fatal("snapshots survived their account")
 		}
 	})
+
+	runExecution(t, s, admin.ID, t0)
 }

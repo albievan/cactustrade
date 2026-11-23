@@ -60,6 +60,35 @@ Response `{token, orderId, referenceId}` — **200 = accepted for processing, no
 5 PartiallyFilled, 4 Rejected, 10 RejectedPartiallyFilled, 1/2/11/12 pending.
 `positionExecutions` lists the resulting `positionId`s.
 
+### Execution as implemented (phase 4.6, spec v1.419.0, demo only)
+
+- **Open** `POST …/demo/orders` body has exactly `action, transaction, instrumentId,
+  settlementType, orderType, leverage, amount, orderCurrency, stopLossRate, takeProfitRate,
+  stopLossType`; `takeProfitRate` is left out when there is no target (the spec allows 0 but
+  does not say whether 0 means "none"). The answer's `referenceId` must equal our
+  `x-request-id` and carry an `orderId`, otherwise the outcome counts as unknown.
+- **Close** `POST …/demo/market-close-orders/positions/{positionId}` body is
+  `{"InstrumentID": <id>}` only (`UnitsToDeduct` never sent: always the whole position). The
+  answer's `orderForClose.orderID` is polled with `GET …/demo/close-orders/{orderId}` (status
+  ids as below; `positions[]` carries `units`, `amount`, `rate` once closed).
+- **Cancel** `DELETE …/demo/orders/{orderId}`; 200 = request accepted; confirm with the lookup
+  (7 Canceled / 9 CanceledPartiallyFilled; 6 PendingCancel still in flight). The spec calls it
+  idempotent for an order already closed or cancelled.
+- **Status ids** (lookup and close-orders): 1 Received, 2 Placed, 6 PendingCancel,
+  11 WaitingForMarket, 12 PendingTriggeredRate → pending; 3 Filled; 4 Rejected; 5
+  PartiallyFilled → partial; 7 Canceled, 8 Expired → cancelled; 9 CanceledPartiallyFilled and
+  10 RejectedPartiallyFilled → partial *and final*. Terminal: 3, 4, 7, 8, 9, 10. Anything else
+  → unknown.
+- **Lookup** `asset.side` is `long|short` in the schema but `buy` in eToro's own example; both
+  spellings are read. `asset.settlementType`, `asset.leverage` and each
+  `positionExecutions[]` (`investedAmountCurrency`, `openingData.units` or `remainingUnits`,
+  `openingData.avgPrice`, `stopLossRate`) are returned for the fill check.
+- No retries for account changes; 5xx/timeout/network error = outcome unknown; 4xx = not
+  accepted; 429 pauses the execution group for `Retry-After` (default 5 s, at most 60 s). Reads
+  keep their retries with a fresh `x-request-id` per attempt. Redirects are never followed.
+- Still unverified (U1–U11 in `docs/PLAN.md`): e.g. what eToro does with a resent
+  `x-request-id` (U1) and whether a 429 is answered before processing (U7).
+
 ### Shorts (owner's decision D19)
 
 A short is `transaction: "sellShort"` with `settlementType: "cfd"` at `leverage: 1` — the

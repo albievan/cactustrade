@@ -168,6 +168,65 @@ type EquitySnapshots interface {
 	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
+// Orders stores our orders to eToro. The request id (x-request-id) is the key, so a row
+// exists before its request is sent (CLAUDE.md §2.7).
+type Orders interface {
+	// Create stores a new order: ErrConflict when the request id exists, ErrNotFound when
+	// the account does not.
+	Create(ctx context.Context, o domain.Order) error
+	Get(ctx context.Context, requestID string) (domain.Order, error)
+	// Update replaces the mutable fields (state, reason, sends, sent/updated times and the
+	// broker ids) with next's, only if the stored order still has prev's state and send
+	// count: otherwise ErrConflict, and nothing changes (no transition is lost). Unknown
+	// request id: ErrNotFound.
+	Update(ctx context.Context, prev, next domain.Order) error
+	// ListOpen returns the account's orders that are not final, oldest first.
+	ListOpen(ctx context.Context, accountID string) ([]domain.Order, error)
+	// List returns the account's orders, newest first, at most limit.
+	List(ctx context.Context, accountID string, limit int) ([]domain.Order, error)
+}
+
+// AgentPositions stores the positions cactusTrade opened (OD1: only these are closed by it).
+type AgentPositions interface {
+	// Add records a position: ErrConflict when the account already has it, ErrNotFound when
+	// the account does not exist.
+	Add(ctx context.Context, p domain.AgentPosition) error
+	Get(ctx context.Context, accountID string, positionID int64) (domain.AgentPosition, error)
+	// Update stores ClosedAt and CloseRequestID (the rest never changes).
+	Update(ctx context.Context, p domain.AgentPosition) error
+	// ListOpen returns the account's positions not closed yet, oldest first.
+	ListOpen(ctx context.Context, accountID string) ([]domain.AgentPosition, error)
+}
+
+// RiskStates stores each account's risk state (risk day, start-of-day equity, high-water
+// mark, daily latch, kill switch).
+type RiskStates interface {
+	// Get returns the stored state (ErrNotFound when there is none yet).
+	Get(ctx context.Context, accountID string) (domain.AccountRiskState, error)
+	// Put stores s if the stored version still equals s.Version (0 = not stored yet) and
+	// returns s with the new version. A stale version is ErrConflict: read again, re-apply.
+	Put(ctx context.Context, s domain.AccountRiskState) (domain.AccountRiskState, error)
+}
+
+// InstrumentBlocks stores the instruments the agent may not enter, per account.
+type InstrumentBlocks interface {
+	// Block adds or refreshes a block (ErrNotFound when the account does not exist).
+	Block(ctx context.Context, b domain.InstrumentBlock) error
+	Unblock(ctx context.Context, accountID string, id domain.InstrumentID) error  // ErrNotFound
+	List(ctx context.Context, accountID string) ([]domain.InstrumentBlock, error) // by instrument
+}
+
+// AgentLeases is the single-writer lock per account (D22).
+type AgentLeases interface {
+	// Acquire takes the account's lease for holder until until, or renews it. It succeeds
+	// when there is no lease, holder already holds it, or the lease expired at now;
+	// otherwise ErrConflict. Exactly one of several concurrent holders wins.
+	Acquire(ctx context.Context, accountID, holder string, now, until time.Time) error
+	// Release gives the lease up if holder holds it (otherwise nothing happens).
+	Release(ctx context.Context, accountID, holder string) error
+	Get(ctx context.Context, accountID string) (domain.AgentLease, error) // ErrNotFound
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -185,6 +244,11 @@ type Store interface {
 	Outbox() Outbox
 	PasswordResets() PasswordResets
 	EquitySnapshots() EquitySnapshots
+	Orders() Orders
+	AgentPositions() AgentPositions
+	RiskStates() RiskStates
+	InstrumentBlocks() InstrumentBlocks
+	AgentLeases() AgentLeases
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
@@ -280,10 +344,27 @@ type Broker interface {
 	// direction d.
 	Costs(ctx context.Context, id domain.InstrumentID, d domain.Direction, amount domain.Cents) ([]domain.CostItem, error)
 	TradeHistory(ctx context.Context, since time.Time) ([]domain.ClosedTrade, error)
+
+	// The operations below change the account. Each sends exactly one request with
+	// x-request-id = the given request id (which the caller persisted first, CLAUDE.md §2.7)
+	// and never retries by itself. Errors: domain.ErrRealModeGated for a real-money account
+	// (refused before any I/O); *domain.NotAcceptedError (domain.ErrNotAccepted) when the
+	// broker refused it, RateLimited for a 429; domain.ErrOutcomeUnknown when it was sent but
+	// the answer was lost (network error, timeout, 5xx) — resolve with Lookup / CloseOrder.
+
+	// Open sends a market order to open a position; the intent's direction picks one of the
+	// two constant order shapes. The answer means accepted, not filled: poll Lookup.
 	Open(ctx context.Context, o domain.OrderIntent) (domain.OrderStatus, error)
+	// Lookup finds an open order by the request id it was sent with (domain.ErrNotFound when
+	// the broker does not know it), with what it executed.
 	Lookup(ctx context.Context, requestID string) (domain.OrderStatus, error)
-	Cancel(ctx context.Context, orderID int64) error
-	Close(ctx context.Context, positionID int64, instrument domain.InstrumentID) (domain.OrderStatus, error)
+	// Cancel asks the broker to cancel a pending open order (eToro's order id).
+	Cancel(ctx context.Context, orderID int64, requestID string) error
+	// Close sends a market order closing the whole position; poll CloseOrder with the
+	// returned order id.
+	Close(ctx context.Context, positionID int64, instrument domain.InstrumentID, requestID string) (domain.OrderStatus, error)
+	// CloseOrder reads the status of a close order by eToro's order id.
+	CloseOrder(ctx context.Context, orderID int64) (domain.OrderStatus, error)
 }
 
 // Holdings reads an account's cash and open positions, read-only, for the account set with
@@ -312,11 +393,6 @@ type Reviewer interface {
 	Review(ctx context.Context, cfg domain.LLMConfig, apiKey string, in ReviewInput) (domain.Verdict, error)
 	// Models lists the model ids the provider offers with this key.
 	Models(ctx context.Context, cfg domain.LLMConfig, apiKey string) ([]string, error)
-}
-
-// RiskEngine has the final, deterministic say.
-type RiskEngine interface {
-	Evaluate(ctx context.Context, c domain.Candidate, v domain.Verdict, p domain.Portfolio, now time.Time) domain.RiskDecision
 }
 
 // Event is something that happened, pushed to the dashboard and the decision log.
