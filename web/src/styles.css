@@ -110,3 +110,7 @@ body[data-mode=real] .account-switch { border-color: #fff; }
   background: var(--bs-body-bg); font-size: .85rem; line-height: 1.2;
 }
 .ticker-chip .btn-close { font-size: .55rem; }
+
+/* LLM profile grid: icon buttons on the left, text may wrap. */
+.min-w-0 { min-width: 0; }
+.profile-card .test-error { max-height: 9rem; overflow-y: auto; }

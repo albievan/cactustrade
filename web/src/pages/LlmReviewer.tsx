@@ -78,34 +78,46 @@ export function LlmReviewer() {
       {setup.profiles.length === 0 && editing === null && (
         <p className="text-secondary">No profiles yet. Add one: choose a provider, paste its API key, load and pick a model.</p>
       )}
-      <div className="vstack gap-3">
+      <div className="row row-cols-1 row-cols-md-2 row-cols-xxl-3 g-3">
         {setup.profiles.map((p) => editing !== "new" && editing?.id === p.id ? (
-          <ProfileForm key={p.id} setup={setup} initial={p} id={p.id} keySet={p.keySet} onCancel={() => setEditing(null)}
-            onSaved={async (x) => { setEditing(null); setMsg(`Profile ${x.name} saved.`); await load(); }} />
+          <div key={p.id} className="col-12 w-100">
+            <ProfileForm setup={setup} initial={p} id={p.id} keySet={p.keySet} onCancel={() => setEditing(null)}
+              onSaved={async (x) => { setEditing(null); setMsg(`Profile ${x.name} saved.`); await load(); }} />
+          </div>
         ) : (
-          <div key={p.id} className="card"><div className="card-body">
-            <div className="d-flex flex-wrap align-items-center gap-2">
-              <strong className="me-1">{p.name}</strong>
-              {p.id === s.activeProfileId && <span className="badge text-bg-success">default</span>}
-              <span className="badge text-bg-light border">{label(p.provider)}</span>
-              <code className="small">{p.model || (p.provider === "anthropic" ? setup.defaultAnthropicModel : "")}</code>
-              {p.keySet ? <span className="badge text-bg-light border"><i className="bi bi-key me-1" />key set</span>
-                : <span className="badge text-bg-warning">no key</span>}
-              <span className="flex-grow-1" />
-              {admin && <>
-                <button className="btn btn-sm btn-outline-success" disabled={!!busy}
-                  onClick={() => void run("test" + p.id, async () => setTests({ ...tests, [p.id]: await api.testLlmProfile(p.id) }))}>
-                  <i className="bi bi-chat-square-text me-1" />{busy === "test" + p.id ? "Asking…" : "Test"}</button>
-                {p.id !== s.activeProfileId && <button className="btn btn-sm btn-outline-secondary" disabled={!!busy}
-                  onClick={() => void setSettings(s.enabled, p.id)}>Make default</button>}
-                <button className="btn btn-sm btn-outline-secondary" onClick={() => setEditing(p)}><i className="bi bi-pencil" /> Edit</button>
-                <button className="btn btn-sm btn-outline-danger" disabled={!!busy} aria-label={`Delete ${p.name}`}
-                  onClick={() => void run("del", async () => { await api.deleteLlmProfile(p.id); setMsg(`Profile ${p.name} deleted.`); await load(); })}>
-                  <i className="bi bi-trash" /></button>
-              </>}
-            </div>
-            {tests[p.id] && <TestResult r={tests[p.id]} />}
-          </div></div>
+          <div key={p.id} className="col">
+            <div className={`card h-100 profile-card${p.id === s.activeProfileId ? " border-success" : ""}`}><div className="card-body d-flex gap-3">
+              {admin && (
+                <div className="btn-group-vertical btn-group-sm align-self-start" role="group" aria-label={`Actions for ${p.name}`}>
+                  <button className="btn btn-outline-success" disabled={!!busy} title="Test" aria-label={`Test ${p.name}`}
+                    onClick={() => void run("test" + p.id, async () => setTests({ ...tests, [p.id]: await api.testLlmProfile(p.id) }))}>
+                    {busy === "test" + p.id ? <span className="spinner-border spinner-border-sm" /> : <i className="bi bi-chat-square-text" />}</button>
+                  <button className="btn btn-outline-secondary" disabled={!!busy || p.id === s.activeProfileId}
+                    title={p.id === s.activeProfileId ? "This is the default" : "Make default"} aria-label={`Make ${p.name} the default`}
+                    onClick={() => void setSettings(s.enabled, p.id)}>
+                    <i className={p.id === s.activeProfileId ? "bi bi-star-fill" : "bi bi-star"} /></button>
+                  <button className="btn btn-outline-secondary" title="Edit" aria-label={`Edit ${p.name}`} onClick={() => setEditing(p)}>
+                    <i className="bi bi-pencil" /></button>
+                  <button className="btn btn-outline-danger" disabled={!!busy} title="Delete" aria-label={`Delete ${p.name}`}
+                    onClick={() => void run("del", async () => { await api.deleteLlmProfile(p.id); setMsg(`Profile ${p.name} deleted.`); await load(); })}>
+                    <i className="bi bi-trash" /></button>
+                </div>
+              )}
+              <div className="flex-grow-1 min-w-0">
+                <div className="d-flex align-items-start gap-2 mb-2">
+                  <strong className="text-break">{p.name}</strong>
+                  {p.id === s.activeProfileId && <span className="badge text-bg-success">default</span>}
+                </div>
+                <div className="d-flex flex-wrap align-items-center gap-2 small">
+                  <span className="badge text-bg-light border">{label(p.provider)}</span>
+                  {p.keySet ? <span className="badge text-bg-light border"><i className="bi bi-key me-1" />key set</span>
+                    : <span className="badge text-bg-warning">no key</span>}
+                </div>
+                <code className="small d-block text-break mt-2">{p.model || (p.provider === "anthropic" ? setup.defaultAnthropicModel : "")}</code>
+                {tests[p.id] && <TestResult r={tests[p.id]} />}
+              </div>
+            </div></div>
+          </div>
         ))}
       </div>
     </>
@@ -114,11 +126,11 @@ export function LlmReviewer() {
 
 function TestResult({ r }: { r: LlmTestResult }) {
   return r.ok ? (
-    <div className="alert alert-success mt-3 mb-0" role="status">
+    <div className="alert alert-success small py-2 mt-3 mb-0" role="status">
       Answered <strong>{r.verdict}</strong>{r.verdict === "reduce" && <> to {Math.round((r.sizeMultiplier ?? 0) * 100)} %</>} in {r.latencyMs} ms: “{r.reason}”
     </div>
   ) : (
-    <div className="alert alert-warning mt-3 mb-0" role="alert">No usable answer ({r.latencyMs} ms): {r.error}. A real idea would be rejected.</div>
+    <div className="alert alert-warning small py-2 mt-3 mb-0 text-break test-error" role="alert">No usable answer ({r.latencyMs} ms): {r.error}. A real idea would be rejected.</div>
   );
 }
 
