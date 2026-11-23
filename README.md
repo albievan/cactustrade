@@ -1,6 +1,7 @@
 # cactusTrade
 
-An autonomous, **long-only share** day-trading agent for **one eToro account**, through the
+An autonomous share day-trading agent for **eToro accounts** (each user's own, shareable): long
+real shares and, within a capped budget, short CFDs at leverage 1 — through the
 official eToro Public API. One Go binary with the React web app embedded. Standalone it needs
 nothing else (SQLite); in containers it runs with MariaDB on Docker Desktop, Podman, k3s or
 Kubernetes using the same `deploy.sh` as the other cactus apps.

@@ -78,7 +78,7 @@ func backtestCmd(ctx context.Context, args []string, getenv func(string) string,
 	}
 	start := domain.Cents(math.Round(*equity * 100))
 	size := start / 5 // the playbooks' largest suggested size (20 % of equity)
-	items, err := client.Costs(ctx, domain.InstrumentID(*id), size)
+	items, err := client.Costs(ctx, domain.InstrumentID(*id), domain.Long, size)
 	if err != nil {
 		return fmt.Errorf("backtest: costs: %w", err)
 	}

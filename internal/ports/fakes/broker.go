@@ -66,7 +66,7 @@ func (b *Broker) Eligibility(_ context.Context, ids []domain.InstrumentID) ([]do
 }
 
 // Costs returns a fixed spread line.
-func (b *Broker) Costs(_ context.Context, _ domain.InstrumentID, _ domain.Cents) ([]domain.CostItem, error) {
+func (b *Broker) Costs(_ context.Context, _ domain.InstrumentID, _ domain.Direction, _ domain.Cents) ([]domain.CostItem, error) {
 	if err := b.fail(); err != nil {
 		return nil, err
 	}

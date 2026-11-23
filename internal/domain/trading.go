@@ -95,7 +95,20 @@ func IsShare(instrumentType string) bool {
 	return false
 }
 
-// Eligibility is what eToro says about opening a real, unleveraged long position.
+// Direction is long (own the share) or short (a CFD sold short; owner's decision D19).
+type Direction string
+
+// Directions.
+const (
+	Long  Direction = "long"
+	Short Direction = "short"
+)
+
+// Valid reports whether d is long or short.
+func (d Direction) Valid() bool { return d == Long || d == Short }
+
+// Eligibility is what eToro says about opening an unleveraged position in an instrument:
+// a long as the real share, or a short as a CFD.
 type Eligibility struct {
 	Instrument InstrumentID
 	Symbol     string
@@ -103,7 +116,30 @@ type Eligibility struct {
 	RealLong          bool
 	Reason            string // why not, when RealLong is false
 	MinPositionAmount Cents  // for real/long/leverage 1, when eToro states it
-	CheckedAt         time.Time
+	// ShortCFD: open allowed with settlement "cfd", direction short and leverage 1 offered.
+	ShortCFD       bool
+	ShortReason    string
+	MinShortAmount Cents
+	CheckedAt      time.Time
+}
+
+// Allows reports whether the instrument may be opened in direction d, and why not.
+func (e Eligibility) Allows(d Direction) (bool, string) {
+	switch d {
+	case Long:
+		return e.RealLong, e.Reason
+	case Short:
+		return e.ShortCFD, e.ShortReason
+	}
+	return false, "unknown direction"
+}
+
+// MinAmount is eToro's minimum for direction d (0 = not stated).
+func (e Eligibility) MinAmount(d Direction) Cents {
+	if d == Short {
+		return e.MinShortAmount
+	}
+	return e.MinPositionAmount
 }
 
 // WatchItem is an instrument on the watchlist with its cached eligibility.
@@ -160,14 +196,29 @@ type Position struct {
 	UnrealisedPnL  Cents
 	StopLossRate   Micros
 	TakeProfitRate Micros
-	RealAsset      bool // settlementTypeID == 1; anything else is closed at once
+	RealAsset      bool // settlementTypeID == 1
+	CFD            bool // settlementTypeID == 0
 	Long           bool // isBuy
 	Leverage       int
 }
 
-// Conforms reports whether the position is one cactusTrade may hold: a real share, long,
-// leverage 1. Anything else found on the account is closed at once (phase 4).
-func (p Position) Conforms() bool { return p.RealAsset && p.Long && p.Leverage == 1 }
+// Direction of the position.
+func (p Position) Direction() Direction {
+	if p.Long {
+		return Long
+	}
+	return Short
+}
+
+// Conforms reports whether the position is one cactusTrade may hold: a real share held long,
+// or a CFD held short, at leverage 1. Anything else found on the account is closed at once
+// (phase 4).
+func (p Position) Conforms() bool {
+	if p.Leverage != 1 {
+		return false
+	}
+	return (p.Long && p.RealAsset && !p.CFD) || (!p.Long && p.CFD && !p.RealAsset)
+}
 
 // Portfolio is the account as eToro reports it.
 type Portfolio struct {
@@ -186,11 +237,13 @@ func (p Portfolio) Equity() Cents {
 	return e
 }
 
-// OrderIntent is what the system asks the broker to open. There is deliberately no
-// leverage, direction or settlement field: the eToro adapter sends leverage 1, "buy" and
-// settlementType "real" as constants (CLAUDE.md §2.3).
+// OrderIntent is what the system asks the broker to open. There is deliberately no leverage
+// or settlement field: the eToro adapter maps the direction to one of exactly two constant
+// shapes, long = "buy" + "real", short = "sellShort" + "cfd", always leverage 1
+// (CLAUDE.md §2.3).
 type OrderIntent struct {
 	RequestID      string // persisted before sending; reused on retry
+	Direction      Direction
 	Instrument     InstrumentID
 	Amount         Cents
 	StopLossRate   Micros
@@ -231,6 +284,7 @@ const (
 // Candidate is a trade proposed by the regime model's playbook.
 type Candidate struct {
 	Instrument     InstrumentID
+	Direction      Direction
 	Playbook       string
 	Reason         string
 	Entry          Micros

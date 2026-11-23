@@ -95,13 +95,13 @@ func TestMeanReversion(t *testing.T) {
 func TestStopAndSizeCaps(t *testing.T) {
 	in := input(series(make([]float64, 0)...), nil, 0)
 	in.Features = []Feature{{Vol: 0}}
-	stop, size, ok := stopAndSize(in, 100)
+	stop, size, ok := stopAndSize(in, 100, domain.Long)
 	// MinStopPct 0.2 %: risking 0.5 % of equity would need 250 % of equity → capped at 20 %
 	if !ok || math.Abs(stop-99.8) > 1e-9 || size != 200_000 {
 		t.Fatalf("stop %v size %v ok %v", stop, size, ok)
 	}
 	in.Equity = 0
-	if _, _, ok := stopAndSize(in, 100); ok {
+	if _, _, ok := stopAndSize(in, 100, domain.Long); ok {
 		t.Fatal("zero equity sized a trade")
 	}
 }
@@ -140,5 +140,79 @@ func TestEngine(t *testing.T) {
 	bad[299].Close = 0
 	if d := e.Evaluate(1, bad, 1); d.Candidate != nil {
 		t.Fatal("decided on a bad bar")
+	}
+}
+
+func TestShortPlaybooks(t *testing.T) {
+	down := make([]float64, 30)
+	for i := range down {
+		down[i] = 100 - float64(i)*0.1 - 0.05*float64(i%2)
+	}
+	trending := map[domain.Regime]float64{domain.RegimeTrending: 0.9, domain.RegimeChoppy: 0.1}
+	in := input(series(down...), trending, -0.001)
+	if _, ok, why := (TrendBreakdown{}).Propose(in); ok || why != "shorts are off for this account" {
+		t.Fatalf("shorts off: %v %q", ok, why)
+	}
+	in.Cfg.Shorts = true
+	c, ok, why := TrendBreakdown{}.Propose(in)
+	if !ok {
+		t.Fatalf("no short: %s", why)
+	}
+	if c.Direction != domain.Short || c.StopLossRate <= c.Entry || c.TakeProfitRate >= c.Entry || c.SuggestedSize <= 0 || c.Playbook != "trend_breakdown_short" {
+		t.Fatalf("short candidate = %+v", c)
+	}
+	up := input(series(down...), trending, 0.001)
+	up.Cfg.Shorts = true
+	if _, ok, _ := (TrendBreakdown{}).Propose(up); ok {
+		t.Fatal("shorted an up-trend")
+	}
+	notTrend := input(series(down...), map[domain.Regime]float64{domain.RegimeTrending: 0.3}, -0.001)
+	notTrend.Cfg.Shorts = true
+	if _, ok, _ := (TrendBreakdown{}).Propose(notTrend); ok {
+		t.Fatal("shorted without a trend")
+	}
+	noBreak := input(series(append(append([]float64{}, down[:29]...), 101)...), trending, -0.001)
+	noBreak.Cfg.Shorts = true
+	if _, ok, _ := (TrendBreakdown{}).Propose(noBreak); ok {
+		t.Fatal("shorted without a breakdown")
+	}
+	short := input(series(down[:5]...), trending, -0.001)
+	short.Cfg.Shorts = true
+	if _, ok, _ := (TrendBreakdown{}).Propose(short); ok {
+		t.Fatal("shorted on too few bars")
+	}
+
+	flat := make([]float64, 30)
+	for i := range flat {
+		flat[i] = 100 + 0.05*float64(i%3)
+	}
+	spike := append(append([]float64{}, flat[:29]...), 101)
+	choppy := map[domain.Regime]float64{domain.RegimeChoppy: 0.8, domain.RegimeTrending: 0.2}
+	sp := input(series(spike...), choppy, 0)
+	if _, ok, _ := (SpikeReversion{}).Propose(sp); ok {
+		t.Fatal("spike short while shorts are off")
+	}
+	sp.Cfg.Shorts = true
+	c, ok, why = SpikeReversion{}.Propose(sp)
+	if !ok || c.Direction != domain.Short || c.StopLossRate <= c.Entry || c.TakeProfitRate >= c.Entry || c.Playbook != "spike_reversion_short" {
+		t.Fatalf("spike short = %+v %v %s", c, ok, why)
+	}
+	for name, x := range map[string]Input{
+		"no spike":     input(series(flat...), choppy, 0),
+		"not choppy":   input(series(spike...), map[domain.Regime]float64{domain.RegimeChoppy: 0.2}, 0),
+		"too few bars": input(series(spike[:5]...), choppy, 0),
+	} {
+		x.Cfg.Shorts = true
+		if _, ok, _ := (SpikeReversion{}).Propose(x); ok {
+			t.Errorf("%s: shorted", name)
+		}
+	}
+	if (TrendBreakdown{}).Regime() != domain.RegimeTrending || (SpikeReversion{}).Regime() != domain.RegimeChoppy {
+		t.Fatal("regimes")
+	}
+	in2 := input(series(make([]float64, 0)...), nil, 0)
+	in2.Features = []Feature{{Vol: 0}}
+	if stop, _, ok := stopAndSize(in2, 100, domain.Short); !ok || math.Abs(stop-100.2) > 1e-9 {
+		t.Fatalf("short stop = %v", stop)
 	}
 }

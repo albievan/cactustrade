@@ -45,7 +45,7 @@ func New(h *http.Client) *Client {
 }
 
 // systemPrompt is the reviewer's whole job description.
-const systemPrompt = `You are the risk reviewer of an automated share-trading system. A statistical model has proposed buying one share (long only, no leverage, closed before the market closes the same day). A deterministic risk engine will check every limit after you; your job is judgement the numbers may miss: is the stated reason consistent with the recent prices, is the stop sensible, is anything about this trade surprising or worrying?
+const systemPrompt = `You are the risk reviewer of an automated share-trading system. A statistical model has proposed one trade in a share: either a long (buying the real share) or a short (a CFD sold short), never leveraged, always with a stop-loss, and closed before the market closes the same day. A short loses when the price rises. A deterministic risk engine will check every limit after you; your job is judgement the numbers may miss: is the stated reason consistent with the recent prices, is the stop sensible, is anything about this trade surprising or worrying?
 
 You can only approve the trade at its proposed size, reduce it (sizeMultiplier between 0 and 1), or reject it. You can never increase it or propose another trade. When in doubt, reduce or reject.
 
@@ -73,7 +73,11 @@ type verdictJSON struct {
 func UserPrompt(in ports.ReviewInput) string {
 	c := in.Candidate
 	var b strings.Builder
-	fmt.Fprintf(&b, "Proposed trade\n- instrument id: %d\n- playbook: %s\n- reason: %s\n", c.Instrument, c.Playbook, c.Reason)
+	dir := c.Direction
+	if dir == "" {
+		dir = domain.Long
+	}
+	fmt.Fprintf(&b, "Proposed trade: %s\n- instrument id: %d\n- playbook: %s\n- reason: %s\n", strings.ToUpper(string(dir)), c.Instrument, c.Playbook, c.Reason)
 	fmt.Fprintf(&b, "- entry: %s, stop loss: %s, take profit: %s\n- size: $%s\n", c.Entry, c.StopLossRate, c.TakeProfitRate, c.SuggestedSize)
 	if len(c.RegimeProbs) > 0 {
 		keys := make([]string, 0, len(c.RegimeProbs))

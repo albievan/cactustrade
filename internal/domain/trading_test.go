@@ -26,14 +26,21 @@ func TestIsShare(t *testing.T) {
 }
 
 func TestPositionConforms(t *testing.T) {
-	ok := Position{RealAsset: true, Long: true, Leverage: 1}
-	if !ok.Conforms() {
-		t.Fatal("real long x1 must conform")
+	for _, ok := range []Position{{RealAsset: true, Long: true, Leverage: 1}, {CFD: true, Long: false, Leverage: 1}} {
+		if !ok.Conforms() {
+			t.Fatalf("%+v must conform", ok)
+		}
+	}
+	if (Position{Long: true}).Direction() != Long || (Position{}).Direction() != Short {
+		t.Fatal("Direction")
 	}
 	for _, p := range []Position{
 		{RealAsset: false, Long: true, Leverage: 1},
+		{CFD: true, Long: true, Leverage: 1},
 		{RealAsset: true, Long: false, Leverage: 1},
+		{CFD: true, Long: false, Leverage: 2},
 		{RealAsset: true, Long: true, Leverage: 2},
+		{},
 	} {
 		if p.Conforms() {
 			t.Errorf("%+v must not conform", p)
@@ -46,5 +53,21 @@ func TestMicrosString(t *testing.T) {
 		if got := m.String(); got != want {
 			t.Errorf("Micros(%d) = %q, want %q", int64(m), got, want)
 		}
+	}
+}
+
+func TestEligibilityByDirection(t *testing.T) {
+	e := Eligibility{RealLong: true, Reason: "", MinPositionAmount: 10, ShortCFD: false, ShortReason: "not shortable", MinShortAmount: 50}
+	if ok, _ := e.Allows(Long); !ok {
+		t.Fatal("long")
+	}
+	if ok, why := e.Allows(Short); ok || why != "not shortable" {
+		t.Fatal("short")
+	}
+	if ok, _ := e.Allows("sideways"); ok {
+		t.Fatal("unknown direction")
+	}
+	if e.MinAmount(Long) != 10 || e.MinAmount(Short) != 50 || !Long.Valid() || Direction("x").Valid() {
+		t.Fatal("helpers")
 	}
 }

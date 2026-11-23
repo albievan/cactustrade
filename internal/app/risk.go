@@ -16,15 +16,16 @@ func riskLimitsKey(accountID string) string { return "risk.limits." + accountID 
 
 // limitsJSON is how the limits are stored (durations in seconds, money in cents).
 type limitsJSON struct {
-	TradingBudget      int64 `json:"tradingBudgetCents"`
-	DailyLoss          int64 `json:"dailyLossBp"`
-	Drawdown           int64 `json:"drawdownBp"`
-	MaxPosition        int64 `json:"maxPositionBp"`
-	MaxOpenPositions   int   `json:"maxOpenPositions"`
-	NoEntryBeforeClose int64 `json:"noEntryBeforeCloseS"`
-	FlattenBeforeClose int64 `json:"flattenBeforeCloseS"`
-	MaxPortfolioAge    int64 `json:"maxPortfolioAgeS"`
-	MaxQuoteAge        int64 `json:"maxQuoteAgeS"`
+	TradingBudget      int64  `json:"tradingBudgetCents"`
+	DailyLoss          int64  `json:"dailyLossBp"`
+	Drawdown           int64  `json:"drawdownBp"`
+	MaxPosition        int64  `json:"maxPositionBp"`
+	MaxOpenPositions   int    `json:"maxOpenPositions"`
+	NoEntryBeforeClose int64  `json:"noEntryBeforeCloseS"`
+	FlattenBeforeClose int64  `json:"flattenBeforeCloseS"`
+	MaxPortfolioAge    int64  `json:"maxPortfolioAgeS"`
+	MaxQuoteAge        int64  `json:"maxQuoteAgeS"`
+	MaxShort           *int64 `json:"maxShortBp,omitempty"` // absent in limits stored before shorts: default
 }
 
 func toLimitsJSON(l domain.RiskLimits) limitsJSON {
@@ -33,17 +34,25 @@ func toLimitsJSON(l domain.RiskLimits) limitsJSON {
 		MaxPosition: int64(l.MaxPosition), MaxOpenPositions: l.MaxOpenPositions,
 		NoEntryBeforeClose: int64(l.NoEntryBeforeClose / time.Second), FlattenBeforeClose: int64(l.FlattenBeforeClose / time.Second),
 		MaxPortfolioAge: int64(l.MaxPortfolioAge / time.Second), MaxQuoteAge: int64(l.MaxQuoteAge / time.Second),
+		MaxShort: ptrTo(int64(l.MaxShort)),
 	}
 }
 
+func ptrTo[T any](v T) *T { return &v }
+
 func (j limitsJSON) domain() domain.RiskLimits {
-	return domain.RiskLimits{
+	l := domain.RiskLimits{
 		TradingBudget: domain.Cents(j.TradingBudget), DailyLoss: domain.BasisPoints(j.DailyLoss),
 		Drawdown: domain.BasisPoints(j.Drawdown), MaxPosition: domain.BasisPoints(j.MaxPosition),
 		MaxOpenPositions: j.MaxOpenPositions, NoEntryBeforeClose: time.Duration(j.NoEntryBeforeClose) * time.Second,
 		FlattenBeforeClose: time.Duration(j.FlattenBeforeClose) * time.Second,
 		MaxPortfolioAge:    time.Duration(j.MaxPortfolioAge) * time.Second, MaxQuoteAge: time.Duration(j.MaxQuoteAge) * time.Second,
+		MaxShort: domain.HardMaxShort,
 	}
+	if j.MaxShort != nil {
+		l.MaxShort = domain.BasisPoints(*j.MaxShort)
+	}
+	return l
 }
 
 // agentState is an account's stored agent state; anything unreadable or unknown is

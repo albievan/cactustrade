@@ -62,6 +62,7 @@ func toRiskLimits(l domain.RiskLimits) RiskLimits {
 		MaxPositionBp: int(l.MaxPosition), MaxOpenPositions: l.MaxOpenPositions,
 		NoEntryBeforeCloseMinutes: int(l.NoEntryBeforeClose / time.Minute), FlattenBeforeCloseMinutes: int(l.FlattenBeforeClose / time.Minute),
 		MaxPortfolioAgeSeconds: int(l.MaxPortfolioAge / time.Second), MaxQuoteAgeSeconds: int(l.MaxQuoteAge / time.Second),
+		MaxShortBp: int(l.MaxShort),
 	}
 }
 
@@ -87,6 +88,7 @@ func (s *Server) SetRiskLimits(w http.ResponseWriter, r *http.Request) {
 		MaxOpenPositions: req.MaxOpenPositions, NoEntryBeforeClose: time.Duration(req.NoEntryBeforeCloseMinutes) * time.Minute,
 		FlattenBeforeClose: time.Duration(req.FlattenBeforeCloseMinutes) * time.Minute,
 		MaxPortfolioAge:    time.Duration(req.MaxPortfolioAgeSeconds) * time.Second, MaxQuoteAge: time.Duration(req.MaxQuoteAgeSeconds) * time.Second,
+		MaxShort: domain.BasisPoints(req.MaxShortBp),
 	})
 	if err != nil {
 		s.fail(w, r, err)

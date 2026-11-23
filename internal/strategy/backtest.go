@@ -36,6 +36,7 @@ type BacktestConfig struct {
 // Trade is one simulated round trip.
 type Trade struct {
 	Playbook   string
+	Direction  domain.Direction
 	Entered    time.Time
 	Exited     time.Time
 	EntryPrice domain.Micros // after half the spread
@@ -66,6 +67,7 @@ type Report struct {
 
 type openPos struct {
 	pb         string
+	dir        domain.Direction
 	units      float64
 	entry      float64 // price paid per unit (incl. half spread)
 	stop, tp   float64
@@ -111,16 +113,25 @@ func Backtest(id domain.InstrumentID, bars []domain.Candle, cfg BacktestConfig) 
 	var sessionRets []float64
 	px := func(m domain.Micros) float64 { return float64(m) / 1e6 }
 
-	closePos := func(at time.Time, price float64, why string) {
+	// value is what closing the position at price would return, in cents, net of the half
+	// spread (a long sells at the bid, a short buys back at the ask).
+	value := func(price float64) (exitPrice, cents float64) {
+		if pos.dir == domain.Short {
+			buy := price * (1 + cfg.Costs.Spread/2)
+			return buy, (float64(pos.amount) - pos.costsOnBuy) + pos.units*(pos.entry-buy)*100
+		}
 		sell := price * (1 - cfg.Costs.Spread/2)
-		gross := pos.units * sell * 100 // cents
+		return sell, pos.units * sell * 100
+	}
+	closePos := func(at time.Time, price float64, why string) {
+		exitPrice, gross := value(price)
 		fee := gross * cfg.Costs.SellFee
 		cash += gross - fee
 		pnl := gross - fee - float64(pos.amount)
-		rep.CostsPaid += domain.Cents(math.Round(fee + pos.costsOnBuy + pos.units*(price-sell)*100))
+		rep.CostsPaid += domain.Cents(math.Round(fee + pos.costsOnBuy + pos.units*math.Abs(price-exitPrice)*100))
 		rep.Trades = append(rep.Trades, Trade{
-			Playbook: pos.pb, Entered: pos.enteredAt, Exited: at, EntryPrice: micros(pos.entry), ExitPrice: micros(sell),
-			Amount: pos.amount, PnL: domain.Cents(math.Round(pnl)), Exit: why,
+			Playbook: pos.pb, Direction: pos.dir, Entered: pos.enteredAt, Exited: at, EntryPrice: micros(pos.entry),
+			ExitPrice: micros(exitPrice), Amount: pos.amount, PnL: domain.Cents(math.Round(pnl)), Exit: why,
 		})
 		pos = nil
 	}
@@ -134,28 +145,39 @@ func Backtest(id domain.InstrumentID, bars []domain.Candle, cfg BacktestConfig) 
 			pending = nil
 			open := px(b.Open)
 			amount := min(float64(c.SuggestedSize), cash)
+			short := c.Direction == domain.Short
+			gapped := (!short && open <= px(c.StopLossRate)) || (short && open >= px(c.StopLossRate))
 			switch {
-			case !same(bars[t-1].Start, b.Start), open <= px(c.StopLossRate), amount < 100:
+			case !same(bars[t-1].Start, b.Start), gapped, amount < 100:
 				rep.SkippedEntries++
 			default:
-				buy := open * (1 + cfg.Costs.Spread/2)
+				fill := open * (1 + cfg.Costs.Spread/2)
+				dir := domain.Long
+				if short {
+					fill, dir = open*(1-cfg.Costs.Spread/2), domain.Short
+				}
 				fee := amount * cfg.Costs.BuyFee
-				units := (amount - fee) / (buy * 100)
+				units := (amount - fee) / (fill * 100)
 				cash -= amount
 				pos = &openPos{
-					pb: c.Playbook, units: units, entry: buy, stop: px(c.StopLossRate), tp: px(c.TakeProfitRate),
-					amount: domain.Cents(math.Round(amount)), enteredAt: b.Start, costsOnBuy: fee + units*(buy-open)*100,
+					pb: c.Playbook, dir: dir, units: units, entry: fill, stop: px(c.StopLossRate), tp: px(c.TakeProfitRate),
+					amount: domain.Cents(math.Round(amount)), enteredAt: b.Start, costsOnBuy: fee + units*math.Abs(fill-open)*100,
 				}
 			}
 		}
 		// 2. exits within this bar's traded range
 		if pos != nil {
 			open, lo, hi := px(b.Open), px(b.Low), px(b.High)
+			short := pos.dir == domain.Short
 			switch {
-			case lo <= pos.stop:
+			case !short && lo <= pos.stop:
 				closePos(b.Start, math.Min(open, pos.stop), "stop")
-			case hi >= pos.tp:
+			case short && hi >= pos.stop:
+				closePos(b.Start, math.Max(open, pos.stop), "stop")
+			case !short && hi >= pos.tp:
 				closePos(b.Start, math.Max(open, pos.tp), "take_profit")
+			case short && lo <= pos.tp:
+				closePos(b.Start, math.Min(open, pos.tp), "take_profit")
 			case lastOfSession && t == len(bars)-1:
 				closePos(b.Start, px(b.Close), "end_of_data")
 			case lastOfSession:
@@ -165,7 +187,8 @@ func Backtest(id domain.InstrumentID, bars []domain.Candle, cfg BacktestConfig) 
 		// 3. mark to market
 		eq := cash
 		if pos != nil {
-			eq += pos.units * px(b.Close) * (1 - cfg.Costs.Spread/2) * 100
+			_, v := value(px(b.Close))
+			eq += v
 		}
 		peak = math.Max(peak, eq)
 		if peak > 0 {

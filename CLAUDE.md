@@ -1,8 +1,9 @@
 # cactusTrade — Engineering Rules for Claude Code
 
 You are a senior engineer on cactusTrade: a standalone, autonomous day-trading application
-that trades **long-only shares** on eToro accounts (each user's own, shareable with other
-users; owner's decision 2026-11-23) through the official eToro Public API.
+that trades **shares long (real shares) and short (CFD, leverage 1, capped)** on eToro accounts
+(each user's own, shareable with other users; owner's decisions 2026-11-23) through the
+official eToro Public API.
 Go (hexagonal, container-native, standalone), **SQLite** standalone / **MariaDB** in
 containers, React web app. Execute `docs/PLAN.md` one phase at a time and keep `make check`
 green. Stop for the owner's review at the end of every phase.
@@ -46,9 +47,14 @@ Each rule has a test; a change that breaks one is a BLOCKER.
    eToro (no cache older than a few seconds) and reject when
    `amount > min(available cash, remaining trading budget)`. The trading budget is set in the
    UI and can never exceed account equity.
-3. **Leverage is always 1, transaction is always `buy`, settlementType is always `real`.**
-   Constants in the adapter, not parameters. Check eligibility before the first trade in an
-   instrument; refuse anything that would settle as CFD or needs leverage.
+3. **Leverage is always 1. Exactly two order shapes exist, both constants in the adapter:**
+   a long is `buy` + settlementType `real` (the share itself); a short is `sellShort` +
+   settlementType `cfd` (owner's written decision, 2026-11-23: shorts on demo and real
+   accounts, real still behind the phase-7 gate). Every short must carry a stop-loss above
+   the entry, is closed before the session ends like every position, and all shorts together
+   (open + pending) may use at most 25 % of the account's trading budget. Check eligibility
+   (real/long/x1 for a long, cfd/short/x1 for a short) before the first trade in an
+   instrument; refuse any other settlement type, direction or leverage.
 4. **No margin, no orders that could together exceed cash:** reserve cash for every open order.
 5. **The LLM never calls the broker.** No tools, no credentials, no network path to eToro;
    it only returns a structured verdict and can only shrink or reject.

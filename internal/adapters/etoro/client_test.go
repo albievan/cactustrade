@@ -200,10 +200,13 @@ func TestPortfolio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.AvailableCash != 123456 || p.PendingOpen != 7550 || len(p.Positions) != 2 {
+	if p.AvailableCash != 123456 || p.PendingOpen != 7550 || len(p.Positions) != 3 {
 		t.Fatalf("portfolio = %+v", p)
 	}
-	a, b := p.Positions[0], p.Positions[1]
+	a, sh, b := p.Positions[0], p.Positions[1], p.Positions[2]
+	if !sh.CFD || sh.Long || !sh.Conforms() || sh.Direction() != domain.Short || sh.StopLossRate != 52_000_000 {
+		t.Fatalf("short CFD x1 = %+v", sh)
+	}
 	if a.ID != 1001 || a.OpenRate != 189123456 || a.Units != 2643793 || a.Amount != 50000 || a.UnrealisedPnL != 1025 || !a.Conforms() {
 		t.Fatalf("position a = %+v", a)
 	}
@@ -211,7 +214,7 @@ func TestPortfolio(t *testing.T) {
 		t.Fatalf("position b (CFD x2) = %+v", b)
 	}
 	// equity = cash + pending + Σ(amount + pnl)
-	if got := p.Equity(); got != 123456+7550+50000+1025+10000 {
+	if got := p.Equity(); got != 123456+7550+50000+1025+20000-500+10000 {
 		t.Fatalf("equity = %d", got)
 	}
 }
@@ -315,8 +318,11 @@ func TestEligibility(t *testing.T) {
 	for _, el := range els {
 		got[el.Instrument] = el
 	}
-	if !got[1001].RealLong || got[1001].MinPositionAmount != 1000 {
-		t.Errorf("1001 real long x1 offered: %+v", got[1001])
+	if !got[1001].RealLong || got[1001].MinPositionAmount != 1000 || !got[1001].ShortCFD || got[1001].MinShortAmount != 5000 {
+		t.Errorf("1001 real long x1 and CFD short x1 offered: %+v", got[1001])
+	}
+	if got[2002].ShortCFD || got[2002].ShortReason == "" || got[6006].ShortCFD || got[9999].ShortReason == "" {
+		t.Errorf("shortability: %+v %+v %+v", got[2002], got[6006], got[9999])
 	}
 	for id, why := range map[domain.InstrumentID]string{
 		2002: "CFD only", 3003: "only potential", 6006: "opening not allowed", 9999: "not found",
@@ -329,12 +335,23 @@ func TestEligibility(t *testing.T) {
 
 func TestCostsSendOnlyGuardrailConstants(t *testing.T) {
 	e := newEnv(t)
-	items, err := e.c.Costs(e.ctx(), 2002, 12345)
+	if _, err := e.c.Costs(e.ctx(), 2002, "buyToCover", 100); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatal("a third order shape reached the costs request")
+	}
+	if _, err := e.c.Costs(e.ctx(), 2002, domain.Short, 100); err != nil {
+		t.Fatal(err)
+	}
+	var short map[string]any
+	_ = json.Unmarshal([]byte(e.fake.bodies[0]), &short)
+	if short["transaction"] != "sellShort" || short["settlementType"] != "cfd" || short["leverage"] != 1.0 {
+		t.Fatalf("short costs body = %v", short)
+	}
+	items, err := e.c.Costs(e.ctx(), 2002, domain.Long, 12345)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var body map[string]any
-	_ = json.Unmarshal([]byte(e.fake.bodies[0]), &body)
+	_ = json.Unmarshal([]byte(e.fake.bodies[1]), &body)
 	want := map[string]any{
 		"action": "open", "transaction": "buy", "instrumentId": 2002.0, "settlementType": "real",
 		"orderType": "mkt", "leverage": 1.0, "amount": 123.45, "orderCurrency": "usd",
@@ -345,7 +362,7 @@ func TestCostsSendOnlyGuardrailConstants(t *testing.T) {
 	if len(items) != 3 || items[2].Type != "sdrt" || items[2].Value != 500000 {
 		t.Fatalf("costs = %+v", items)
 	}
-	if _, err := e.c.Costs(e.ctx(), 2002, 0); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := e.c.Costs(e.ctx(), 2002, domain.Long, 0); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatal("zero amount accepted")
 	}
 }

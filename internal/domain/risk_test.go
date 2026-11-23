@@ -15,7 +15,7 @@ func okInput() RiskInput {
 	return RiskInput{
 		Now: t0, SessionOpen: t0.Add(-30 * time.Minute), SessionClose: t0.Add(6 * time.Hour), Trading: true,
 		Portfolio:  Portfolio{AvailableCash: 1_000_000, AsOf: t0.Add(-time.Second)},
-		Instrument: 1, Eligibility: Eligibility{Instrument: 1, RealLong: true, MinPositionAmount: 1000},
+		Instrument: 1, Direction: Long, Eligibility: Eligibility{Instrument: 1, RealLong: true, MinPositionAmount: 1000, ShortCFD: true, MinShortAmount: 2000},
 		Entry: 100_000_000, QuoteAt: t0.Add(-2 * time.Second), StopLoss: 98_000_000, Requested: 100_000,
 		Limits: l, State: RiskState{StartOfDayEquity: 1_000_000, HighWaterMark: 1_000_000}, Reconciled: true,
 	}
@@ -60,7 +60,16 @@ func TestAssessEntryRefuses(t *testing.T) {
 		{"not eligible", func(in *RiskInput) { in.Eligibility.RealLong = false }, "not confirmed", false},
 		{"eligibility of another instrument", func(in *RiskInput) { in.Eligibility.Instrument = 2 }, "not confirmed", false},
 		{"stop above entry", func(in *RiskInput) { in.StopLoss = in.Entry }, "stop below", false},
-		{"no stop", func(in *RiskInput) { in.StopLoss = 0 }, "stop below", false},
+		{"no stop", func(in *RiskInput) { in.StopLoss = 0 }, "price and a stop", false},
+		{"no direction", func(in *RiskInput) { in.Direction = "" }, "unknown direction", false},
+		{"short with the stop below", func(in *RiskInput) { in.Direction = Short }, "stop above", false},
+		{"short not shortable", func(in *RiskInput) { in.Direction = Short; in.StopLoss = 102_000_000; in.Eligibility.ShortCFD = false }, "not confirmed shortable", false},
+		{"short cap used up", func(in *RiskInput) {
+			in.Direction, in.StopLoss = Short, 102_000_000
+			in.Portfolio.Positions = []Position{{ID: 3, Instrument: 9, Amount: 125_000, CFD: true, Long: false, Leverage: 1}}
+		}, "short allowance", false},
+		{"shorts switched off", func(in *RiskInput) { in.Direction, in.StopLoss, in.Limits.MaxShort = Short, 102_000_000, 0 }, "short allowance", false},
+		{"short below eToro minimum", func(in *RiskInput) { in.Direction, in.StopLoss, in.Requested = Short, 102_000_000, 1500 }, "minimum", false},
 		{"nothing requested", func(in *RiskInput) { in.Requested = 0 }, "nothing", false},
 		{"no cash", func(in *RiskInput) { in.Portfolio.AvailableCash = 0; in.Portfolio.PendingOpen = 1_000_000 }, "no cash", false},
 		{"below eToro minimum", func(in *RiskInput) { in.Requested = 500 }, "minimum", false},
@@ -101,6 +110,18 @@ func TestAssessEntryShrinks(t *testing.T) {
 			in.StopLoss = 99_990_000 // a tiny stop so the loss allowance is not the limit
 		}, 1_000_000},
 		{"by position cap", func(in *RiskInput) { in.Requested = 400_000 }, 200_000},
+		{"a short by the short cap (25 % of the budget)", func(in *RiskInput) {
+			in.Direction, in.StopLoss = Short, 101_000_000
+			in.Portfolio.Positions = []Position{{ID: 3, Instrument: 9, Amount: 100_000, CFD: true, Long: false, Leverage: 1}}
+			in.State.ReservedShort, in.State.Reserved, in.State.ReservedOrders = 5_000, 5_000, 1
+		}, 20_000},
+		{"a short by the daily loss allowance", func(in *RiskInput) {
+			in.Direction = Short
+			in.State.StartOfDayEquity = 1_010_000 // allowance 10,200
+			in.StopLoss = 110_000_000             // a 10 % stop above
+			in.Limits.TradingBudget = 2_000_000
+			in.Requested = 150_000
+		}, 102_000},
 		{"by the daily loss allowance", func(in *RiskInput) {
 			in.State.StartOfDayEquity = 1_010_000 // floor 989,800 → allowance 10,200
 			in.StopLoss = 90_000_000              // a 10 % stop: at most 102,000 at risk of 10,200
@@ -123,7 +144,7 @@ func TestAssessEntryShrinks(t *testing.T) {
 // and a stop-out can never breach the daily loss floor.
 func TestAssessEntryProperties(t *testing.T) {
 	r := rand.New(rand.NewPCG(1, 2))
-	allowed := 0
+	allowed, shorts := 0, 0
 	for range 20_000 {
 		in := okInput()
 		in.Portfolio.AvailableCash = Cents(r.Int64N(2_000_000))
@@ -131,8 +152,14 @@ func TestAssessEntryProperties(t *testing.T) {
 		for j := range r.IntN(4) {
 			in.Portfolio.Positions = append(in.Portfolio.Positions, Position{
 				ID: int64(j + 10), Instrument: InstrumentID(j + 10), Amount: Cents(r.Int64N(300_000)),
-				UnrealisedPnL: Cents(r.Int64N(40_000) - 20_000), RealAsset: r.IntN(20) > 0, Long: r.IntN(20) > 0, Leverage: 1 + r.IntN(20)/19,
+				UnrealisedPnL: Cents(r.Int64N(40_000) - 20_000), Leverage: 1 + r.IntN(20)/19,
 			})
+			p := &in.Portfolio.Positions[len(in.Portfolio.Positions)-1]
+			if r.IntN(3) == 0 { // a short CFD, now and then a malformed one
+				p.CFD, p.Long, p.RealAsset = true, false, r.IntN(20) == 0
+			} else {
+				p.RealAsset, p.Long, p.CFD = r.IntN(20) > 0, true, false
+			}
 		}
 		in.State.Reserved = Cents(r.Int64N(200_000))
 		in.State.ReservedOrders = r.IntN(3)
@@ -142,7 +169,14 @@ func TestAssessEntryProperties(t *testing.T) {
 		in.Limits.MaxPosition = BasisPoints(r.Int64N(3_000))
 		in.Limits.MaxOpenPositions = 1 + r.IntN(HardMaxOpenPositions)
 		in.Requested = Cents(r.Int64N(1_000_000)) - 1000
-		in.StopLoss = in.Entry - Micros(r.Int64N(int64(in.Entry)))
+		in.Limits.MaxShort = BasisPoints(r.Int64N(int64(HardMaxShort) + 1))
+		if r.IntN(2) == 0 {
+			in.Direction = Short
+			in.StopLoss = in.Entry + Micros(r.Int64N(int64(in.Entry)))
+			in.State.ReservedShort = min(in.State.Reserved, Cents(r.Int64N(100_000)))
+		} else {
+			in.StopLoss = in.Entry - Micros(r.Int64N(int64(in.Entry)))
+		}
 		d := AssessEntry(in)
 		if !d.Allowed {
 			if d.Size != 0 {
@@ -160,7 +194,17 @@ func TestAssessEntryProperties(t *testing.T) {
 				t.Fatalf("allowed next to a non-conforming position: %+v", in)
 			}
 		}
-		lossAtStop := int64(d.Size) * int64(in.Entry-in.StopLoss) / int64(in.Entry)
+		dist := int64(in.Entry - in.StopLoss)
+		if dist < 0 {
+			dist = -dist
+		}
+		lossAtStop := int64(d.Size) * dist / int64(in.Entry)
+		shortOpen := st.ReservedShort
+		for _, p := range pf.Positions {
+			if !p.Long {
+				shortOpen += p.Amount
+			}
+		}
 		switch {
 		case d.Size <= 0 || d.Size > in.Requested:
 			t.Fatalf("size %d vs requested %d", d.Size, in.Requested)
@@ -176,10 +220,17 @@ func TestAssessEntryProperties(t *testing.T) {
 			t.Fatalf("a stop-out would breach the daily loss floor")
 		case eq <= st.HighWaterMark-l.Drawdown.of(st.HighWaterMark):
 			t.Fatalf("allowed in drawdown")
+		case in.Direction == Short && shortOpen+d.Size > l.MaxShort.of(min(l.TradingBudget, eq)):
+			t.Fatalf("a short breaches the short cap: %d + %d > %d", shortOpen, d.Size, l.MaxShort.of(min(l.TradingBudget, eq)))
+		case in.Direction == Short && in.StopLoss <= in.Entry, in.Direction == Long && in.StopLoss >= in.Entry:
+			t.Fatalf("the stop is on the wrong side")
+		}
+		if in.Direction == Short {
+			shorts++
 		}
 	}
-	if allowed < 200 {
-		t.Fatalf("only %d of 20000 random inputs allowed: the property test is not exercising much", allowed)
+	if allowed < 200 || shorts < 50 {
+		t.Fatalf("only %d of 20000 random inputs allowed (%d shorts): the property test is not exercising much", allowed, shorts)
 	}
 }
 
@@ -197,6 +248,8 @@ func TestRiskLimitsValidate(t *testing.T) {
 		func(l *RiskLimits) { l.NoEntryBeforeClose = 5 * time.Minute },
 		func(l *RiskLimits) { l.MaxPortfolioAge = 0 },
 		func(l *RiskLimits) { l.MaxQuoteAge = time.Hour },
+		func(l *RiskLimits) { l.MaxShort = HardMaxShort + 1 },
+		func(l *RiskLimits) { l.MaxShort = -1 },
 	}
 	for i, f := range bad {
 		l := DefaultRiskLimits

@@ -923,6 +923,8 @@ export interface components {
             flattenBeforeCloseMinutes: number;
             maxPortfolioAgeSeconds: number;
             maxQuoteAgeSeconds: number;
+            /** @description all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %) */
+            maxShortBp: number;
         };
         LlmProvider: {
             id: string;

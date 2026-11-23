@@ -73,12 +73,22 @@ func TestAllowlistDemoIsDemo(t *testing.T) {
 
 // TestOrderConstants pins the guardrail constants: long only, leverage 1, real shares.
 func TestOrderConstants(t *testing.T) {
-	if OrderTransaction != "buy" || OrderLeverage != 1 || OrderSettlementType != "real" ||
-		OrderAction != "open" || OrderType != "mkt" || OrderCurrency != "usd" || RealAssetSettlementTypeID != 1 {
+	if OrderTransaction != "buy" || OrderSettlementType != "real" || OrderTransactionShort != "sellShort" ||
+		OrderSettlementTypeShort != "cfd" || OrderLeverage != 1 || OrderAction != "open" || OrderType != "mkt" ||
+		OrderCurrency != "usd" || RealAssetSettlementTypeID != 1 || CFDSettlementTypeID != 0 {
 		t.Fatal("order guardrail constants changed (CLAUDE.md §2.3)")
 	}
 	if BaseURL != "https://public-api.etoro.com" || WebSocketURL != "wss://ws.etoro.com/ws" {
 		t.Fatal("eToro hosts changed")
+	}
+	for d, want := range map[domain.Direction][2]string{domain.Long: {"buy", "real"}, domain.Short: {"sellShort", "cfd"}} {
+		tr, st, ok := orderShape(d)
+		if !ok || tr != want[0] || st != want[1] {
+			t.Fatalf("%s → %s %s", d, tr, st)
+		}
+	}
+	if _, _, ok := orderShape("buyToCover"); ok {
+		t.Fatal("a third order shape")
 	}
 }
 

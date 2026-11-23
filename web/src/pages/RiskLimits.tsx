@@ -44,8 +44,8 @@ export function RiskLimits() {
     <>
       <h1 className="h3">Risk limits</h1>
       <p className="text-secondary">
-        Enforced by the risk engine on every order, in US dollars (the eToro account currency). Nothing can switch on
-        leverage, short selling or CFDs: those are fixed in the code.
+        Enforced by the risk engine on every order, in US dollars (the eToro account currency). Leverage is always 1;
+        longs buy the real share, shorts are CFDs with a mandatory stop, and nothing is held overnight — fixed in the code.
       </p>
       {status?.account && <p className="small">Account: <strong>{status.account.name}</strong> ({status.account.mode}).</p>}
       {owner && !editable && <div className="alert alert-info">Stop the agent to change the limits (it is <strong>{status?.agentState}</strong>).</div>}
@@ -69,6 +69,7 @@ export function RiskLimits() {
         {field("flattenBeforeCloseMinutes", "Close everything before the close", "Minutes before the session ends (never held overnight).", "min")}
         {field("maxPortfolioAgeSeconds", "Freshest cash figure", "The available cash must be at most this old when an order is sized.", "s")}
         {field("maxQuoteAgeSeconds", "Freshest price", "The entry price must be at most this old.", "s")}
+        {field("maxShortBp", "Short selling", "All shorts together (CFDs at leverage 1, each with a stop above the entry) as a share of the trading budget. 0 = no shorts; at most 2500 bp = 25 %.", "bp")}
         {editable && <div className="col-12"><button className="btn btn-success">Save limits</button></div>}
       </div></form>
     </>

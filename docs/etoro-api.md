@@ -58,6 +58,15 @@ Response `{token, orderId, referenceId}` — **200 = accepted for processing, no
 5 PartiallyFilled, 4 Rejected, 10 RejectedPartiallyFilled, 1/2/11/12 pending.
 `positionExecutions` lists the resulting `positionId`s.
 
+### Shorts (owner's decision D19)
+
+A short is `transaction: "sellShort"` with `settlementType: "cfd"` at `leverage: 1` — the
+second and last order shape the adapter knows (`orderShape`). Eligibility needs a
+`leverageConfigs` entry with `settlementType: cfd`, `direction: short|sell`, `1` in
+`leverageValues` and `isPotential: false`. A conforming short position has
+`settlementTypeID: 0` (CFD), `isBuy: false`, leverage 1. CFDs carry overnight fees and
+margin; cactusTrade closes every position before the session ends.
+
 ### Share vs CFD
 
 Settlement is chosen with `settlementType` (`cfd | real | realFutures | marginTrade`).

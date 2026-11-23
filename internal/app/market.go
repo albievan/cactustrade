@@ -197,8 +197,8 @@ func (s *Service) addToWatchlist(ctx context.Context, v domain.AccountView, acto
 	if err := s.d.Store.Instruments().Upsert(ctx, in, el, now); err != nil {
 		return domain.WatchItem{}, fmt.Errorf("app.AddToWatchlist: %w", err)
 	}
-	if !el.RealLong {
-		return domain.WatchItem{}, domain.Invalid("instrumentId", "not tradable as a real share at leverage 1: "+el.Reason)
+	if !el.RealLong && !el.ShortCFD {
+		return domain.WatchItem{}, domain.Invalid("instrumentId", "not tradable at leverage 1, long ("+el.Reason+") or short ("+el.ShortReason+")")
 	}
 	if err := s.d.Store.Watchlist().Add(ctx, v.ID, id, actor, now); err != nil {
 		if errors.Is(err, domain.ErrConflict) {

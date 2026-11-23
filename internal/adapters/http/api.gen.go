@@ -673,8 +673,11 @@ type RiskLimits struct {
 	MaxPortfolioAgeSeconds    int `json:"maxPortfolioAgeSeconds"`
 
 	// MaxPositionBp largest position as a share of equity (bp; 0 = off)
-	MaxPositionBp             int `json:"maxPositionBp"`
-	MaxQuoteAgeSeconds        int `json:"maxQuoteAgeSeconds"`
+	MaxPositionBp      int `json:"maxPositionBp"`
+	MaxQuoteAgeSeconds int `json:"maxQuoteAgeSeconds"`
+
+	// MaxShortBp all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %)
+	MaxShortBp                int `json:"maxShortBp"`
 	NoEntryBeforeCloseMinutes int `json:"noEntryBeforeCloseMinutes"`
 
 	// TradingBudgetCents US dollars in cents (the eToro account currency is USD)

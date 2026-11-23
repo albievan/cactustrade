@@ -1,6 +1,7 @@
 {"currency":"USD","eligibilities":[
  {"instrumentId":1001,"symbol":"EXMP","allowOpenPosition":true,"leverageConfigs":[
    {"settlementType":"cfd","direction":"short","leverageValues":[1,2],"isPotential":false,"minPositionAmount":50},
+   {"settlementType":"cfd","direction":"long","leverageValues":[1,5],"isPotential":false,"minPositionAmount":50},
    {"settlementType":"real","direction":"long","leverageValues":[1],"isPotential":false,"minPositionAmount":10}]},
  {"instrumentId":2002,"symbol":"EXM.L","allowOpenPosition":true,"leverageConfigs":[
    {"settlementType":"cfd","direction":"long","leverageValues":[1,5],"isPotential":false,"minPositionAmount":50}]},

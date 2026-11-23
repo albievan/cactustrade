@@ -244,7 +244,8 @@ func (c *Client) Portfolio(ctx context.Context) (domain.Portfolio, error) {
 			ID: w.PositionID, Instrument: domain.InstrumentID(w.InstrumentID), OpenedAt: w.OpenDateTime.UTC(),
 			OpenRate: toMicros(w.OpenRate), Units: toMicros(w.Units), Amount: toCents(w.Amount),
 			StopLossRate: toMicros(w.StopLossRate), TakeProfitRate: toMicros(w.TakeProfitRate),
-			RealAsset: w.SettlementTypeID == RealAssetSettlementTypeID, Long: w.IsBuy, Leverage: w.Leverage,
+			RealAsset: w.SettlementTypeID == RealAssetSettlementTypeID, CFD: w.SettlementTypeID == CFDSettlementTypeID,
+			Long: w.IsBuy, Leverage: w.Leverage,
 		}
 		if w.UnrealizedPnL != nil {
 			pos.UnrealisedPnL = toCents(w.UnrealizedPnL.PnL)
@@ -264,12 +265,12 @@ type leverageConfigWire struct {
 	AllowStopLossTakeP bool    `json:"allowStopLossTakeProfit"`
 }
 
-// realLongConfig finds the configuration for a real (non-CFD) long position at leverage 1.
-// isPotential entries are not offered yet, so they do not count (fail closed).
-func realLongConfig(cfgs []leverageConfigWire) (leverageConfigWire, bool) {
+// leverageConfig finds the configuration for an unleveraged position: settlement "real" and
+// direction long for a long, settlement "cfd" and direction short for a short. isPotential
+// entries are not offered yet, so they do not count (fail closed).
+func leverageConfig(cfgs []leverageConfigWire, settlement string, dirs ...string) (leverageConfigWire, bool) {
 	for _, lc := range cfgs {
-		dir := strings.ToLower(lc.Direction)
-		if strings.EqualFold(lc.SettlementType, OrderSettlementType) && (dir == "long" || dir == "buy") &&
+		if strings.EqualFold(lc.SettlementType, settlement) && slices.Contains(dirs, strings.ToLower(lc.Direction)) &&
 			slices.Contains(lc.LeverageValues, OrderLeverage) && !lc.IsPotential {
 			return lc, true
 		}
@@ -297,26 +298,35 @@ func (c *Client) Eligibility(ctx context.Context, ids []domain.InstrumentID) ([]
 		}
 		for _, e := range resp.Eligibilities {
 			el := domain.Eligibility{Instrument: domain.InstrumentID(e.InstrumentID), Symbol: e.Symbol, CheckedAt: now}
-			lc, ok := realLongConfig(e.LeverageConfigs)
+			lc, okLong := leverageConfig(e.LeverageConfigs, OrderSettlementType, "long", "buy")
+			sc, okShort := leverageConfig(e.LeverageConfigs, OrderSettlementTypeShort, "short", "sell")
 			switch {
 			case !e.AllowOpenPosition:
 				el.Reason = "eToro does not allow opening positions in this instrument"
-			case !ok:
-				el.Reason = "not offered as a real share, long, at leverage 1"
+				el.ShortReason = el.Reason
 			default:
-				el.RealLong, el.MinPositionAmount = true, toCents(lc.MinPositionAmount)
+				if okLong {
+					el.RealLong, el.MinPositionAmount = true, toCents(lc.MinPositionAmount)
+				} else {
+					el.Reason = "not offered as a real share, long, at leverage 1"
+				}
+				if okShort {
+					el.ShortCFD, el.MinShortAmount = true, toCents(sc.MinPositionAmount)
+				} else {
+					el.ShortReason = "not offered as a CFD short at leverage 1"
+				}
 			}
 			out = append(out, el)
 		}
 		for _, id := range resp.NotFound {
-			out = append(out, domain.Eligibility{Instrument: domain.InstrumentID(id), Reason: "instrument not found", CheckedAt: now})
+			out = append(out, domain.Eligibility{Instrument: domain.InstrumentID(id), Reason: "instrument not found", ShortReason: "instrument not found", CheckedAt: now})
 		}
 	}
 	return out, nil
 }
 
-// costRequest is a hypothetical buy built ONLY from the guardrail constants: nothing here
-// can ask for leverage, a short or a CFD.
+// costRequest is a hypothetical order built ONLY from the guardrail constants (one of the two
+// order shapes): nothing here can ask for leverage.
 type costRequest struct {
 	Action         string  `json:"action"`
 	Transaction    string  `json:"transaction"`
@@ -328,14 +338,18 @@ type costRequest struct {
 	OrderCurrency  string  `json:"orderCurrency"`
 }
 
-// Costs is eToro's cost breakdown for buying amount (USD cents) of id.
-func (c *Client) Costs(ctx context.Context, id domain.InstrumentID, amount domain.Cents) ([]domain.CostItem, error) {
+// Costs is eToro's cost breakdown for opening amount (USD cents) of id in direction d.
+func (c *Client) Costs(ctx context.Context, id domain.InstrumentID, d domain.Direction, amount domain.Cents) ([]domain.CostItem, error) {
 	if amount <= 0 {
 		return nil, domain.Invalid("amount", "must be positive")
 	}
+	tr, st, ok := orderShape(d)
+	if !ok {
+		return nil, domain.Invalid("direction", "long or short")
+	}
 	body := costRequest{
-		Action: OrderAction, Transaction: OrderTransaction, InstrumentID: int64(id),
-		SettlementType: OrderSettlementType, OrderType: OrderType, Leverage: OrderLeverage,
+		Action: OrderAction, Transaction: tr, InstrumentID: int64(id),
+		SettlementType: st, OrderType: OrderType, Leverage: OrderLeverage,
 		Amount: float64(amount) / 100, OrderCurrency: OrderCurrency,
 	}
 	var resp struct {

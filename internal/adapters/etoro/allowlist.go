@@ -15,19 +15,36 @@ const BaseURL = "https://public-api.etoro.com"
 // WebSocketURL is the eToro streaming endpoint (prices, private order/position updates).
 const WebSocketURL = "wss://ws.etoro.com/ws"
 
-// Order constants (CLAUDE.md §2.3). They are deliberately not parameters anywhere.
+// Order constants (CLAUDE.md §2.3). They are deliberately not parameters anywhere: exactly
+// two order shapes exist, long = buy + real, short = sellShort + cfd, always leverage 1.
 const (
-	OrderAction         = "open"
-	OrderTransaction    = "buy"  // long only: never "sellShort"
-	OrderLeverage       = 1      // never leveraged
-	OrderSettlementType = "real" // the real share, never "cfd", "realFutures" or "marginTrade"
-	OrderType           = "mkt"
-	OrderCurrency       = "usd" // the only currency eToro accepts for orders
-	StopLossType        = "fixed"
-	// RealAssetSettlementTypeID is a position's settlementTypeID for a real share; any other
-	// value after a fill means the position is closed at once and the instrument blocked.
+	OrderAction              = "open"
+	OrderTransaction         = "buy"       // a long: the real share
+	OrderSettlementType      = "real"      // never "realFutures" or "marginTrade"
+	OrderTransactionShort    = "sellShort" // a short (owner's decision D19)
+	OrderSettlementTypeShort = "cfd"       // a short is a CFD on eToro
+	OrderLeverage            = 1           // never leveraged
+	OrderType                = "mkt"
+	OrderCurrency            = "usd" // the only currency eToro accepts for orders
+	StopLossType             = "fixed"
+	// RealAssetSettlementTypeID / CFDSettlementTypeID are a position's settlementTypeID for
+	// a real share (longs) and a CFD (shorts); any other value after a fill means the
+	// position is closed at once and the instrument blocked.
 	RealAssetSettlementTypeID = 1
+	CFDSettlementTypeID       = 0
 )
+
+// orderShape maps a direction to its constant transaction and settlement type. Anything but
+// long or short is refused.
+func orderShape(d domain.Direction) (transaction, settlement string, ok bool) {
+	switch d {
+	case domain.Long:
+		return OrderTransaction, OrderSettlementType, true
+	case domain.Short:
+		return OrderTransactionShort, OrderSettlementTypeShort, true
+	}
+	return "", "", false
+}
 
 // Op names an allowlisted eToro operation.
 type Op string

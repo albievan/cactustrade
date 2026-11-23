@@ -132,3 +132,42 @@ func TestBacktestWithEngine(t *testing.T) {
 		t.Fatal("empty report verdict")
 	}
 }
+
+func TestBacktestShorts(t *testing.T) {
+	t0 := time.Date(2026, 11, 23, 14, 30, 0, 0, time.UTC)
+	m := func(f float64) domain.Micros { return domain.Micros(math.Round(f * 1e6)) }
+	bars := []domain.Candle{
+		bar(t0, 0, 100, 100, 100, 100),
+		bar(t0, 1, 100, 100, 100, 100),   // short A: stop 101, tp 98
+		bar(t0, 2, 100, 100.5, 99, 99),   // A fills at 100
+		bar(t0, 3, 99, 99, 97.5, 97.8),   // A: low reaches 98 → target 98
+		bar(t0, 4, 98, 98, 98, 98),       // short B: stop 99, tp 90
+		bar(t0, 5, 98, 99.5, 97.9, 99.2), // B fills at 98; high 99.5 ≥ stop 99 → stop at 99
+		bar(t0, 6, 99, 99, 99, 99),       // short C: stop 100 — next open 101 gaps above: skipped
+		bar(t0, 7, 101, 101, 101, 101),
+		bar(t0, 8, 101, 101, 101, 101),
+	}
+	sig := map[int]domain.Candidate{
+		1: {Playbook: "a", Direction: domain.Short, StopLossRate: m(101), TakeProfitRate: m(98), SuggestedSize: 50_000},
+		4: {Playbook: "b", Direction: domain.Short, StopLossRate: m(99), TakeProfitRate: m(90), SuggestedSize: 50_000},
+		6: {Playbook: "c", Direction: domain.Short, StopLossRate: m(100), TakeProfitRate: m(90), SuggestedSize: 50_000},
+	}
+	rep := Backtest(1, bars, BacktestConfig{StartEquity: 100_000, Warmup: 1, decide: scripted(sig)})
+	if len(rep.Trades) != 2 || rep.SkippedEntries != 1 {
+		t.Fatalf("trades %+v skipped %d", rep.Trades, rep.SkippedEntries)
+	}
+	a, b := rep.Trades[0], rep.Trades[1]
+	if a.Direction != domain.Short || a.Exit != "take_profit" || a.ExitPrice != m(98) || a.PnL != 1000 {
+		t.Errorf("A (short 100 → 98 on $500 = +$10) = %+v", a)
+	}
+	if b.Exit != "stop" || b.ExitPrice != m(99) || b.PnL >= 0 {
+		t.Errorf("B (short 98 stopped at 99 must lose) = %+v", b)
+	}
+	if rep.EndEquity != 100_000+a.PnL+b.PnL {
+		t.Errorf("equity %d != start + Σ pnl", rep.EndEquity)
+	}
+	costly := Backtest(1, bars, BacktestConfig{StartEquity: 100_000, Warmup: 1, decide: scripted(sig), Costs: Costs{Spread: 0.002, BuyFee: 0.001}})
+	if costly.EndEquity >= rep.EndEquity || costly.CostsPaid <= 0 {
+		t.Errorf("short costs: %d vs %d (paid %d)", costly.EndEquity, rep.EndEquity, costly.CostsPaid)
+	}
+}

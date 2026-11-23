@@ -213,8 +213,9 @@ type Broker interface {
 	// Eligibility reports, per instrument, whether it can be bought as a real share, long,
 	// at leverage 1 (checked before the first trade in an instrument).
 	Eligibility(ctx context.Context, ids []domain.InstrumentID) ([]domain.Eligibility, error)
-	// Costs is eToro's cost breakdown (spread, markup, fees, tax) for buying amount of id.
-	Costs(ctx context.Context, id domain.InstrumentID, amount domain.Cents) ([]domain.CostItem, error)
+	// Costs is eToro's cost breakdown (spread, markup, fees, tax) for opening amount of id in
+	// direction d.
+	Costs(ctx context.Context, id domain.InstrumentID, d domain.Direction, amount domain.Cents) ([]domain.CostItem, error)
 	TradeHistory(ctx context.Context, since time.Time) ([]domain.ClosedTrade, error)
 	Open(ctx context.Context, o domain.OrderIntent) (domain.OrderStatus, error)
 	Lookup(ctx context.Context, requestID string) (domain.OrderStatus, error)

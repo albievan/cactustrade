@@ -36,6 +36,9 @@ type RiskLimits struct {
 	MaxPortfolioAge time.Duration
 	// MaxQuoteAge: the entry price must be at most this old (default 30 s).
 	MaxQuoteAge time.Duration
+	// MaxShort caps all short exposure (open shorts and short orders) as a share of the
+	// trading budget: at most HardMaxShort (owner's decision D19); 0 = no shorts.
+	MaxShort BasisPoints
 }
 
 // DefaultRiskLimits are the brief's defaults; the trading budget starts at zero (nothing
@@ -43,8 +46,11 @@ type RiskLimits struct {
 var DefaultRiskLimits = RiskLimits{
 	DailyLoss: 200, Drawdown: 1000, MaxPosition: 2000, MaxOpenPositions: 8,
 	NoEntryBeforeClose: 30 * time.Minute, FlattenBeforeClose: 10 * time.Minute,
-	MaxPortfolioAge: 5 * time.Second, MaxQuoteAge: 30 * time.Second,
+	MaxPortfolioAge: 5 * time.Second, MaxQuoteAge: 30 * time.Second, MaxShort: HardMaxShort,
 }
+
+// HardMaxShort is the owner's ceiling on short exposure: 25 % of the trading budget (D19).
+const HardMaxShort BasisPoints = 2_500
 
 // HardMaxOpenPositions is the ceiling for MaxOpenPositions: with eToro's execution quota of
 // 20 per minute shared by opens, closes and cancels, more could not be flattened at once.
@@ -72,6 +78,8 @@ func (l RiskLimits) Validate() error {
 		return Invalid("maxPortfolioAge", "must be 1-60 seconds")
 	case l.MaxQuoteAge <= 0 || l.MaxQuoteAge > 5*time.Minute:
 		return Invalid("maxQuoteAge", "must be 1-300 seconds")
+	case l.MaxShort < 0 || l.MaxShort > HardMaxShort:
+		return Invalid("maxShortBp", "must be 0 (no shorts) to 2500 (25 % of the budget)")
 	}
 	return nil
 }
@@ -83,6 +91,7 @@ type RiskState struct {
 	Killed           bool  // drawdown or manual kill: only an admin reset clears it
 	Reserved         Cents // cash reserved for orders sent but not yet in the portfolio
 	ReservedOrders   int   // how many such orders
+	ReservedShort    Cents // the part of Reserved that is for short orders
 }
 
 // RiskInput is everything one entry decision depends on. All of it is passed in: the engine
@@ -94,6 +103,7 @@ type RiskInput struct {
 	Trading      bool // the market trades today (calendar); false = closed
 	Portfolio    Portfolio
 	Instrument   InstrumentID
+	Direction    Direction
 	Eligibility  Eligibility
 	Entry        Micros // the price the size is based on
 	QuoteAt      time.Time
@@ -165,11 +175,22 @@ func AssessEntry(in RiskInput) RiskDecision {
 	if n := len(pf.Positions) + st.ReservedOrders; n >= l.MaxOpenPositions {
 		return deny("%d positions and orders open (cap %d)", n, l.MaxOpenPositions)
 	}
-	if !in.Eligibility.RealLong || in.Eligibility.Instrument != in.Instrument {
-		return deny("the instrument is not confirmed tradable as a real share, long, leverage 1")
+	if !in.Direction.Valid() {
+		return deny("unknown direction")
 	}
-	if in.Entry <= 0 || in.StopLoss <= 0 || in.StopLoss >= in.Entry {
+	if ok, why := in.Eligibility.Allows(in.Direction); !ok || in.Eligibility.Instrument != in.Instrument {
+		if in.Direction == Short {
+			return deny("the instrument is not confirmed shortable as a CFD at leverage 1 %s", why)
+		}
+		return deny("the instrument is not confirmed tradable as a real share, long, leverage 1 %s", why)
+	}
+	switch {
+	case in.Entry <= 0 || in.StopLoss <= 0:
+		return deny("an entry needs a price and a stop")
+	case in.Direction == Long && in.StopLoss >= in.Entry:
 		return deny("a long entry needs a stop below the entry price")
+	case in.Direction == Short && in.StopLoss <= in.Entry:
+		return deny("a short entry needs a stop above the entry price")
 	}
 	if in.Requested <= 0 {
 		return deny("nothing requested")
@@ -187,17 +208,31 @@ func AssessEntry(in RiskInput) RiskDecision {
 	if l.MaxPosition > 0 {
 		size = min(size, l.MaxPosition.of(equity))
 	}
-	// A stop-out must not take equity below the daily floor: loss ≈ size × (entry−stop)/entry.
+	if in.Direction == Short {
+		shortOpen := st.ReservedShort
+		for _, p := range pf.Positions {
+			if !p.Long {
+				shortOpen += p.Amount
+			}
+		}
+		if left := l.MaxShort.of(budget) - shortOpen; left < size {
+			size = left
+		}
+	}
+	// A stop-out must not take equity below the daily floor: loss ≈ size × |stop−entry|/entry.
 	allowance := equity - dayFloor
-	stopFrac := int64(in.Entry - in.StopLoss)
-	if maxBySto := Cents(int64(allowance) * int64(in.Entry) / stopFrac); maxBySto < size {
+	stopDist := int64(in.Entry - in.StopLoss)
+	if stopDist < 0 {
+		stopDist = -stopDist
+	}
+	if maxBySto := Cents(int64(allowance) * int64(in.Entry) / stopDist); maxBySto < size {
 		size = maxBySto
 	}
 	switch {
 	case size <= 0:
-		return deny("no cash, budget or loss allowance left (cash %s, budget left %s)", cash, remaining)
-	case in.Eligibility.MinPositionAmount > 0 && size < in.Eligibility.MinPositionAmount:
-		return deny("the size %s is below eToro's minimum %s", size, in.Eligibility.MinPositionAmount)
+		return deny("no cash, budget, short allowance or loss allowance left (cash %s, budget left %s)", cash, remaining)
+	case in.Eligibility.MinAmount(in.Direction) > 0 && size < in.Eligibility.MinAmount(in.Direction):
+		return deny("the size %s is below eToro's minimum %s", size, in.Eligibility.MinAmount(in.Direction))
 	}
 	return RiskDecision{Allowed: true, Size: size}
 }

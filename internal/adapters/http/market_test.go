@@ -191,7 +191,7 @@ func TestEventsSystemAndRiskEndpoints(t *testing.T) {
 	if code != 200 || m["dailyLossBp"] != 200.0 || m["tradingBudgetCents"] != 0.0 || m["noEntryBeforeCloseMinutes"] != 30.0 {
 		t.Fatalf("limits %d %v", code, m)
 	}
-	body := `{"tradingBudgetCents":50000,"dailyLossBp":150,"drawdownBp":1000,"maxPositionBp":2000,"maxOpenPositions":5,"noEntryBeforeCloseMinutes":30,"flattenBeforeCloseMinutes":10,"maxPortfolioAgeSeconds":5,"maxQuoteAgeSeconds":30}`
+	body := `{"tradingBudgetCents":50000,"dailyLossBp":150,"drawdownBp":1000,"maxPositionBp":2000,"maxOpenPositions":5,"noEntryBeforeCloseMinutes":30,"flattenBeforeCloseMinutes":10,"maxPortfolioAgeSeconds":5,"maxQuoteAgeSeconds":30,"maxShortBp":2500}`
 	if code, m, _ := x.do("PUT", "/api/v1/risk/limits", body, csrf...); code != 200 || m["maxOpenPositions"] != 5.0 {
 		t.Fatalf("set limits %d %v", code, m)
 	}
