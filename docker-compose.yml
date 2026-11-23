@@ -79,6 +79,7 @@ services:
     profiles: [mailpit]
     restart: unless-stopped
     read_only: true
+    tmpfs: [/tmp] # its mailbox lives here (gone on restart)
     security_opt: [no-new-privileges:true]
     ports:
       - "127.0.0.1:${MAILPIT_PORT:-8035}:8025"
