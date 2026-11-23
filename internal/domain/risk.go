@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -84,21 +85,79 @@ func (l RiskLimits) Validate() error {
 	return nil
 }
 
+// EligibilityMaxAge is how old an eligibility check may be when an entry is decided: older
+// answers are refused (eToro can withdraw a share's real/long or CFD/short offer).
+const EligibilityMaxAge = 24 * time.Hour
+
+// RiskDayStartHourUTC is the hour (UTC) at which a risk day begins (OD4). At 22:00 UTC no LSE,
+// NYSE or ASX session is open in any season: New York has closed (20:00/21:00 UTC) and
+// Sydney has not opened (23:00/00:00 UTC).
+const RiskDayStartHourUTC = 22
+
+// RiskDate names a risk day as "YYYY-MM-DD": the UTC date of the day that begins at the
+// 22:00 UTC before it. Dates of this form compare in time order as strings.
+type RiskDate string
+
+// RiskDay returns the risk day containing t. A risk day runs from 22:00 UTC to 22:00 UTC the
+// next day and is named after the later of the two dates, so the ASX session that opens at
+// 23:00 UTC on Sunday belongs to Monday's risk day together with London and New York.
+func RiskDay(t time.Time) RiskDate {
+	return RiskDate(t.UTC().Add((24 - RiskDayStartHourUTC) * time.Hour).Format("2006-01-02"))
+}
+
 // RiskState is what the risk engine remembers between decisions.
 type RiskState struct {
-	StartOfDayEquity Cents // equity at the session's first check
-	HighWaterMark    Cents // highest equity seen
-	Killed           bool  // drawdown or manual kill: only an admin reset clears it
-	Reserved         Cents // cash reserved for orders sent but not yet in the portfolio
-	ReservedOrders   int   // how many such orders
-	ReservedShort    Cents // the part of Reserved that is for short orders
+	Day              RiskDate // the risk day StartOfDayEquity and DayStopped belong to
+	StartOfDayEquity Cents    // equity at the risk day's first observation
+	HighWaterMark    Cents    // highest equity seen
+	// DayStopped is the daily latch: set once equity reaches the daily floor, it refuses every
+	// entry until the next risk day, even if equity recovers.
+	DayStopped     bool
+	Killed         bool  // drawdown or manual kill: only an admin reset clears it
+	Reserved       Cents // cash reserved for orders sent but not yet in the portfolio
+	ReservedOrders int   // how many such orders
+	ReservedShort  Cents // the part of Reserved that is for short orders
+}
+
+// DailyFloor is the equity at or below which no entry is allowed for the rest of the risk day.
+func DailyFloor(st RiskState, l RiskLimits) Cents {
+	return st.StartOfDayEquity - l.DailyLoss.of(st.StartOfDayEquity)
+}
+
+// DrawdownBreached reports whether equity has fallen to or below the drawdown limit under the
+// high-water mark: the caller must trip the kill switch. Used by AssessEntry and by the
+// supervisor on every tick. With no high-water mark yet it is false (AssessEntry refuses
+// such a state separately).
+func DrawdownBreached(equity Cents, st RiskState, l RiskLimits) bool {
+	hwm := max(st.HighWaterMark, equity)
+	return hwm > 0 && equity <= hwm-l.Drawdown.of(hwm)
+}
+
+// Observe folds a fresh equity figure into the state. When day is a later risk day than the
+// state's, the start-of-day equity is reset to equity and the daily latch is cleared; an
+// earlier day (a clock going backwards) never resets anything (fail closed). The high-water
+// mark only rises. Once equity is at or below the daily floor the latch (DayStopped) is set
+// and stays set until the next risk day.
+func (st RiskState) Observe(equity Cents, day RiskDate, l RiskLimits) RiskState {
+	if st.Day == "" || day > st.Day || st.StartOfDayEquity <= 0 {
+		if st.Day == "" || day > st.Day {
+			st.Day, st.DayStopped = day, false
+		}
+		st.StartOfDayEquity = equity
+	}
+	st.HighWaterMark = max(st.HighWaterMark, equity)
+	if equity <= DailyFloor(st, l) {
+		st.DayStopped = true
+	}
+	return st
 }
 
 // RiskInput is everything one entry decision depends on. All of it is passed in: the engine
 // reads no clock and calls no broker.
 type RiskInput struct {
 	Now          time.Time
-	SessionOpen  time.Time // the instrument's market session today
+	Mode         TradingMode // the account's mode: only demo may trade until the phase-7 gate
+	SessionOpen  time.Time   // the instrument's market session today
 	SessionClose time.Time
 	Trading      bool // the market trades today (calendar); false = closed
 	Portfolio    Portfolio
@@ -111,7 +170,15 @@ type RiskInput struct {
 	Requested    Cents // the playbook's (or the reviewer's, never larger) size
 	Limits       RiskLimits
 	State        RiskState
-	Reconciled   bool // start-up / periodic reconciliation passed (4.3)
+	Reconciled   bool // start-up / periodic reconciliation passed (4.8)
+	// PendingInstruments have an order of ours in flight (any non-final order): no second
+	// entry until it is resolved.
+	PendingInstruments []InstrumentID
+	// UnknownOrders counts our orders whose outcome is unknown (OD2): entries stay blocked
+	// until every one is resolved.
+	UnknownOrders int
+	// Blocked: the instrument is blocked for this account (e.g. a fill that did not conform).
+	Blocked bool
 }
 
 // RiskDecision is the engine's final say on an entry.
@@ -127,7 +194,7 @@ func deny(reason string, args ...any) RiskDecision {
 	return RiskDecision{Reason: fmt.Sprintf(reason, args...)}
 }
 
-// AssessEntry decides whether a long entry may be sent and how large it may be. It fails
+// AssessEntry decides whether an entry (long or short) may be sent and how large it may be. It fails
 // closed: any missing, stale or inconsistent input is a refusal. The size it returns is never
 // larger than requested and never more than
 //
@@ -138,6 +205,8 @@ func AssessEntry(in RiskInput) RiskDecision {
 	l, st, pf := in.Limits, in.State, in.Portfolio
 	equity := pf.Equity()
 	switch {
+	case in.Mode != ModeDemo:
+		return deny("real mode is gated (phase 7): only demo accounts trade")
 	case st.Killed:
 		return deny("the kill switch is on (admin reset required)")
 	case !in.Reconciled:
@@ -156,17 +225,28 @@ func AssessEntry(in RiskInput) RiskDecision {
 		return deny("too close to the close (no entries in the last %s)", l.NoEntryBeforeClose)
 	case equity <= 0 || st.StartOfDayEquity <= 0 || st.HighWaterMark <= 0:
 		return deny("no start-of-day equity or high-water mark yet")
+	case st.Day != RiskDay(in.Now):
+		return deny("the risk state is not from today's risk day (observe the equity first)")
 	}
-	if equity <= st.HighWaterMark-l.Drawdown.of(st.HighWaterMark) {
+	if DrawdownBreached(equity, st, l) {
 		return RiskDecision{Reason: fmt.Sprintf("equity %s is %s below the high-water mark %s: kill switch", equity, st.HighWaterMark-equity, st.HighWaterMark), Kill: true}
 	}
-	dayFloor := st.StartOfDayEquity - l.DailyLoss.of(st.StartOfDayEquity)
-	if equity <= dayFloor {
+	dayFloor := DailyFloor(st, l)
+	switch {
+	case st.DayStopped:
+		return deny("daily loss limit reached today: no entries until the next risk day")
+	case equity <= dayFloor:
 		return deny("daily loss limit reached (equity %s, floor %s)", equity, dayFloor)
+	case in.UnknownOrders > 0:
+		return deny("%d order(s) with an unknown outcome: no entries until resolved", in.UnknownOrders)
+	case in.Blocked:
+		return deny("the instrument is blocked for this account")
+	case slices.Contains(in.PendingInstruments, in.Instrument):
+		return deny("an order for this instrument is in flight")
 	}
 	for _, p := range pf.Positions {
 		if !p.Conforms() {
-			return deny("position %d is not a real share, long, leverage 1 (close it first)", p.ID)
+			return deny("position %d does not conform (a real share long or a CFD short, leverage 1): entries are blocked", p.ID)
 		}
 		if p.Instrument == in.Instrument {
 			return deny("a position in this instrument is already open")
@@ -177,6 +257,9 @@ func AssessEntry(in RiskInput) RiskDecision {
 	}
 	if !in.Direction.Valid() {
 		return deny("unknown direction")
+	}
+	if ec := in.Eligibility.CheckedAt; ec.IsZero() || in.Now.Sub(ec) > EligibilityMaxAge || ec.After(in.Now.Add(time.Second)) {
+		return deny("the eligibility check is stale (older than %s): check again", EligibilityMaxAge)
 	}
 	if ok, why := in.Eligibility.Allows(in.Direction); !ok || in.Eligibility.Instrument != in.Instrument {
 		if in.Direction == Short {
@@ -241,14 +324,4 @@ func AssessEntry(in RiskInput) RiskDecision {
 // FlattenBeforeClose, or the market is not trading).
 func FlattenDue(now, sessionClose time.Time, trading bool, l RiskLimits) bool {
 	return !trading || !now.Before(sessionClose.Add(-l.FlattenBeforeClose))
-}
-
-// Observe updates the start-of-day equity and the high-water mark with a fresh equity
-// figure. newDay is true at the first observation of a trading day.
-func (st RiskState) Observe(equity Cents, newDay bool) RiskState {
-	if newDay || st.StartOfDayEquity <= 0 {
-		st.StartOfDayEquity = equity
-	}
-	st.HighWaterMark = max(st.HighWaterMark, equity)
-	return st
 }

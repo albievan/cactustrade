@@ -91,22 +91,38 @@ func (c LLMConfig) Validate() error {
 	return nil
 }
 
+// FullSize is a verdict's size share for "the whole proposed size": 10 000 bp = 100 %.
+const FullSize BasisPoints = 10_000
+
 // ClampVerdict enforces that the reviewer can only approve, shrink or reject: an unknown
-// kind is a rejection, a multiplier is clamped to (0, 1], and a "reduce" to nothing is a
-// rejection.
+// kind is a rejection, an approval is the full size, a reduction is capped at the full size,
+// and a "reduce" to nothing (0 bp or less) is a rejection with size 0.
 func ClampVerdict(v Verdict) Verdict {
 	switch v.Kind {
 	case VerdictApprove:
-		v.SizeMultiplier = 1
+		v.SizeBp = FullSize
 	case VerdictReduce:
-		if !(v.SizeMultiplier > 0) { // also catches NaN
+		if v.SizeBp <= 0 {
 			return Verdict{Kind: VerdictReject, Reason: "reduce to nothing: " + v.Reason}
 		}
-		v.SizeMultiplier = min(v.SizeMultiplier, 1)
+		v.SizeBp = min(v.SizeBp, FullSize)
 	default:
 		return Verdict{Kind: VerdictReject, Reason: v.Reason}
 	}
 	return v
+}
+
+// ApplyVerdict returns the size left after the reviewer's verdict: never more than size,
+// 0 for a rejection, otherwise size × SizeBp / 10 000 rounded down. It clamps the verdict
+// itself, so an unclamped or hostile verdict cannot enlarge a trade.
+func ApplyVerdict(size Cents, v Verdict) Cents {
+	v = ClampVerdict(v)
+	if v.Kind == VerdictReject || size <= 0 {
+		return 0
+	}
+	// size/10 000 and size%10 000 separately: no overflow for any int64 size.
+	q, r := int64(size)/int64(FullSize), int64(size)%int64(FullSize)
+	return Cents(q*int64(v.SizeBp) + r*int64(v.SizeBp)/int64(FullSize))
 }
 
 // LLMProfile is one named reviewer setup (provider, model, address, time limit) with its own

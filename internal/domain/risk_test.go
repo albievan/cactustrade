@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata" // real zones for the DST cases on any host
 )
 
 var t0 = time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
@@ -13,11 +14,11 @@ func okInput() RiskInput {
 	l := DefaultRiskLimits
 	l.TradingBudget = 500_000 // $5,000
 	return RiskInput{
-		Now: t0, SessionOpen: t0.Add(-30 * time.Minute), SessionClose: t0.Add(6 * time.Hour), Trading: true,
+		Now: t0, Mode: ModeDemo, SessionOpen: t0.Add(-30 * time.Minute), SessionClose: t0.Add(6 * time.Hour), Trading: true,
 		Portfolio:  Portfolio{AvailableCash: 1_000_000, AsOf: t0.Add(-time.Second)},
-		Instrument: 1, Direction: Long, Eligibility: Eligibility{Instrument: 1, RealLong: true, MinPositionAmount: 1000, ShortCFD: true, MinShortAmount: 2000},
+		Instrument: 1, Direction: Long, Eligibility: Eligibility{Instrument: 1, RealLong: true, MinPositionAmount: 1000, ShortCFD: true, MinShortAmount: 2000, CheckedAt: t0.Add(-time.Hour)},
 		Entry: 100_000_000, QuoteAt: t0.Add(-2 * time.Second), StopLoss: 98_000_000, Requested: 100_000,
-		Limits: l, State: RiskState{StartOfDayEquity: 1_000_000, HighWaterMark: 1_000_000}, Reconciled: true,
+		Limits: l, State: RiskState{Day: RiskDay(t0), StartOfDayEquity: 1_000_000, HighWaterMark: 1_000_000}, Reconciled: true,
 	}
 }
 
@@ -35,7 +36,18 @@ func TestAssessEntryRefuses(t *testing.T) {
 		want   string
 		kill   bool
 	}{
+		{"real mode", func(in *RiskInput) { in.Mode = ModeReal }, "real mode is gated", false},
+		{"no mode", func(in *RiskInput) { in.Mode = "" }, "real mode is gated", false},
 		{"killed", func(in *RiskInput) { in.State.Killed = true }, "kill switch", false},
+		{"daily latch", func(in *RiskInput) { in.State.DayStopped = true }, "until the next risk day", false},
+		{"state from yesterday", func(in *RiskInput) { in.State.Day = RiskDay(t0.Add(-24 * time.Hour)) }, "not from today's risk day", false},
+		{"state not observed", func(in *RiskInput) { in.State.Day = "" }, "not from today's risk day", false},
+		{"order in flight", func(in *RiskInput) { in.PendingInstruments = []InstrumentID{7, 1} }, "in flight", false},
+		{"unknown order outcome", func(in *RiskInput) { in.UnknownOrders = 1 }, "unknown outcome", false},
+		{"blocked instrument", func(in *RiskInput) { in.Blocked = true }, "blocked", false},
+		{"stale eligibility", func(in *RiskInput) { in.Eligibility.CheckedAt = t0.Add(-EligibilityMaxAge - time.Second) }, "eligibility check is stale", false},
+		{"eligibility never checked", func(in *RiskInput) { in.Eligibility.CheckedAt = time.Time{} }, "eligibility check is stale", false},
+		{"eligibility from the future", func(in *RiskInput) { in.Eligibility.CheckedAt = t0.Add(time.Hour) }, "eligibility check is stale", false},
 		{"not reconciled", func(in *RiskInput) { in.Reconciled = false }, "not reconciled", false},
 		{"invalid limits", func(in *RiskInput) { in.Limits.DailyLoss = 0 }, "invalid", false},
 		{"no budget", func(in *RiskInput) { in.Limits.TradingBudget = 0 }, "no trading budget", false},
@@ -52,7 +64,7 @@ func TestAssessEntryRefuses(t *testing.T) {
 		{"daily loss", func(in *RiskInput) { in.State.StartOfDayEquity = 1_030_000 }, "daily loss", false},
 		{"non-conforming position", func(in *RiskInput) {
 			in.Portfolio.Positions = []Position{{ID: 9, Instrument: 5, RealAsset: false, Long: true, Leverage: 1}}
-		}, "not a real share", false},
+		}, "does not conform", false},
 		{"already holding", func(in *RiskInput) {
 			in.Portfolio.Positions = []Position{{ID: 9, Instrument: 1, RealAsset: true, Long: true, Leverage: 1, Amount: 1}}
 		}, "already open", false},
@@ -177,7 +189,25 @@ func TestAssessEntryProperties(t *testing.T) {
 		} else {
 			in.StopLoss = in.Entry - Micros(r.Int64N(int64(in.Entry)))
 		}
+		forbidden := ""
+		switch r.IntN(14) {
+		case 0:
+			in.Mode, forbidden = ModeReal, "real mode"
+		case 1:
+			in.State.DayStopped, forbidden = true, "the daily latch"
+		case 2:
+			in.Blocked, forbidden = true, "a blocked instrument"
+		case 3:
+			in.PendingInstruments, forbidden = []InstrumentID{InstrumentID(r.IntN(3)), in.Instrument}, "an order in flight"
+		case 4:
+			in.Eligibility.CheckedAt, forbidden = in.Now.Add(-EligibilityMaxAge-time.Duration(1+r.Int64N(int64(48*time.Hour)))), "stale eligibility"
+		case 5:
+			in.UnknownOrders, forbidden = 1+r.IntN(3), "an unknown order outcome"
+		}
 		d := AssessEntry(in)
+		if forbidden != "" && d.Allowed {
+			t.Fatalf("allowed with %s: %+v", forbidden, in)
+		}
 		if !d.Allowed {
 			if d.Size != 0 {
 				t.Fatalf("refused with a size: %+v", d)
@@ -260,18 +290,156 @@ func TestRiskLimitsValidate(t *testing.T) {
 	}
 }
 
-func TestFlattenAndObserve(t *testing.T) {
+func TestFlattenDue(t *testing.T) {
 	cl := t0.Add(time.Hour)
-	if FlattenDue(t0, cl, true, DefaultRiskLimits) || !FlattenDue(cl.Add(-10*time.Minute), cl, true, DefaultRiskLimits) || !FlattenDue(t0, cl, false, DefaultRiskLimits) {
-		t.Fatal("FlattenDue")
+	for _, c := range []struct {
+		now     time.Time
+		trading bool
+		want    bool
+	}{
+		{t0, true, false},
+		{cl.Add(-11 * time.Minute), true, false},
+		{cl.Add(-10 * time.Minute), true, true},
+		{cl, true, true},
+		{t0, false, true},
+	} {
+		if got := FlattenDue(c.now, cl, c.trading, DefaultRiskLimits); got != c.want {
+			t.Errorf("FlattenDue(%s, trading %v) = %v, want %v", c.now, c.trading, got, c.want)
+		}
 	}
-	st := RiskState{}.Observe(1000, false)
-	st = st.Observe(1200, false)
-	st = st.Observe(900, false)
-	if st.StartOfDayEquity != 1000 || st.HighWaterMark != 1200 {
-		t.Fatalf("observe = %+v", st)
+}
+
+func TestObserve(t *testing.T) {
+	l := DefaultRiskLimits // daily loss 2 %
+	d1, d2 := RiskDate("2026-11-23"), RiskDate("2026-11-24")
+	tests := []struct {
+		name  string
+		st    RiskState
+		eq    Cents
+		day   RiskDate
+		want  RiskState
+		latch bool
+	}{
+		{"first observation", RiskState{}, 1000_00, d1, RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00}, false},
+		{"same day keeps the start", RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00}, 1200_00, d1, RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1200_00}, false},
+		{"just above the floor", RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00}, 980_01, d1, RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00}, false},
+		{"at the floor latches", RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00}, 980_00, d1, RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00, DayStopped: true}, true},
+		{"recovery keeps the latch", RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00, DayStopped: true}, 1100_00, d1, RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1100_00, DayStopped: true}, true},
+		{"a new day resets start and latch", RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1200_00, DayStopped: true}, 900_00, d2, RiskState{Day: d2, StartOfDayEquity: 900_00, HighWaterMark: 1200_00}, false},
+		{"an earlier day resets nothing", RiskState{Day: d2, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00, DayStopped: true}, 1000_00, d1, RiskState{Day: d2, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00, DayStopped: true}, true},
+		{"no start yet on the same day", RiskState{Day: d1, HighWaterMark: 1000_00}, 990_00, d1, RiskState{Day: d1, StartOfDayEquity: 990_00, HighWaterMark: 1000_00}, false},
+		{"killed stays killed", RiskState{Day: d1, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00, Killed: true}, 1000_00, d2, RiskState{Day: d2, StartOfDayEquity: 1000_00, HighWaterMark: 1000_00, Killed: true}, false},
 	}
-	if st = st.Observe(800, true); st.StartOfDayEquity != 800 || st.HighWaterMark != 1200 {
-		t.Fatalf("new day = %+v", st)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.st.Observe(tt.eq, tt.day, l)
+			if got != tt.want || got.DayStopped != tt.latch {
+				t.Fatalf("Observe = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDrawdownBreached(t *testing.T) {
+	l := DefaultRiskLimits // 10 %
+	for _, c := range []struct {
+		eq, hwm Cents
+		want    bool
+	}{
+		{900_00, 1000_00, true},
+		{900_01, 1000_00, false},
+		{0, 1000_00, true},
+		{1200_00, 1000_00, false},
+		{0, 0, false},
+	} {
+		if got := DrawdownBreached(c.eq, RiskState{HighWaterMark: c.hwm}, l); got != c.want {
+			t.Errorf("DrawdownBreached(%d, hwm %d) = %v", c.eq, c.hwm, got)
+		}
+	}
+}
+
+// TestRiskDay: a risk day starts at 22:00 UTC whatever the local clocks do, on both sides of
+// every 2026 DST change in London, New York and Sydney.
+func TestRiskDay(t *testing.T) {
+	zones := map[string]*time.Location{}
+	for _, name := range []string{"Europe/London", "America/New_York", "Australia/Sydney"} {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zones[name] = loc
+	}
+	// The day of each 2026 change and the days either side of it.
+	changes := []string{"2026-03-08", "2026-03-29", "2026-04-05", "2026-10-04", "2026-10-25", "2026-11-01"}
+	for _, c := range changes {
+		day, _ := time.Parse(time.DateOnly, c)
+		for off := -1; off <= 1; off++ {
+			d := day.AddDate(0, 0, off)
+			before := time.Date(d.Year(), d.Month(), d.Day(), 21, 59, 59, 999_999_999, time.UTC)
+			at := before.Add(time.Nanosecond)
+			want, next := RiskDate(d.Format(time.DateOnly)), RiskDate(d.AddDate(0, 0, 1).Format(time.DateOnly))
+			for name, loc := range zones {
+				if got := RiskDay(before.In(loc)); got != want {
+					t.Errorf("%s %s: RiskDay = %s, want %s", name, before.In(loc), got, want)
+				}
+				if got := RiskDay(at.In(loc)); got != next {
+					t.Errorf("%s %s: RiskDay = %s, want %s", name, at.In(loc), got, next)
+				}
+			}
+		}
+	}
+	if RiskDay(time.Date(2026, 12, 31, 22, 0, 0, 0, time.UTC)) != "2027-01-01" || RiskDay(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)) != "2027-01-01" {
+		t.Fatal("year boundary")
+	}
+	if RiskDay(t0) >= RiskDay(t0.Add(24*time.Hour)) {
+		t.Fatal("risk dates must order as strings")
+	}
+}
+
+// TestDailyLatch: along random equity paths, once equity touches the daily floor no entry is
+// allowed again until the risk day changes, even when equity recovers.
+func TestDailyLatch(t *testing.T) {
+	r := rand.New(rand.NewPCG(7, 11))
+	l := DefaultRiskLimits
+	l.TradingBudget = 500_000
+	l.Drawdown = 5_000 // keep the kill switch out of the way: the latch is under test
+	recoveredRefusals, allowedAfterLatch := 0, 0
+	for range 400 {
+		now := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC).Add(time.Duration(r.Int64N(int64(700 * 24 * time.Hour))))
+		equity := Cents(1_000_000)
+		var st RiskState
+		var curDay, latchedDay RiskDate
+		var sod Cents
+		everLatched := false
+		for range 200 {
+			now = now.Add(time.Duration(1+r.IntN(90)) * time.Minute)
+			equity = max(1, equity+Cents(r.Int64N(30_001)-15_000))
+			day := RiskDay(now)
+			// An independent model of the rule: the first equity of a risk day is its start.
+			if day != curDay {
+				curDay, sod = day, equity
+			}
+			floor := sod - sod*Cents(l.DailyLoss)/10_000
+			if equity <= floor {
+				latchedDay, everLatched = day, true
+			}
+			st = st.Observe(equity, day, l)
+			in := okInput()
+			in.Now, in.SessionOpen, in.SessionClose = now, now.Add(-time.Hour), now.Add(5*time.Hour)
+			in.QuoteAt, in.Portfolio, in.Eligibility.CheckedAt = now, Portfolio{AvailableCash: equity, AsOf: now}, now.Add(-time.Hour)
+			in.Limits, in.State, in.Requested = l, st, 10_000
+			d := AssessEntry(in)
+			switch {
+			case latchedDay == day && d.Allowed:
+				t.Fatalf("entry allowed on %s after the daily floor was reached (equity %s, start %s)", day, equity, sod)
+			case latchedDay == day && equity > floor:
+				recoveredRefusals++
+			case everLatched && d.Allowed:
+				allowedAfterLatch++
+			}
+		}
+	}
+	if recoveredRefusals < 500 || allowedAfterLatch < 500 {
+		t.Fatalf("not exercised: %d refusals after a recovery, %d entries on a later day", recoveredRefusals, allowedAfterLatch)
 	}
 }

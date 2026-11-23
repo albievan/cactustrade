@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -119,8 +120,21 @@ func parseVerdict(text string) (domain.Verdict, error) {
 		return domain.Verdict{}, fmt.Errorf("the reviewer's answer is not the expected JSON: %w", err)
 	}
 	return domain.ClampVerdict(domain.Verdict{
-		Kind: domain.VerdictKind(strings.ToLower(strings.TrimSpace(v.Verdict))), SizeMultiplier: v.SizeMultiplier, Reason: v.Reason,
+		Kind: domain.VerdictKind(strings.ToLower(strings.TrimSpace(v.Verdict))), SizeBp: multiplierToBp(v.SizeMultiplier), Reason: v.Reason,
 	}), nil
+}
+
+// multiplierToBp converts the model's size multiplier to basis points at the edge (D23),
+// rounding down so the conversion can only shrink: NaN, infinities of either sign, zero and
+// negatives are 0 (a reduce to nothing is a rejection); 1 and above are the full size.
+func multiplierToBp(f float64) domain.BasisPoints {
+	switch {
+	case math.IsNaN(f) || f <= 0:
+		return 0
+	case f >= 1:
+		return domain.FullSize
+	}
+	return min(domain.BasisPoints(math.Floor(f*float64(domain.FullSize))), domain.FullSize)
 }
 
 func timeout(cfg domain.LLMConfig) time.Duration {

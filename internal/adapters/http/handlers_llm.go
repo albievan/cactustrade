@@ -130,7 +130,7 @@ func (s *Server) TestLlmProfile(w http.ResponseWriter, r *http.Request, id strin
 	out := LlmTestResult{Ok: res.OK, LatencyMs: res.Latency.Milliseconds()}
 	if res.OK {
 		v := LlmTestResultVerdict(res.Verdict.Kind)
-		out.Verdict, out.SizeMultiplier, out.Reason = &v, ptr(float32(res.Verdict.SizeMultiplier)), ptr(res.Verdict.Reason)
+		out.Verdict, out.SizeMultiplier, out.Reason = &v, ptr(float32(res.Verdict.SizeBp)/float32(domain.FullSize)), ptr(res.Verdict.Reason)
 	} else {
 		out.Error = ptr(res.Error)
 	}

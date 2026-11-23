@@ -44,7 +44,7 @@ func TestLLMProfiles(t *testing.T) {
 	if _, err := e.svc.LLMModels(ctx, e.admin, LLMModelsRequest{Config: domain.LLMConfig{Provider: "openai"}}); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatal("models without a reviewer")
 	}
-	r := &fakeReviewer{v: domain.Verdict{Kind: domain.VerdictReduce, SizeMultiplier: 4, Reason: "r"}}
+	r := &fakeReviewer{v: domain.Verdict{Kind: domain.VerdictReduce, SizeBp: 40_000, Reason: "r"}}
 	e.svc.d.Reviewer = r
 
 	ds := domain.LLMProfile{Name: "DeepSeek chat", LLMConfig: domain.LLMConfig{Provider: "deepseek", Model: "deepseek-chat"}}
@@ -99,7 +99,7 @@ func TestLLMProfiles(t *testing.T) {
 
 	// test with the stored key; the multiplier is clamped
 	res, err := e.svc.TestLLM(ctx, e.admin, p1.ID)
-	if err != nil || !res.OK || res.Verdict.SizeMultiplier != 1 || r.gotKey != "sk-1" || r.gotCfg.Model != "deepseek-chat" {
+	if err != nil || !res.OK || res.Verdict.SizeBp != domain.FullSize || r.gotKey != "sk-1" || r.gotCfg.Model != "deepseek-chat" {
 		t.Fatalf("test = %+v %v", res, err)
 	}
 	if _, err := e.svc.TestLLM(ctx, e.admin, p2.ID); !errors.Is(err, domain.ErrInvalid) {

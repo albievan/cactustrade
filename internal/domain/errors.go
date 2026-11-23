@@ -19,6 +19,9 @@ var (
 	ErrViewOnly = fmt.Errorf("view-only account (cactusTrade does not trade Trading 212 accounts yet): %w", ErrForbidden)
 	// ErrConflict means the request clashes with the current state (duplicate, last admin…).
 	ErrConflict = errors.New("conflict")
+	// ErrIllegalTransition means an order was asked to move to a state its lifecycle does
+	// not allow (or to be sent too often); it wraps ErrConflict.
+	ErrIllegalTransition = fmt.Errorf("illegal order transition: %w", ErrConflict)
 	// ErrUnauthenticated means no valid credentials were presented.
 	ErrUnauthenticated = errors.New("unauthenticated")
 	// ErrForbidden means the caller is authenticated but lacks the permission.

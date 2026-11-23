@@ -10,10 +10,13 @@ import (
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-func (s *Server) setCookie(w http.ResponseWriter, token string, expires time.Time) {
+// setCookie sends the session cookie. Its Max-Age is the session's own lifetime as the app's
+// clock measured it at sign-in (ExpiresAt − CreatedAt), never the wall clock: mixing the two
+// made the cookie expire at once whenever they disagreed (an injected clock in tests).
+func (s *Server) setCookie(w http.ResponseWriter, token string, sess domain.Session) {
 	http.SetCookie(w, &http.Cookie{
-		Name: SessionCookie, Value: token, Path: "/", Expires: expires,
-		MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: s.cfg.CookieSecure,
+		Name: SessionCookie, Value: token, Path: "/", Expires: sess.ExpiresAt,
+		MaxAge: max(1, int(sess.ExpiresAt.Sub(sess.CreatedAt)/time.Second)), HttpOnly: true, Secure: s.cfg.CookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
 }
@@ -81,7 +84,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.limiter.Success(user)
-	s.setCookie(w, res.Token, res.Session.ExpiresAt)
+	s.setCookie(w, res.Token, res.Session)
 	writeJSON(w, http.StatusOK, Me{
 		User: toUser(res.User), Via: Session, CsrfToken: ptr(res.CSRFToken),
 		Permissions: perms(res.User.Role),

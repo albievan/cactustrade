@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,6 +55,43 @@ func TestParseVerdict(t *testing.T) {
 	if _, err := parseVerdict("I think it is fine"); err == nil {
 		t.Fatal("prose accepted")
 	}
+	for text, want := range map[string]domain.Verdict{
+		`{"verdict":"reduce","sizeMultiplier":0.12345,"reason":"x"}`:   {Kind: domain.VerdictReduce, SizeBp: 1_234, Reason: "x"}, // rounded down
+		`{"verdict":"reduce","sizeMultiplier":0.00001,"reason":"x"}`:   {Kind: domain.VerdictReject, Reason: "reduce to nothing: x"},
+		`{"verdict":"reduce","sizeMultiplier":-2,"reason":"x"}`:        {Kind: domain.VerdictReject, Reason: "reduce to nothing: x"},
+		`{"verdict":"reduce","sizeMultiplier":1e308,"reason":"x"}`:     {Kind: domain.VerdictReduce, SizeBp: domain.FullSize, Reason: "x"},
+		`{"verdict":"approve","sizeMultiplier":3,"reason":"x"}`:        {Kind: domain.VerdictApprove, SizeBp: domain.FullSize, Reason: "x"},
+		`{"verdict":"increase","sizeMultiplier":0.5,"reason":"x"}`:     {Kind: domain.VerdictReject, Reason: "x"},
+		`{"verdict":"reduce","sizeMultiplier":0.99999,"reason":"x"}`:   {Kind: domain.VerdictReduce, SizeBp: 9_999, Reason: "x"},
+		`{"verdict":"reduce","sizeMultiplier":0.0001,"reason":"x"}`:    {Kind: domain.VerdictReduce, SizeBp: 1, Reason: "x"},
+		`{"verdict":"reject","sizeMultiplier":1,"reason":"no thanks"}`: {Kind: domain.VerdictReject, Reason: "no thanks"},
+	} {
+		if v, err := parseVerdict(text); err != nil || v != want {
+			t.Errorf("%s → %+v %v, want %+v", text, v, err, want)
+		}
+	}
+}
+
+// TestMultiplierToBpNeverEnlarges: whatever float the model returns (NaN, ±Inf, huge,
+// negative, tiny), the converted verdict never makes a trade larger.
+func TestMultiplierToBpNeverEnlarges(t *testing.T) {
+	r := rand.New(rand.NewPCG(5, 8))
+	specials := []float64{math.NaN(), math.Inf(1), math.Inf(-1), 0, math.Copysign(0, -1), 1, 1 + 1e-15, 1 - 1e-15, math.MaxFloat64, math.SmallestNonzeroFloat64, -1}
+	for i := range 50_000 {
+		f := r.NormFloat64() * 2
+		if i < len(specials) {
+			f = specials[i]
+		}
+		bp := multiplierToBp(f)
+		if bp < 0 || bp > domain.FullSize || (f > 0 && f < 1 && float64(bp) > f*float64(domain.FullSize)) {
+			t.Fatalf("multiplierToBp(%v) = %d", f, bp)
+		}
+		size := domain.Cents(r.Int64())
+		kind := []domain.VerdictKind{domain.VerdictApprove, domain.VerdictReduce, domain.VerdictReject, "increase", ""}[r.IntN(5)]
+		if got := domain.ApplyVerdict(size, domain.Verdict{Kind: kind, SizeBp: bp}); got < 0 || got > size {
+			t.Fatalf("ApplyVerdict(%d, %s %v→%d bp) = %d", size, kind, f, bp, got)
+		}
+	}
 }
 
 func TestOpenAICompatible(t *testing.T) {
@@ -76,7 +115,7 @@ func TestOpenAICompatible(t *testing.T) {
 	c := New(srv.Client())
 	cfg := domain.LLMConfig{Provider: "openai", Model: "m1", BaseURL: srv.URL + "/v1/"}
 	v, err := c.Review(context.Background(), cfg, "sk-test", sample())
-	if err != nil || v.Kind != domain.VerdictReduce || v.SizeMultiplier != 0.4 || v.Reason != "wide stop" {
+	if err != nil || v.Kind != domain.VerdictReduce || v.SizeBp != 4_000 || v.Reason != "wide stop" {
 		t.Fatalf("verdict = %+v %v", v, err)
 	}
 	if auth != "Bearer sk-test" || got["model"] != "m1" || got["response_format"].(map[string]any)["type"] != "json_object" {
@@ -159,7 +198,7 @@ func TestAnthropic(t *testing.T) {
 	c.anthropicOpts = []option.RequestOption{option.WithBaseURL(srv.URL)}
 	cfg := domain.LLMConfig{Provider: "anthropic"}
 	v, err := c.Review(context.Background(), cfg, "sk-ant-test", sample())
-	if err != nil || v.Kind != domain.VerdictApprove || v.SizeMultiplier != 1 {
+	if err != nil || v.Kind != domain.VerdictApprove || v.SizeBp != domain.FullSize {
 		t.Fatalf("verdict = %+v %v", v, err)
 	}
 	if body["model"] != "claude-opus-5-5" || hdr.Get("Authorization") != "Bearer sk-ant-test" || !strings.Contains(hdr.Get("Anthropic-Beta"), "server-side-fallback-2026-07-01") || body["fallbacks"] != "default" {

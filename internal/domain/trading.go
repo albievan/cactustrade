@@ -224,8 +224,9 @@ func (p Position) Direction() Direction {
 }
 
 // Conforms reports whether the position is one cactusTrade may hold: a real share held long,
-// or a CFD held short, at leverage 1. Anything else found on the account is closed at once
-// (phase 4).
+// or a CFD held short, at leverage 1. A non-conforming position that cactusTrade opened is
+// closed by the supervisor. One it did not open is never closed by cactusTrade (OD1): it
+// blocks every entry on the account and raises an alert until the owner deals with it.
 func (p Position) Conforms() bool {
 	if p.Leverage != 1 {
 		return false
@@ -262,18 +263,6 @@ type OrderIntent struct {
 	StopLossRate   Micros
 	TakeProfitRate Micros
 }
-
-// OrderState is the lifecycle of an order on eToro.
-type OrderState string
-
-// Order states.
-const (
-	OrderPending  OrderState = "pending"
-	OrderFilled   OrderState = "filled"
-	OrderPartial  OrderState = "partially_filled"
-	OrderRejected OrderState = "rejected"
-	OrderUnknown  OrderState = "unknown"
-)
 
 // OrderStatus is the broker's answer to an order lookup.
 type OrderStatus struct {
@@ -320,9 +309,12 @@ const (
 
 // Verdict is the LLM reviewer's structured answer.
 type Verdict struct {
-	Kind           VerdictKind
-	SizeMultiplier float64 // clamped to [0, 1]
-	Reason         string
+	Kind VerdictKind
+	// SizeBp is the share of the proposed size the reviewer accepts, in basis points
+	// (10 000 = all of it). The LLM adapter converts the model's number to it, rounding down;
+	// ClampVerdict keeps it within (0, 10 000].
+	SizeBp BasisPoints
+	Reason string
 }
 
 // AgentState is what the trading agent is doing.
