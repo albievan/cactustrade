@@ -23,6 +23,7 @@ shape the system, in `docs/adr/`.
 | D13 | eToro demo keys may come from `ETORO_DEMO_PUB` (Public API Key → `x-api-key`) and `ETORO_DEMO_PK` (User Key → `x-user-key`), or their `_FILE` variants; they override stored values and are read-only in the UI. `deploy.sh` copies them into the secrets (owner, 2026-11-22). | ADR-003 |
 | D14 | Go toolchain pinned to go1.26.11 (`toolchain` in go.mod, images): go1.26.0 has 10 standard-library CVEs (govulncheck). | go.mod |
 | D15 | Setup closes before any other check once a user exists (no setup-token guessing afterwards); setup/login sent with a valid session cookie are CSRF-checked like any mutation. | ADR-006 |
+| D16 | All money limits (trading budget, per-trade, daily loss) are entered and enforced in USD minor units; GBP is display-only (owner, 2026-11-23). | PLAN Q2 |
 
 ### Dependencies (phase 1)
 
@@ -54,8 +55,9 @@ shape the system, in `docs/adr/`.
 
 - Q1 LSE shares: quote unit (GBP vs GBX) in rates/candles, and whether `settlementType: real`
   is offered for every LSE share in the watchlist. Answer in phase 2 from eligibility + rates.
-- Q2 Your GBP funds: eToro converts on deposit; cactusTrade only ever sees USD. Confirm you are
-  happy with budgets and limits being set in USD.
+- ~~Q2~~ **Answered 2026-11-23 (owner):** budgets and limits are set and enforced in **USD**
+  (the account, `credit` and `orderCurrency` are USD). The UI may show a GBP equivalent at
+  eToro's rate for information only; it never feeds a decision. Recorded as D16.
 - Q3 LLM provider default: Anthropic, model `claude-sonnet-5-5` for cost/latency (configurable).
 
 ---
