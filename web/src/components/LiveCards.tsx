@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import { usd, type Order } from "../lib/api";
 import type { Live, LiveFigures, LiveRegime, LiveSnapshot } from "../lib/live";
+import type { RegimeText } from "../lib/api";
 import { FixButton } from "./FixButton";
+import { InfoCard } from "./InfoCard";
 
 // The live dashboard's cards (PLAN 6.11). Every figure comes from the server's snapshot
 // (GET /api/v1/live); these components only format it. The only arithmetic here is the
@@ -226,36 +228,88 @@ export function OrderFeed({ orders }: { orders: Order[] }) {
   );
 }
 
-// RegimeList shows the latest regime per watchlist share (from its latest review).
-export function RegimeList({ regimes }: { regimes: LiveRegime[] }) {
+// The market moods' icons and bar colours (presentation only; the words come from the server).
+const moodIcon: Record<string, string> = {
+  trending: "bi-graph-up-arrow", choppy: "bi-arrow-left-right", high_volatility: "bi-lightning-charge",
+};
+const moodBar: Record<string, string> = { trending: "t", choppy: "c", high_volatility: "h" };
+const stanceBadge: Record<string, string> = {
+  trend: "text-bg-success", reversion: "text-bg-success", both: "text-bg-success",
+  stay_out: "text-bg-danger", wait: "text-bg-secondary", unknown: "text-bg-light",
+};
+
+// RegimeList ("Market mood", R28) shows each watchlist share's latest market mood in plain
+// words, the chances of each mood as one stacked bar, when it was read, and what the agent
+// may do in it at the account's current thresholds. The server provides every word.
+export function RegimeList({ regimes, legend }: { regimes: LiveRegime[]; legend: RegimeText[] }) {
+  const label = (r: string) => legend.find((x) => x.regime === r)?.label ?? r.replace("_", " ");
+  const chances = (p: Record<string, number>) => legend.map((x) => `${x.label.toLowerCase()} ${pct(p[x.regime])}`).join(", ");
   return (
-    <div className="card h-100"><div className="card-body">
-      <h2 className="h5">Regimes</h2>
-      {regimes.length === 0 && <p className="text-secondary mb-0">No shares on the watchlist.</p>}
-      {regimes.length > 0 && (
-        <table className="table table-sm align-middle mb-0">
-          <thead><tr><th>Share</th><th>Regime</th><th>Probabilities</th></tr></thead>
-          <tbody>
-            {regimes.map((r) => {
-              const p = r.probabilities ?? {};
-              return (
-                <tr key={r.instrumentId}>
-                  <td className="fw-semibold">{r.symbol || r.instrumentId}</td>
-                  <td>{r.known ? <>{(r.regime ?? "").replace("_", " ")}{r.at && <span className="text-secondary small"> · {clock(r.at)}</span>}</> : <span className="text-secondary">not reviewed yet</span>}</td>
-                  <td title={`trending ${pct(p.trending)} · choppy ${pct(p.choppy)} · high volatility ${pct(p.high_volatility)}`}>
-                    {r.known && (
-                      <div className="probbar">
-                        <div className="t" style={{ width: pct(p.trending) }} /><div className="c" style={{ width: pct(p.choppy) }} /><div className="h" style={{ width: pct(p.high_volatility) }} />
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </div></div>
+    <>
+      <div className="card mb-3"><div className="card-body">
+        <h2 className="h5">Market mood</h2>
+        {legend.length > 0 && (
+          <ul className="list-unstyled small d-flex flex-wrap gap-3 mb-2" aria-label="Market mood legend">
+            {legend.map((x) => (
+              <li key={x.regime} className="d-flex align-items-center gap-1" title={`${x.label}: ${x.description} (${x.agentMayDo})`}>
+                <span className={"mood-swatch " + (moodBar[x.regime] ?? "")} aria-hidden="true" />
+                <i className={"bi " + (moodIcon[x.regime] ?? "bi-question-circle")} aria-hidden="true" />
+                <span><strong>{x.label}</strong> — {x.description} ({x.agentMayDo})</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {regimes.length === 0 && <p className="text-secondary mb-0">No shares on the watchlist.</p>}
+        {regimes.length > 0 && (
+          <div className="table-responsive">
+            <table className="table table-sm align-middle mb-0">
+              <thead><tr><th>Share</th><th>Market mood</th><th>Chances</th><th>What the agent may do</th></tr></thead>
+              <tbody>
+                {regimes.map((r) => {
+                  const p = r.probabilities ?? {};
+                  const mood = r.mood?.label ?? (r.regime ? label(r.regime) : "");
+                  return (
+                    <tr key={r.instrumentId}>
+                      <td className="fw-semibold">{r.symbol || r.instrumentId}</td>
+                      <td>
+                        {r.known ? (
+                          <>
+                            <i className={"bi me-1 " + (moodIcon[r.regime ?? ""] ?? "bi-question-circle")} aria-hidden="true" />
+                            <span className="fw-semibold">{mood}</span>
+                            {r.mood?.description && <span className="text-secondary small"> — {r.mood.description}</span>}
+                            {r.at && <div className="text-secondary small">updated {clock(r.at)}</div>}
+                          </>
+                        ) : <span className="text-secondary">not reviewed yet</span>}
+                      </td>
+                      <td>
+                        {r.known && (
+                          <div className="probbar" role="img" aria-label={`Chances: ${chances(p)}`} title={chances(p)}>
+                            {legend.map((x) => (
+                              <div key={x.regime} className={moodBar[x.regime] ?? ""} style={{ width: pct(p[x.regime]) }} />
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="small">
+                        {r.mayDo && <span className={"badge me-1 " + (stanceBadge[r.stance ?? "unknown"] ?? "text-bg-light")}>{r.stance === "stay_out" ? "out" : r.stance === "wait" ? "wait" : r.stance === "unknown" ? "—" : "may act"}</span>}
+                        {r.mayDo}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div></div>
+      <InfoCard id="market-mood" title="What is the market mood?">
+        <p className="small mb-0">
+          cactusTrade's model reads each share's recent price moves and estimates how likely each mood is: trending (moving
+          steadily one way), choppy (going sideways) or volatile (big swings). The agent only looks for an entry when one mood is
+          clear enough for its aggressiveness, and stays out when swings are big; every entry still passes the risk limits.
+        </p>
+      </InfoCard>
+    </>
   );
 }
 

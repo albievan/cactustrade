@@ -154,9 +154,18 @@ func (s *Service) refreshEligibility(ctx context.Context, v domain.AccountView, 
 type ScanResult struct {
 	Reviewed int
 	Added    []string // symbols added to the watchlist
+	// Proposed are the symbols proposed for the watchlist (low autonomy, R28).
+	Proposed []string
+	// Removed are the symbols taken off the watchlist after StaleWatchTradingDays without a
+	// signal (high and full autonomy; only shares the scanner or the research added).
+	Removed []string
 }
 
 // scan reviews an account's universe (no principal: called by the runner and by ScanNow).
+// What it may do with a finding follows the account's autonomy (R28): propose it (low) or
+// add it to the watchlist (medium and above); at high and full autonomy the shares it adds
+// get the closest theme, and shares added automatically without a signal for
+// StaleWatchTradingDays trading days leave the watchlist.
 func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, error) {
 	if err := s.needBroker(); err != nil {
 		return ScanResult{}, err
@@ -167,6 +176,8 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 	}
 	elig := s.refreshEligibility(ctx, v, items)
 	limits := s.riskLimits(ctx, v.ID)
+	pol := s.policyOf(ctx, v.Account)
+	cfg := s.strategyConfig(ctx, v.Account, limits)
 	sizing := scannerNominalCents
 	if limits.TradingBudget > 0 {
 		sizing = limits.TradingBudget
@@ -179,7 +190,10 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 	for _, w := range wl {
 		onList[w.Instrument.ID] = true
 	}
+	signals := s.watchSignals(ctx, v.ID)
+	signalled := false
 	var res ScanResult
+	var added []domain.InstrumentID
 	bctx := brokerCtx(ctx, v)
 	for _, it := range items {
 		if ctx.Err() != nil {
@@ -196,7 +210,7 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 			res.Reviewed++
 			continue
 		}
-		d := s.evaluate(it.in.ID, bars, sizing, limits.MaxShort > 0)
+		d := s.evaluate(it.in.ID, bars, sizing, cfg)
 		r.Probs = d.Probs
 		for _, c := range d.Checks {
 			r.Checks = append(r.Checks, domain.ReviewCheck{Rule: c.Rule, Pass: c.Pass, Detail: c.Detail})
@@ -217,6 +231,7 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 				r.Outcome, r.Summary = domain.ReviewSkipped, c.Playbook+" passed, but eToro does not allow it: "+cmpOr(why, "not checked")
 			case onList[it.in.ID]:
 				r.Outcome, r.Summary = domain.ReviewCandidate, c.Playbook+": "+c.Reason
+				signals[it.in.ID], signalled = r.At, true
 			case len(onList) >= watchlistCap:
 				r.Outcome, r.Summary = domain.ReviewSkipped, c.Playbook+" passed, but the watchlist is full ("+strconv.Itoa(watchlistCap)+")"
 			default:
@@ -227,11 +242,19 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 						break
 					}
 				}
-				if err := s.d.Store.Watchlist().Add(ctx, v.ID, it.in.ID, "scanner", r.At); err != nil && !errors.Is(err, domain.ErrConflict) {
+				if pol.Research != domain.ResearchAutoAdd {
+					// Low autonomy: a proposal the owner accepts by adding the share by hand.
+					r.Outcome, r.Summary = domain.ReviewProposed, c.Playbook+": "+c.Reason
+					res.Proposed = append(res.Proposed, it.in.Symbol)
+					break
+				}
+				if err := s.d.Store.Watchlist().Add(ctx, v.ID, it.in.ID, domain.WatchAddedByScanner, r.At); err != nil && !errors.Is(err, domain.ErrConflict) {
 					r.Outcome, r.Summary = domain.ReviewError, "adding to the watchlist failed: "+err.Error()
 					break
 				}
 				onList[it.in.ID] = true
+				signals[it.in.ID], signalled = r.At, true
+				added = append(added, it.in.ID)
 				r.Outcome, r.Summary = domain.ReviewAdded, c.Playbook+": "+c.Reason
 				res.Added = append(res.Added, it.in.Symbol)
 				s.emitFor(ctx, v.ID, "scanner", "scanner.added", domain.SeverityInfo,
@@ -241,6 +264,15 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 		}
 		s.saveReview(ctx, r)
 		res.Reviewed++
+	}
+	if signalled {
+		s.storeWatchSignals(ctx, v.ID, signals)
+	}
+	if pol.AutoAssignThemes && len(added) > 0 {
+		s.autoAssignThemes(ctx, v, added)
+	}
+	if pol.PruneStale {
+		res.Removed = s.pruneStale(ctx, v, signals)
 	}
 	return res, nil
 }
@@ -313,12 +345,17 @@ func (s *Service) llmCheck(ctx context.Context, accountID, profileID string, c d
 }
 
 // evaluate runs the strategy on one stock's bars (tests replace it with evalOverride).
-func (s *Service) evaluate(id domain.InstrumentID, bars []domain.Candle, sizing domain.Cents, shorts bool) strategy.Decision {
+// cfg is the account's configuration (its aggressiveness and whether shorts are allowed,
+// PLAN R28).
+func (s *Service) evaluate(id domain.InstrumentID, bars []domain.Candle, sizing domain.Cents, cfg strategy.Config) strategy.Decision {
+	if s.evalConfigOverride != nil {
+		return s.evalConfigOverride(id, bars, cfg)
+	}
 	if s.evalOverride != nil {
 		return s.evalOverride(id, bars)
 	}
-	eng := strategy.NewEngine(strategy.Config{Shorts: shorts, RefitEvery: scanBars})
-	return eng.Evaluate(id, bars, sizing)
+	cfg.RefitEvery = scanBars
+	return strategy.NewEngine(cfg).Evaluate(id, bars, sizing)
 }
 
 func cmpOr(a, b string) string {
@@ -344,7 +381,7 @@ func (s *Service) ScanNow(ctx context.Context, p Principal) (ScanResult, error) 
 	if err != nil {
 		return res, err
 	}
-	s.audit(ctx, p, "scanner.run", v.ID, fmt.Sprintf("reviewed=%d added=%d", res.Reviewed, len(res.Added)))
+	s.audit(ctx, p, "scanner.run", v.ID, fmt.Sprintf("reviewed=%d added=%d proposed=%d removed=%d", res.Reviewed, len(res.Added), len(res.Proposed), len(res.Removed)))
 	return res, nil
 }
 
@@ -359,23 +396,28 @@ func (s *Service) marketOpen(m domain.Market) bool {
 	return err == nil && trading && !now.Before(open) && now.Before(closeAt)
 }
 
-// ScanAll runs the scanner for every account that has it on (the background runner).
+// ScanAll runs the scanner for every account that has it on and is due by its autonomy's
+// interval (the background runner, called every ScanTick).
 func (s *Service) ScanAll(ctx context.Context) {
 	accts, err := s.d.Store.Accounts().List(ctx)
 	if err != nil {
 		s.d.Log.WarnContext(ctx, "scanner: listing accounts failed", "err", err)
 		return
 	}
+	now := s.d.Clock.Now()
 	for _, a := range accts {
 		if ctx.Err() != nil || !a.Tradable() || !s.ScannerEnabled(ctx, a.ID) {
 			continue // view-only platforms (Trading 212) are never scanned
+		}
+		if !s.scanDue(ctx, a, now) {
+			continue // its autonomy's interval has not passed yet (R28)
 		}
 		res, err := s.scan(ctx, domain.AccountView{Account: a, Access: domain.AccessOwner})
 		if err != nil {
 			s.d.Log.WarnContext(ports.WithAccount(ctx, a), "scanner run failed", "account", a.ID, "err", err)
 			continue
 		}
-		s.d.Log.InfoContext(ports.WithAccount(ctx, a), "scanner run", "account", a.ID, "reviewed", res.Reviewed, "added", len(res.Added))
+		s.d.Log.InfoContext(ports.WithAccount(ctx, a), "scanner run", "account", a.ID, "reviewed", res.Reviewed, "added", len(res.Added), "proposed", len(res.Proposed), "removed", len(res.Removed))
 	}
 	if n, err := s.d.Store.Reviews().DeleteBefore(ctx, s.d.Clock.Now().Add(-reviewRetention)); err == nil && n > 0 {
 		s.d.Log.InfoContext(ctx, "purged old reviews", "count", n)

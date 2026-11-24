@@ -49,6 +49,12 @@ type Config struct {
 	// ObserveWait, when set, is told each time the client-side limiter holds a request back:
 	// the quota group and how long it waits. It must not block.
 	ObserveWait func(quota QuotaGroup, wait time.Duration)
+	// RecordAnswer, when set, receives the body of every successful (2xx) answer to a READ
+	// operation exactly as eToro sent it, before it is decoded (the console's etoro-probe:
+	// PLAN 2.7). Account changes never reach it: they go through mutate, not the read path.
+	// It never sees a key or a header; the body may hold account data, so the caller must
+	// sanitise anything it keeps. It is called on the request's goroutine.
+	RecordAnswer func(op Op, body []byte)
 }
 
 // Client talks to the eToro Public API through the allowlist only.
@@ -247,6 +253,9 @@ func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, 
 		c.cfg.Log.WarnContext(ctx, "eToro refused a request", "op", string(op), "mode", string(mode), "request_id", reqID,
 			"status", tr.status, "code", apiErr.Code)
 		return false, 0, apiErr
+	}
+	if c.cfg.RecordAnswer != nil && !ep.Mutates {
+		c.cfg.RecordAnswer(op, bytes.Clone(tr.data))
 	}
 	if out == nil || len(bytes.TrimSpace(tr.data)) == 0 {
 		return false, 0, nil

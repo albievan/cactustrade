@@ -17,3 +17,8 @@ schema: one trade with every field (incl. `fees` and `initialInvestment`) and on
 `orders:lookup?orderId=396359836` on 2026-11-24 (PLAN "Live findings 2026-11-24"); where it
 differs from the synthetic fixtures (upper-case `settlementType`, `investedAmountCurrency` of 1,
 a `closed` execution), the recording wins.
+
+`cactustrade etoro-probe --account ID --symbol SYM --record DIR` (PLAN 2.7) writes the probe's
+read answers, already sanitised, as `<symbol>_<step>.json` (`search`, `instrument`, `rates`,
+`candles_1m`, `candles_1d`, `eligibility`, `costs_long`, `costs_short`); review them, then copy
+them into `recorded/`.

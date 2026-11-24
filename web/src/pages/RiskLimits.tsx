@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, usd, type AgentCard, type RiskLimits as Limits } from "../lib/api";
+import { api, usd, type AgentCard, type RiskLimits as Limits, type RiskLimitsView } from "../lib/api";
 import { useMode, useRefreshMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
 import { AgentCardView, type AgentAction } from "../components/AgentCards";
 import { ForceCloseDialog, forceCloseNote } from "../components/ForceCloseDialog";
+import { RiskPresets } from "../components/RiskPresets";
+import { AgentStylePanel } from "../components/AgentStylePanel";
 
 // The owner's limits. The risk engine enforces them on every entry; they can be changed only
 // while the agent is stopped, and every change is audited. Whether the caller may change them
@@ -15,6 +17,9 @@ import { ForceCloseDialog, forceCloseNote } from "../components/ForceCloseDialog
 // leaving the page; which buttons work is the server's decision (card.controls). The page
 // remembers, in its own state only, which agents it stopped while they were running, and
 // offers to start the current one again after its limits were saved.
+//
+// R28: the presets above the form set every limit but the budget in one click, and the
+// agent's aggressiveness and autonomy have their own card; the server applies every rule.
 export function RiskLimits() {
   const status = useMode();
   const refreshMode = useRefreshMode();
@@ -23,6 +28,8 @@ export function RiskLimits() {
   const [budget, setBudget] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
+  const [edited, setEdited] = useState(false); // the form was changed by hand since it was loaded or saved
+  const [preset, setPreset] = useState<RiskLimitsView["preset"] | undefined>(undefined); // the server's match
   const [cards, setCards] = useState<AgentCard[] | null>(null);
   const [cardError, setCardError] = useState<unknown>(null);
   const [cardNote, setCardNote] = useState("");
@@ -33,8 +40,9 @@ export function RiskLimits() {
   const agentState = status?.agentState; // a change of state may change canEdit: fetch again
   useEffect(() => {
     if (!accountId) return;
-    api.riskLimits().then(({ canEdit, editBlockedReason, ...x }) => {
-      setL(x); setEdit({ canEdit, reason: editBlockedReason });
+    api.riskLimits().then((v) => {
+      const x = limitsOf(v);
+      setL(x); setEdit({ canEdit: v.canEdit, reason: v.editBlockedReason }); setEdited(false); setPreset(v.preset);
       setBudget((x.tradingBudgetCents / 100).toFixed(2));
     }).catch(setError);
   }, [accountId, agentState]);
@@ -117,14 +125,15 @@ export function RiskLimits() {
   );
   if (!l) return <><h1 className="h3">Risk limits</h1>{agents}<ProblemAlert error={error} /></>;
   const editable = edit.canEdit;
-  const num = (k: keyof Limits) => (e: React.ChangeEvent<HTMLInputElement>) => setL({ ...l, [k]: Number(e.target.value) });
+  const num = (k: keyof Limits) => (e: React.ChangeEvent<HTMLInputElement>) => { setL({ ...l, [k]: Number(e.target.value) }); setEdited(true); };
   async function save(e: FormEvent) {
     e.preventDefault();
     if (!l) return;
     setError(""); setSaved(false);
     try {
-      const next = await api.setRiskLimits({ ...l, tradingBudgetCents: Math.round(Number(budget) * 100) });
-      setL(next); setSaved(true);
+      const v = await api.setRiskLimits({ ...l, tradingBudgetCents: Math.round(Number(budget) * 100) });
+      const next = limitsOf(v);
+      setL(next); setPreset(v.preset); setSaved(true); setEdited(false);
     } catch (err) {
       setError(err);
     }
@@ -148,6 +157,7 @@ export function RiskLimits() {
         longs buy the real share, shorts are CFDs with a mandatory stop, and nothing is held overnight — fixed in the code.
       </p>
       {agents}
+      <AgentStylePanel reloadKey={`${accountId}-${agentState}`} />
       <h2 className="h5">Limits</h2>
       {status?.account && <p className="small">Account: <strong>{status.account.name}</strong> ({status.account.mode}).</p>}
       <InfoCard id="risk-states" title="When the limits can change">
@@ -176,6 +186,10 @@ export function RiskLimits() {
           )}
         </div>
       )}
+      <RiskPresets canEdit={editable} edited={edited} current={preset} reloadKey={`${accountId}-${agentState}`} onApplied={(v) => {
+        const next = limitsOf(v);
+        setL(next); setPreset(v.preset); setBudget((next.tradingBudgetCents / 100).toFixed(2)); setEdited(false); setSaved(true); setError(null);
+      }} />
       <form onSubmit={save} className="card"><div className="card-body row g-4">
         <div className="col-md-6 col-xl-4">
           <label className="form-label fw-semibold" htmlFor="budget">Trading budget</label>
@@ -198,4 +212,15 @@ export function RiskLimits() {
       </div></form>
     </>
   );
+}
+
+// limitsOf is the limits alone, as the PUT takes them (the server's view adds canEdit,
+// editBlockedReason and the matching preset, which the PUT refuses).
+function limitsOf(v: Limits): Limits {
+  return {
+    tradingBudgetCents: v.tradingBudgetCents, dailyLossBp: v.dailyLossBp, drawdownBp: v.drawdownBp, maxPositionBp: v.maxPositionBp,
+    maxOpenPositions: v.maxOpenPositions, noEntryBeforeCloseMinutes: v.noEntryBeforeCloseMinutes,
+    flattenBeforeCloseMinutes: v.flattenBeforeCloseMinutes, maxPortfolioAgeSeconds: v.maxPortfolioAgeSeconds,
+    maxQuoteAgeSeconds: v.maxQuoteAgeSeconds, maxShortBp: v.maxShortBp,
+  };
 }

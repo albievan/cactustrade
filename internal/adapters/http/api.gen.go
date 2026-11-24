@@ -77,6 +77,27 @@ func (e AgentState) Valid() bool {
 	}
 }
 
+// Defines values for AutonomyPolicyResearchMode.
+const (
+	AutoAdd AutonomyPolicyResearchMode = "auto_add"
+	Off     AutonomyPolicyResearchMode = "off"
+	Propose AutonomyPolicyResearchMode = "propose"
+)
+
+// Valid indicates whether the value is a known member of the AutonomyPolicyResearchMode enum.
+func (e AutonomyPolicyResearchMode) Valid() bool {
+	switch e {
+	case AutoAdd:
+		return true
+	case Off:
+		return true
+	case Propose:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CredentialSource.
 const (
 	Env CredentialSource = "env"
@@ -218,6 +239,36 @@ func (e HealthStatus) Valid() bool {
 	case Ok:
 		return true
 	case Unavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LiveRegimeStance.
+const (
+	Both      LiveRegimeStance = "both"
+	Reversion LiveRegimeStance = "reversion"
+	StayOut   LiveRegimeStance = "stay_out"
+	Trend     LiveRegimeStance = "trend"
+	Unknown   LiveRegimeStance = "unknown"
+	Wait      LiveRegimeStance = "wait"
+)
+
+// Valid indicates whether the value is a known member of the LiveRegimeStance enum.
+func (e LiveRegimeStance) Valid() bool {
+	switch e {
+	case Both:
+		return true
+	case Reversion:
+		return true
+	case StayOut:
+		return true
+	case Trend:
+		return true
+	case Unknown:
+		return true
+	case Wait:
 		return true
 	default:
 		return false
@@ -392,6 +443,7 @@ const (
 	Candidate ReviewOutcome = "candidate"
 	Error     ReviewOutcome = "error"
 	NoSignal  ReviewOutcome = "no_signal"
+	Proposed  ReviewOutcome = "proposed"
 	Skipped   ReviewOutcome = "skipped"
 )
 
@@ -406,7 +458,66 @@ func (e ReviewOutcome) Valid() bool {
 		return true
 	case NoSignal:
 		return true
+	case Proposed:
+		return true
 	case Skipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RiskPresetId.
+const (
+	RiskPresetIdHigh       RiskPresetId = "high"
+	RiskPresetIdLow        RiskPresetId = "low"
+	RiskPresetIdLowMedium  RiskPresetId = "low_medium"
+	RiskPresetIdMedium     RiskPresetId = "medium"
+	RiskPresetIdMediumHigh RiskPresetId = "medium_high"
+)
+
+// Valid indicates whether the value is a known member of the RiskPresetId enum.
+func (e RiskPresetId) Valid() bool {
+	switch e {
+	case RiskPresetIdHigh:
+		return true
+	case RiskPresetIdLow:
+		return true
+	case RiskPresetIdLowMedium:
+		return true
+	case RiskPresetIdMedium:
+		return true
+	case RiskPresetIdMediumHigh:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RiskPresetMatch.
+const (
+	RiskPresetMatchCustom     RiskPresetMatch = "custom"
+	RiskPresetMatchHigh       RiskPresetMatch = "high"
+	RiskPresetMatchLow        RiskPresetMatch = "low"
+	RiskPresetMatchLowMedium  RiskPresetMatch = "low_medium"
+	RiskPresetMatchMedium     RiskPresetMatch = "medium"
+	RiskPresetMatchMediumHigh RiskPresetMatch = "medium_high"
+)
+
+// Valid indicates whether the value is a known member of the RiskPresetMatch enum.
+func (e RiskPresetMatch) Valid() bool {
+	switch e {
+	case RiskPresetMatchCustom:
+		return true
+	case RiskPresetMatchHigh:
+		return true
+	case RiskPresetMatchLow:
+		return true
+	case RiskPresetMatchLowMedium:
+		return true
+	case RiskPresetMatchMedium:
+		return true
+	case RiskPresetMatchMediumHigh:
 		return true
 	default:
 		return false
@@ -446,6 +557,30 @@ func (e ShareAccountRequestAccess) Valid() bool {
 	case ShareAccountRequestAccessTrade:
 		return true
 	case ShareAccountRequestAccessView:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StyleLevel.
+const (
+	StyleLevelFull   StyleLevel = "full"
+	StyleLevelHigh   StyleLevel = "high"
+	StyleLevelLow    StyleLevel = "low"
+	StyleLevelMedium StyleLevel = "medium"
+)
+
+// Valid indicates whether the value is a known member of the StyleLevel enum.
+func (e StyleLevel) Valid() bool {
+	switch e {
+	case StyleLevelFull:
+		return true
+	case StyleLevelHigh:
+		return true
+	case StyleLevelLow:
+		return true
+	case StyleLevelMedium:
 		return true
 	default:
 		return false
@@ -789,6 +924,26 @@ type AgentStatusResult struct {
 	State     AgentState `json:"state"`
 }
 
+// AgentStyle defines model for AgentStyle.
+type AgentStyle struct {
+	Aggressiveness          StyleLevel       `json:"aggressiveness"`
+	AggressivenessLevels    []StyleLevelText `json:"aggressivenessLevels"`
+	Autonomy                StyleLevel       `json:"autonomy"`
+	AutonomyLevels          []StyleLevelText `json:"autonomyLevels"`
+	CanEdit                 bool             `json:"canEdit"`
+	EditBlockedReason       *string          `json:"editBlockedReason,omitempty"`
+	EffectiveAggressiveness StyleLevel       `json:"effectiveAggressiveness"`
+
+	// Policy what the autonomy level lets the platform do by itself
+	Policy AutonomyPolicy `json:"policy"`
+}
+
+// AgentStyleChange defines model for AgentStyleChange.
+type AgentStyleChange struct {
+	Aggressiveness *StyleLevel `json:"aggressiveness,omitempty"`
+	Autonomy       *StyleLevel `json:"autonomy,omitempty"`
+}
+
 // ApiKey defines model for ApiKey.
 type ApiKey struct {
 	CreatedAt  time.Time  `json:"createdAt"`
@@ -821,6 +976,22 @@ type AuditEntry struct {
 	RemoteIp string    `json:"remoteIp"`
 	Target   string    `json:"target"`
 }
+
+// AutonomyPolicy what the autonomy level lets the platform do by itself
+type AutonomyPolicy struct {
+	AdaptAggressiveness bool `json:"adaptAggressiveness"`
+	AutoAssignThemes    bool `json:"autoAssignThemes"`
+
+	// AutoStart never on a real-money account (OD26)
+	AutoStart        bool                       `json:"autoStart"`
+	OwnerSharesOnly  bool                       `json:"ownerSharesOnly"`
+	PruneStale       bool                       `json:"pruneStale"`
+	ResearchMode     AutonomyPolicyResearchMode `json:"researchMode"`
+	ScanEveryMinutes int                        `json:"scanEveryMinutes"`
+}
+
+// AutonomyPolicyResearchMode defines model for AutonomyPolicy.ResearchMode.
+type AutonomyPolicyResearchMode string
 
 // BlockedInstrument defines model for BlockedInstrument.
 type BlockedInstrument struct {
@@ -1632,13 +1803,25 @@ type LiveRegime struct {
 	// Known a review with regime probabilities exists
 	Known bool `json:"known"`
 
+	// MayDo what the agent may do, in plain words
+	MayDo *string `json:"mayDo,omitempty"`
+
+	// Mood A market mood (regime) for people
+	Mood *RegimeText `json:"mood,omitempty"`
+
 	// Probabilities the regime model's probabilities (regime → 0..1)
 	Probabilities *map[string]float64 `json:"probabilities,omitempty"`
 
 	// Regime the most likely regime of the latest review
 	Regime *string `json:"regime,omitempty"`
-	Symbol string  `json:"symbol"`
+
+	// Stance which playbooks may act at the account's current thresholds
+	Stance *LiveRegimeStance `json:"stance,omitempty"`
+	Symbol string            `json:"symbol"`
 }
+
+// LiveRegimeStance which playbooks may act at the account's current thresholds
+type LiveRegimeStance string
 
 // LiveSnapshot An account's live view (the `snapshot` message of GET /api/v1/live)
 type LiveSnapshot struct {
@@ -1669,7 +1852,10 @@ type LiveSnapshot struct {
 	// RecentOrders the latest 20 orders, newest first
 	RecentOrders   []Order        `json:"recentOrders"`
 	Reconciliation Reconciliation `json:"reconciliation"`
-	Regimes        []LiveRegime   `json:"regimes"`
+
+	// RegimeLegend the market moods explained (R28)
+	RegimeLegend *[]RegimeText `json:"regimeLegend,omitempty"`
+	Regimes      []LiveRegime  `json:"regimes"`
 
 	// Stale no portfolio, or one older than 30 seconds
 	Stale bool       `json:"stale"`
@@ -2202,6 +2388,14 @@ type Reconciliation struct {
 	Reason string `json:"reason"`
 }
 
+// RegimeText A market mood (regime) for people
+type RegimeText struct {
+	AgentMayDo  string `json:"agentMayDo"`
+	Description string `json:"description"`
+	Label       string `json:"label"`
+	Regime      string `json:"regime"`
+}
+
 // RenameAccountRequest defines model for RenameAccountRequest.
 type RenameAccountRequest struct {
 	Name string `json:"name"`
@@ -2234,6 +2428,8 @@ type ReviewOutcome string
 
 // ReviewBoard defines model for ReviewBoard.
 type ReviewBoard struct {
+	// CanAccept the caller may add proposed shares to the watchlist (trade access)
+	CanAccept      *bool    `json:"canAccept,omitempty"`
 	Reviews        []Review `json:"reviews"`
 	ScannerEnabled bool     `json:"scannerEnabled"`
 }
@@ -2268,6 +2464,23 @@ type RiskLimits struct {
 	TradingBudgetCents Cents `json:"tradingBudgetCents"`
 }
 
+// RiskLimitsChange A change of limits: `preset` alone, or every limit of RiskLimits (a custom set).
+type RiskLimitsChange struct {
+	DailyLossBp               *int          `json:"dailyLossBp,omitempty"`
+	DrawdownBp                *int          `json:"drawdownBp,omitempty"`
+	FlattenBeforeCloseMinutes *int          `json:"flattenBeforeCloseMinutes,omitempty"`
+	MaxOpenPositions          *int          `json:"maxOpenPositions,omitempty"`
+	MaxPortfolioAgeSeconds    *int          `json:"maxPortfolioAgeSeconds,omitempty"`
+	MaxPositionBp             *int          `json:"maxPositionBp,omitempty"`
+	MaxQuoteAgeSeconds        *int          `json:"maxQuoteAgeSeconds,omitempty"`
+	MaxShortBp                *int          `json:"maxShortBp,omitempty"`
+	NoEntryBeforeCloseMinutes *int          `json:"noEntryBeforeCloseMinutes,omitempty"`
+	Preset                    *RiskPresetId `json:"preset,omitempty"`
+
+	// TradingBudgetCents US dollars in cents (the eToro account currency is USD)
+	TradingBudgetCents *Cents `json:"tradingBudgetCents,omitempty"`
+}
+
 // RiskLimitsView The limits as GET returns them, with whether the caller may change them now (not part of the PUT body)
 type RiskLimitsView struct {
 	// CanEdit the caller may change the limits now (same rules as the PUT)
@@ -2293,9 +2506,44 @@ type RiskLimitsView struct {
 	MaxShortBp                int `json:"maxShortBp"`
 	NoEntryBeforeCloseMinutes int `json:"noEntryBeforeCloseMinutes"`
 
+	// Preset the preset the limits match, or custom
+	Preset RiskPresetMatch `json:"preset"`
+
 	// TradingBudgetCents US dollars in cents (the eToro account currency is USD)
 	TradingBudgetCents Cents `json:"tradingBudgetCents"`
 }
+
+// RiskPreset defines model for RiskPreset.
+type RiskPreset struct {
+	DailyLossBp int          `json:"dailyLossBp"`
+	DrawdownBp  int          `json:"drawdownBp"`
+	Id          RiskPresetId `json:"id"`
+
+	// Label the preset's name for people
+	Label            string `json:"label"`
+	MaxOpenPositions int    `json:"maxOpenPositions"`
+	MaxPositionBp    int    `json:"maxPositionBp"`
+	MaxShortBp       int    `json:"maxShortBp"`
+
+	// Summary its limits in plain words
+	Summary string `json:"summary"`
+}
+
+// RiskPresetId defines model for RiskPresetId.
+type RiskPresetId string
+
+// RiskPresetList defines model for RiskPresetList.
+type RiskPresetList struct {
+	// Clamped a real-money account: every preset is capped at the real ceilings
+	Clamped bool `json:"clamped"`
+
+	// Current the preset the limits match, or custom
+	Current RiskPresetMatch `json:"current"`
+	Presets []RiskPreset    `json:"presets"`
+}
+
+// RiskPresetMatch the preset the limits match, or custom
+type RiskPresetMatch string
 
 // Role defines model for Role.
 type Role string
@@ -2339,6 +2587,18 @@ type SmtpPreset struct {
 	Label string `json:"label"`
 	Port  int    `json:"port"`
 	Tls   string `json:"tls"`
+}
+
+// StyleLevel defines model for StyleLevel.
+type StyleLevel string
+
+// StyleLevelText defines model for StyleLevelText.
+type StyleLevelText struct {
+	Id    StyleLevel `json:"id"`
+	Label string     `json:"label"`
+
+	// Summary what the level does, in plain words
+	Summary string `json:"summary"`
 }
 
 // SystemHealth defines model for SystemHealth.
@@ -2837,6 +3097,9 @@ type KillAgentJSONRequestBody = KillRequest
 // ResetKillJSONRequestBody defines body for ResetKill for application/json ContentType.
 type ResetKillJSONRequestBody = ResetKillRequest
 
+// SetAgentStyleJSONRequestBody defines body for SetAgentStyle for application/json ContentType.
+type SetAgentStyleJSONRequestBody = AgentStyleChange
+
 // CreateApiKeyJSONRequestBody defines body for CreateApiKey for application/json ContentType.
 type CreateApiKeyJSONRequestBody = CreateApiKeyRequest
 
@@ -2874,7 +3137,7 @@ type RequestPasswordResetJSONRequestBody = PasswordResetRequest
 type ConfirmPasswordResetJSONRequestBody = PasswordResetConfirm
 
 // SetRiskLimitsJSONRequestBody defines body for SetRiskLimits for application/json ContentType.
-type SetRiskLimitsJSONRequestBody = RiskLimits
+type SetRiskLimitsJSONRequestBody = RiskLimitsChange
 
 // SetScannerJSONRequestBody defines body for SetScanner for application/json ContentType.
 type SetScannerJSONRequestBody = ScannerSwitch
@@ -2980,6 +3243,12 @@ type ServerInterface interface {
 	// StopAgent Stop the agent — no new entries, exits continue, limits may change (operator; session or API key)
 	// (POST /api/v1/agent/stop)
 	StopAgent(w http.ResponseWriter, r *http.Request, params StopAgentParams)
+	// GetAgentStyle The current account's aggressiveness and autonomy (viewer)
+	// (GET /api/v1/agent/style)
+	GetAgentStyle(w http.ResponseWriter, r *http.Request)
+	// SetAgentStyle Change the aggressiveness and/or autonomy (owner, web UI, only while the agent is stopped)
+	// (PUT /api/v1/agent/style)
+	SetAgentStyle(w http.ResponseWriter, r *http.Request)
 	// ListAgents The agent of every eToro account the caller can see, with the caller's controls (viewer)
 	// (GET /api/v1/agents)
 	ListAgents(w http.ResponseWriter, r *http.Request)
@@ -3124,9 +3393,12 @@ type ServerInterface interface {
 	// GetRiskLimits The risk limits (viewer)
 	// (GET /api/v1/risk/limits)
 	GetRiskLimits(w http.ResponseWriter, r *http.Request)
-	// SetRiskLimits Change the risk limits (admin, web UI, only while the agent is stopped)
+	// SetRiskLimits Change the risk limits (owner, web UI, only while the agent is stopped)
 	// (PUT /api/v1/risk/limits)
 	SetRiskLimits(w http.ResponseWriter, r *http.Request)
+	// GetRiskPresets The risk presets for the current account (viewer)
+	// (GET /api/v1/risk/presets)
+	GetRiskPresets(w http.ResponseWriter, r *http.Request)
 	// SetScanner Switch the scanner on or off for the current account (trade access)
 	// (PUT /api/v1/scanner)
 	SetScanner(w http.ResponseWriter, r *http.Request)
@@ -3911,6 +4183,34 @@ func (siw *ServerInterfaceWrapper) StopAgent(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StopAgent(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAgentStyle operation middleware
+func (siw *ServerInterfaceWrapper) GetAgentStyle(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAgentStyle(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetAgentStyle operation middleware
+func (siw *ServerInterfaceWrapper) SetAgentStyle(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetAgentStyle(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5152,6 +5452,20 @@ func (siw *ServerInterfaceWrapper) SetRiskLimits(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetRiskPresets operation middleware
+func (siw *ServerInterfaceWrapper) GetRiskPresets(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRiskPresets(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SetScanner operation middleware
 func (siw *ServerInterfaceWrapper) SetScanner(w http.ResponseWriter, r *http.Request) {
 
@@ -5760,7 +6074,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/events/seen", wrapper.MarkEventsSeen)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.GetRiskLimits)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.SetRiskLimits)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/presets", wrapper.GetRiskPresets)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent", wrapper.GetAgent)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent/style", wrapper.GetAgentStyle)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/agent/style", wrapper.SetAgentStyle)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agents", wrapper.ListAgents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent/force-close", wrapper.ForceClosePreview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/force-close", wrapper.ForceCloseAgent)

@@ -1107,23 +1107,47 @@ paths:
     put:
       tags: [risk]
       operationId: setRiskLimits
-      summary: Change the risk limits (admin, web UI, only while the agent is stopped)
+      summary: Change the risk limits (owner, web UI, only while the agent is stopped)
+      description: |
+        Either `{preset}` alone (R28: the preset's limits; the trading budget is kept, the
+        windows before the close are never shortened, and on a real-money account every
+        value is capped at the real ceilings) or every limit (a custom set). The same rules
+        apply to both: the account's owner, a web session, the agent stopped, no kill switch,
+        the budget at most the equity; raising any limit of an armed real-money account
+        disarms it. The answer names the preset the stored limits match, or `custom`.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/RiskLimits" }
+            schema: { $ref: "#/components/schemas/RiskLimitsChange" }
       responses:
         "200":
           description: Stored
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/RiskLimits" }
+              schema: { $ref: "#/components/schemas/RiskLimitsView" }
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/risk/presets:
+    get:
+      tags: [risk]
+      operationId: getRiskPresets
+      summary: The risk presets for the current account (viewer)
+      description: |
+        Each preset's limits in plain words, as the current account would get them (capped at
+        the real ceilings on a real-money account, `clamped`), and the preset its limits match
+        now (`current`, or `custom`).
+      responses:
+        "200":
+          description: Presets
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RiskPresetList" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /api/v1/agent:
     get:
       tags: [agent]
@@ -1145,6 +1169,48 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/style:
+    get:
+      tags: [agent]
+      operationId: getAgentStyle
+      summary: The current account's aggressiveness and autonomy (viewer)
+      description: |
+        The aggressiveness the owner chose and the one the strategy uses now (full autonomy
+        lowers it one step after a day that reached the daily loss limit), the autonomy level
+        and what it lets the platform do, each level explained in plain words, and whether the
+        caller may change them now (the rules of the risk limits).
+      responses:
+        "200":
+          description: Style
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentStyle" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [agent]
+      operationId: setAgentStyle
+      summary: Change the aggressiveness and/or autonomy (owner, web UI, only while the agent is stopped)
+      description: |
+        Neither changes a risk limit: the aggressiveness tunes the strategy inside the limits
+        (the risk engine still sizes and refuses every entry) and autonomy decides what the
+        scanner, the research and the start at the market open may do. Audited, with an event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentStyleChange" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentStyle" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /api/v1/agents:
     get:
       tags: [agent]
@@ -2436,10 +2502,98 @@ components:
       allOf:
         - $ref: "#/components/schemas/RiskLimits"
         - type: object
-          required: [canEdit]
+          required: [canEdit, preset]
           properties:
             canEdit: { type: boolean, description: "the caller may change the limits now (same rules as the PUT)" }
             editBlockedReason: { type: string, description: "why not, for people (absent when canEdit)" }
+            preset: { $ref: "#/components/schemas/RiskPresetMatch" }
+    RiskPresetId:
+      type: string
+      enum: [low, low_medium, medium, medium_high, high]
+    RiskPresetMatch:
+      type: string
+      description: the preset the limits match, or custom
+      enum: [low, low_medium, medium, medium_high, high, custom]
+    RiskLimitsChange:
+      type: object
+      description: |
+        A change of limits: `preset` alone, or every limit of RiskLimits (a custom set).
+      properties:
+        preset: { $ref: "#/components/schemas/RiskPresetId" }
+        tradingBudgetCents: { $ref: "#/components/schemas/Cents" }
+        dailyLossBp: { type: integer }
+        drawdownBp: { type: integer }
+        maxPositionBp: { type: integer }
+        maxOpenPositions: { type: integer }
+        noEntryBeforeCloseMinutes: { type: integer }
+        flattenBeforeCloseMinutes: { type: integer }
+        maxPortfolioAgeSeconds: { type: integer }
+        maxQuoteAgeSeconds: { type: integer }
+        maxShortBp: { type: integer }
+    RiskPreset:
+      type: object
+      required: [id, label, summary, dailyLossBp, drawdownBp, maxPositionBp, maxOpenPositions, maxShortBp]
+      properties:
+        id: { $ref: "#/components/schemas/RiskPresetId" }
+        label: { type: string, description: "the preset's name for people" }
+        summary: { type: string, description: "its limits in plain words" }
+        dailyLossBp: { type: integer }
+        drawdownBp: { type: integer }
+        maxPositionBp: { type: integer }
+        maxOpenPositions: { type: integer }
+        maxShortBp: { type: integer }
+    RiskPresetList:
+      type: object
+      required: [presets, current, clamped]
+      properties:
+        presets:
+          type: array
+          items: { $ref: "#/components/schemas/RiskPreset" }
+        current: { $ref: "#/components/schemas/RiskPresetMatch" }
+        clamped: { type: boolean, description: "a real-money account: every preset is capped at the real ceilings" }
+    StyleLevel:
+      type: string
+      enum: [low, medium, high, full]
+    StyleLevelText:
+      type: object
+      required: [id, label, summary]
+      properties:
+        id: { $ref: "#/components/schemas/StyleLevel" }
+        label: { type: string }
+        summary: { type: string, description: "what the level does, in plain words" }
+    AutonomyPolicy:
+      type: object
+      description: what the autonomy level lets the platform do by itself
+      required: [researchMode, scanEveryMinutes, ownerSharesOnly, autoAssignThemes, pruneStale, autoStart, adaptAggressiveness]
+      properties:
+        researchMode: { type: string, enum: [off, propose, auto_add] }
+        scanEveryMinutes: { type: integer }
+        ownerSharesOnly: { type: boolean }
+        autoAssignThemes: { type: boolean }
+        pruneStale: { type: boolean }
+        autoStart: { type: boolean, description: "never on a real-money account (OD26)" }
+        adaptAggressiveness: { type: boolean }
+    AgentStyle:
+      type: object
+      required: [aggressiveness, effectiveAggressiveness, autonomy, policy, aggressivenessLevels, autonomyLevels, canEdit]
+      properties:
+        aggressiveness: { $ref: "#/components/schemas/StyleLevel" }
+        effectiveAggressiveness: { $ref: "#/components/schemas/StyleLevel" }
+        autonomy: { $ref: "#/components/schemas/StyleLevel" }
+        policy: { $ref: "#/components/schemas/AutonomyPolicy" }
+        aggressivenessLevels:
+          type: array
+          items: { $ref: "#/components/schemas/StyleLevelText" }
+        autonomyLevels:
+          type: array
+          items: { $ref: "#/components/schemas/StyleLevelText" }
+        canEdit: { type: boolean }
+        editBlockedReason: { type: string }
+    AgentStyleChange:
+      type: object
+      properties:
+        aggressiveness: { $ref: "#/components/schemas/StyleLevel" }
+        autonomy: { $ref: "#/components/schemas/StyleLevel" }
     LlmProvider:
       type: object
       required: [id, label, defaultBaseUrl, keyRequired, note]
@@ -2765,7 +2919,7 @@ components:
         symbol: { type: string }
         theme: { type: string }
         at: { type: string, format: date-time }
-        outcome: { type: string, enum: [no_signal, candidate, added, skipped, error] }
+        outcome: { type: string, enum: [no_signal, candidate, added, skipped, proposed, error] }
         direction: { type: string, enum: [long, short] }
         probs:
           type: object
@@ -2779,6 +2933,7 @@ components:
       required: [scannerEnabled, reviews]
       properties:
         scannerEnabled: { type: boolean }
+        canAccept: { type: boolean, description: "the caller may add proposed shares to the watchlist (trade access)" }
         reviews:
           type: array
           items: { $ref: "#/components/schemas/Review" }
@@ -3308,6 +3463,21 @@ components:
           description: the regime model's probabilities (regime → 0..1)
           additionalProperties: { type: number, format: double }
         at: { type: string, format: date-time }
+        mood: { $ref: "#/components/schemas/RegimeText" }
+        stance:
+          type: string
+          description: which playbooks may act at the account's current thresholds
+          enum: [stay_out, trend, reversion, both, wait, unknown]
+        mayDo: { type: string, description: "what the agent may do, in plain words" }
+    RegimeText:
+      type: object
+      description: A market mood (regime) for people
+      required: [regime, label, description, agentMayDo]
+      properties:
+        regime: { type: string }
+        label: { type: string }
+        description: { type: string }
+        agentMayDo: { type: string }
     LiveSnapshot:
       type: object
       description: An account's live view (the `snapshot` message of GET /api/v1/live)
@@ -3333,6 +3503,10 @@ components:
         regimes:
           type: array
           items: { $ref: "#/components/schemas/LiveRegime" }
+        regimeLegend:
+          type: array
+          description: the market moods explained (R28)
+          items: { $ref: "#/components/schemas/RegimeText" }
         state: { $ref: "#/components/schemas/AgentState" }
         reconciliation: { $ref: "#/components/schemas/Reconciliation" }
         killed: { type: boolean }

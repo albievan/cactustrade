@@ -71,6 +71,7 @@ const (
 	ReviewCandidate ReviewOutcome = "candidate" // every rule passed (already on the watchlist)
 	ReviewAdded     ReviewOutcome = "added"     // every rule passed; added to the watchlist
 	ReviewSkipped   ReviewOutcome = "skipped"   // passed, but not added (not eligible, list full)
+	ReviewProposed  ReviewOutcome = "proposed"  // passed; proposed for the watchlist (low autonomy, R28)
 	ReviewError     ReviewOutcome = "error"     // data or broker failure (nothing concluded)
 )
 

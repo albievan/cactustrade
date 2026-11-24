@@ -262,15 +262,40 @@ func (r Report) String() string {
 	fmt.Fprintf(&b, "  trades        %d, win rate %.0f%%, skipped signals %d, costs paid $%s\n",
 		len(r.Trades), r.WinRate*100, r.SkippedEntries, r.CostsPaid)
 	fmt.Fprintf(&b, "  costs         spread %.4f, buy %.4f, sell %.4f (%s)\n", r.Costs.Spread, r.Costs.BuyFee, r.Costs.SellFee, r.Costs.Recorded)
-	switch {
-	case len(r.Trades) == 0:
+	switch r.Verdict() {
+	case VerdictNoTrades:
 		b.WriteString("  verdict       no trades: nothing can be concluded\n")
-	case r.NetReturn < 0:
+	case VerdictLostMoney:
 		b.WriteString("  verdict       the strategy LOST money on this data after costs\n")
-	case r.NetReturn < r.BuyAndHold:
+	case VerdictWorseThanHolding:
 		b.WriteString("  verdict       the strategy did worse than simply holding the instrument\n")
 	default:
 		b.WriteString("  verdict       positive on this data only; a backtest does not predict future results\n")
 	}
 	return b.String()
+}
+
+// Verdict is the plain-words class of a backtest result (the report's last line).
+type Verdict string
+
+// The verdicts, checked in this order: no trades, a loss after costs, worse than holding the
+// instrument, else positive on this data only (which predicts nothing).
+const (
+	VerdictNoTrades           Verdict = "no_trades"
+	VerdictLostMoney          Verdict = "lost_money"
+	VerdictWorseThanHolding   Verdict = "worse_than_holding"
+	VerdictPositiveOnThisData Verdict = "positive_on_this_data_only"
+)
+
+// Verdict classifies the result as the report words it.
+func (r Report) Verdict() Verdict {
+	switch {
+	case len(r.Trades) == 0:
+		return VerdictNoTrades
+	case r.NetReturn < 0:
+		return VerdictLostMoney
+	case r.NetReturn < r.BuyAndHold:
+		return VerdictWorseThanHolding
+	}
+	return VerdictPositiveOnThisData
 }

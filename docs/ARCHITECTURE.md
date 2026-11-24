@@ -246,6 +246,24 @@ unchanged), and nothing an order path decides reads them.
   `web/src`, `README.md`, `docs/` and `api/openapi` for banned phrases; each allowed line is
   listed in the test with its reason.
 
+### Agent style: presets, aggressiveness, autonomy (R28)
+
+- **Risk presets** (`domain.RiskPreset`, `PresetFor`, `ApplyPreset`, `MatchPreset`) are full
+  sets of limits except the budget; `app.ApplyRiskPreset` goes through `SetRiskLimits`, so the
+  owner/session/stopped/kill rules, the real ceilings and the RaisesAny disarm all apply.
+- **Aggressiveness** (`domain.Aggressiveness`, stored per account as a setting) maps to strategy
+  parameters only (`strategy.ConfigFor`: risk per trade, entry probability, largest suggested
+  size); `app.strategyConfig` builds the account's config for the agent, the scanner and the
+  live "what the agent may do" (`strategy.MayDo`). `domain.AssessEntry` still sizes every entry.
+- **Autonomy** (`domain.Autonomy.Policy(mode)`) decides what runs by itself: research mode
+  (`app.ResearchMode(ctx, accountID)` → `off | propose | auto_add`, read by the scanner and the
+  web research), the scan interval (`ScanAll` every `app.ScanTick`, each account when its
+  interval passed), owner-only trading at low, theme auto-assign and stale-share pruning at
+  high, and at full the auto-start at the first market open of a risk day (demo only, inside
+  `AgentLoop`, through `startable` under the control lock) plus the aggressiveness adjustment
+  folded in when `observe` moves to a new risk day. No level touches a limit, a kill or the
+  real-mode gate.
+
 ## Accounts
 
 Every eToro call is made for one account: the app checks the caller's access (owner / trade /

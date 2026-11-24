@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
+	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
@@ -74,46 +76,85 @@ func toRiskLimits(l domain.RiskLimits) RiskLimits {
 }
 
 // GetRiskLimits returns the limits and whether the caller may change them now (the use
-// case decides; PLAN 6.14).
+// case decides; PLAN 6.14), with the preset they match (R28).
 func (s *Server) GetRiskLimits(w http.ResponseWriter, r *http.Request) {
 	v, err := s.svc.RiskLimitsView(r.Context(), state(r).principal)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, toRiskLimitsView(v))
+}
+
+func toRiskLimitsView(v app.RiskLimitsView) RiskLimitsView {
 	l := toRiskLimits(v.Limits)
 	out := RiskLimitsView{
 		TradingBudgetCents: l.TradingBudgetCents, DailyLossBp: l.DailyLossBp, DrawdownBp: l.DrawdownBp,
 		MaxPositionBp: l.MaxPositionBp, MaxOpenPositions: l.MaxOpenPositions,
 		NoEntryBeforeCloseMinutes: l.NoEntryBeforeCloseMinutes, FlattenBeforeCloseMinutes: l.FlattenBeforeCloseMinutes,
 		MaxPortfolioAgeSeconds: l.MaxPortfolioAgeSeconds, MaxQuoteAgeSeconds: l.MaxQuoteAgeSeconds,
-		MaxShortBp: l.MaxShortBp, CanEdit: v.CanEdit,
+		MaxShortBp: l.MaxShortBp, CanEdit: v.CanEdit, Preset: RiskPresetMatch(v.Preset),
 	}
 	if v.EditBlocked != "" {
 		out.EditBlockedReason = ptr(v.EditBlocked)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
-// SetRiskLimits changes the limits.
+// SetRiskLimits changes the limits: a preset alone, or every limit (R28). The use cases
+// apply every rule; this only decodes.
 func (s *Server) SetRiskLimits(w http.ResponseWriter, r *http.Request) {
-	var req RiskLimits
+	var req RiskLimitsChange
 	if !decode(w, r, &req) {
 		return
 	}
-	l, err := s.svc.SetRiskLimits(r.Context(), state(r).principal, domain.RiskLimits{
-		TradingBudget: domain.Cents(req.TradingBudgetCents), DailyLoss: domain.BasisPoints(req.DailyLossBp),
-		Drawdown: domain.BasisPoints(req.DrawdownBp), MaxPosition: domain.BasisPoints(req.MaxPositionBp),
-		MaxOpenPositions: req.MaxOpenPositions, NoEntryBeforeClose: time.Duration(req.NoEntryBeforeCloseMinutes) * time.Minute,
-		FlattenBeforeClose: time.Duration(req.FlattenBeforeCloseMinutes) * time.Minute,
-		MaxPortfolioAge:    time.Duration(req.MaxPortfolioAgeSeconds) * time.Second, MaxQuoteAge: time.Duration(req.MaxQuoteAgeSeconds) * time.Second,
-		MaxShort: domain.BasisPoints(req.MaxShortBp),
-	})
+	p := state(r).principal
+	var err error
+	if req.Preset != nil {
+		if req.TradingBudgetCents != nil || req.DailyLossBp != nil || req.DrawdownBp != nil || req.MaxPositionBp != nil ||
+			req.MaxOpenPositions != nil || req.NoEntryBeforeCloseMinutes != nil || req.FlattenBeforeCloseMinutes != nil ||
+			req.MaxPortfolioAgeSeconds != nil || req.MaxQuoteAgeSeconds != nil || req.MaxShortBp != nil {
+			s.fail(w, r, domain.Invalid("preset", "send a preset alone, or every limit without a preset"))
+			return
+		}
+		_, err = s.svc.ApplyRiskPreset(r.Context(), p, domain.RiskPreset(*req.Preset))
+	} else {
+		l, ok := customLimits(req)
+		if !ok {
+			s.fail(w, r, domain.Invalid("preset", "send a preset, or every limit"))
+			return
+		}
+		_, err = s.svc.SetRiskLimits(r.Context(), p, l)
+	}
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toRiskLimits(l))
+	v, err := s.svc.RiskLimitsView(r.Context(), p)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRiskLimitsView(v))
+}
+
+// customLimits is a change with every limit given; ok is false when one is missing.
+func customLimits(req RiskLimitsChange) (domain.RiskLimits, bool) {
+	ints := []*int{
+		req.DailyLossBp, req.DrawdownBp, req.MaxPositionBp, req.MaxOpenPositions, req.NoEntryBeforeCloseMinutes,
+		req.FlattenBeforeCloseMinutes, req.MaxPortfolioAgeSeconds, req.MaxQuoteAgeSeconds, req.MaxShortBp,
+	}
+	if req.TradingBudgetCents == nil || slices.Contains(ints, nil) {
+		return domain.RiskLimits{}, false
+	}
+	return domain.RiskLimits{
+		TradingBudget: domain.Cents(*req.TradingBudgetCents), DailyLoss: domain.BasisPoints(*req.DailyLossBp),
+		Drawdown: domain.BasisPoints(*req.DrawdownBp), MaxPosition: domain.BasisPoints(*req.MaxPositionBp),
+		MaxOpenPositions: *req.MaxOpenPositions, NoEntryBeforeClose: time.Duration(*req.NoEntryBeforeCloseMinutes) * time.Minute,
+		FlattenBeforeClose: time.Duration(*req.FlattenBeforeCloseMinutes) * time.Minute,
+		MaxPortfolioAge:    time.Duration(*req.MaxPortfolioAgeSeconds) * time.Second, MaxQuoteAge: time.Duration(*req.MaxQuoteAgeSeconds) * time.Second,
+		MaxShort: domain.BasisPoints(*req.MaxShortBp),
+	}, true
 }
 
 // GetSystemHealth answers the trading health (PLAN 7.5): 200 when every loop is alive, else

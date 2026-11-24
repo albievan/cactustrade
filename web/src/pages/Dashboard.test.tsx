@@ -50,7 +50,10 @@ function snapshot(over: Partial<LiveSnapshot> = {}): LiveSnapshot {
         amountCents: 40000, unrealisedPnlCents: -500, realAsset: true, long: true, leverage: 1, ours: false },
     ],
     openOrders: [order()], recentOrders: [order()],
-    regimes: [{ instrumentId: 1001, symbol: "AAPL", known: true, regime: "trending", probabilities: { trending: 0.7, choppy: 0.2, high_volatility: 0.1 }, at: "2026-11-24T14:55:00Z" }],
+    regimes: [{ instrumentId: 1001, symbol: "AAPL", known: true, regime: "trending", probabilities: { trending: 0.7, choppy: 0.2, high_volatility: 0.1 }, at: "2026-11-24T14:55:00Z",
+      mood: { regime: "trending", label: "Trending", description: "moving steadily one way", agentMayDo: "the agent may buy breakouts or short breakdowns" },
+      stance: "trend", mayDo: "May buy a breakout or short a breakdown" }],
+    regimeLegend: [{ regime: "trending", label: "Trending", description: "moving steadily one way", agentMayDo: "the agent may buy breakouts or short breakdowns" }],
     state: "running", reconciliation: { accountId: "a1", ok: true, reason: "", at: "2026-11-24T14:00:00Z" },
     killed: false, dayStopped: false, lease: { mine: true, other: false },
     ...over,
@@ -140,7 +143,8 @@ describe("Dashboard", () => {
     expect(screen.getByText(/6 of 8/)).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "To the daily loss limit" })).toBeInTheDocument();
     // regimes per share and the orders feed
-    expect(screen.getByText("trending")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Market mood" })).toBeInTheDocument();
+    expect(screen.getByText("May buy a breakout or short a breakdown")).toBeInTheDocument();
     const feed = screen.getByRole("list", { name: "Orders feed" });
     expect(within(feed).getByText("sent")).toBeInTheDocument();
   });

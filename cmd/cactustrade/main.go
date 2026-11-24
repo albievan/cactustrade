@@ -5,7 +5,11 @@
 //	cactustrade version             print the version
 //	cactustrade healthcheck         exit 0 when the local server is healthy (containers)
 //	cactustrade migrate status|up|down-to N
-//	cactustrade backtest --instrument ID   walk-forward backtest on eToro candles (read-only)
+//	cactustrade backtest --instrument ID | --watchlist --account ID [--json]
+//	                                        walk-forward backtest on eToro candles (read-only)
+//	cactustrade etoro-probe --account ID --symbol SYM [--raw] [--record DIR]
+//	                                        what eToro says about one share (read-only, PLAN 2.7)
+//	cactustrade etoro-lookup --account ID --order-id N   eToro's answer about one order (read-only)
 //	cactustrade llm-test [--profile NAME]   test an LLM reviewer profile (one made-up review)
 //	cactustrade backup --out FILE           encrypted standalone backup (age; PLAN 7.6a)
 //	cactustrade restore --in FILE --yes     restore a standalone backup (server stopped)
@@ -92,6 +96,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return llmTestCmd(ctx, args, getenv, out)
 	case "etoro-lookup":
 		return etoroLookupCmd(ctx, args, getenv, out)
+	case "etoro-probe":
+		return etoroProbeCmd(ctx, args, getenv, out)
 	case "backup":
 		return backupCmd(ctx, args, getenv, out, time.Now)
 	case "restore":
@@ -115,7 +121,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		}
 		return err
 	}
-	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest, backup, restore, encrypt, decrypt, secrets)", cmd)
+	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest, etoro-probe, etoro-lookup, llm-test, backup, restore, encrypt, decrypt, secrets)", cmd)
 }
 
 // newLogger writes JSON lines to stdout; every line logged with a context names the account
@@ -351,7 +357,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		stream.Watch(ids...)
 	}
 	go stream.Run(ctx)
-	go scannerLoop(ctx, svc, cal, 15*time.Minute)
+	go scannerLoop(ctx, svc, cal, app.ScanTick) // each account by its autonomy (R28)
 	go equityLoop(ctx, svc, time.Minute, 15*time.Minute)
 	go mailLoop(ctx, svc, log, 15*time.Second)
 	// Trading (PLAN 4.14): start-up reconciliation → OD5 resume → supervisor → agent, and the

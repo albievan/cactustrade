@@ -10,6 +10,7 @@ import (
 
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
+	"github.com/albievan/cactustrade/internal/strategy"
 )
 
 // The live view of an account (PLAN 6.6b): what the dashboard stream sends. It is built from
@@ -48,6 +49,12 @@ type LiveRegime struct {
 	Regime domain.Regime
 	Probs  map[domain.Regime]float64
 	At     time.Time
+	// Mood is the most likely regime for people (R28: "Trending", "moving steadily one way").
+	Mood domain.RegimeText
+	// Stance and MayDo say which playbooks may act at the account's current thresholds
+	// (its effective aggressiveness and whether shorts are allowed).
+	Stance strategy.Stance
+	MayDo  string
 }
 
 // LiveSnapshot is an account's live view.
@@ -66,6 +73,8 @@ type LiveSnapshot struct {
 	OpenOrders   []OrderView
 	RecentOrders []OrderView
 	Regimes      []LiveRegime
+	// RegimeLegend explains the market moods (R28).
+	RegimeLegend []domain.RegimeText
 	State        domain.AgentState
 	// Reconciliation is the latest in this process; Killed the kill switch (stored or
 	// latched in memory) with its reason; DayStopped the daily loss latch of today's risk day.
@@ -109,7 +118,8 @@ func (s *Service) LiveSnapshot(ctx context.Context, p Principal, accountID strin
 	if err := s.liveOrders(ctx, v.ID, &out); err != nil {
 		return LiveSnapshot{}, err
 	}
-	if out.Regimes, err = s.liveRegimes(ctx, v.ID); err != nil {
+	out.RegimeLegend = slices.Clone(domain.RegimeLegend)
+	if out.Regimes, err = s.liveRegimes(ctx, v.Account); err != nil {
 		return LiveSnapshot{}, err
 	}
 	pf, at, ok := s.rt.views.peek(v.ID)
@@ -209,8 +219,10 @@ func (s *Service) liveOrders(ctx context.Context, accountID string, out *LiveSna
 	return nil
 }
 
-// liveRegimes gives the latest regime of every watchlist share, from its latest review.
-func (s *Service) liveRegimes(ctx context.Context, accountID string) ([]LiveRegime, error) {
+// liveRegimes gives the latest regime of every watchlist share, from its latest review, with
+// what the agent may do in it at the account's current thresholds.
+func (s *Service) liveRegimes(ctx context.Context, a domain.Account) ([]LiveRegime, error) {
+	accountID := a.ID
 	wl, err := s.d.Store.Watchlist().List(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("app.LiveSnapshot: %w", err)
@@ -222,15 +234,18 @@ func (s *Service) liveRegimes(ctx context.Context, accountID string) ([]LiveRegi
 	if err != nil {
 		return nil, fmt.Errorf("app.LiveSnapshot: %w", err)
 	}
+	cfg := s.strategyConfig(ctx, a, s.riskLimits(ctx, accountID))
 	out := make([]LiveRegime, 0, len(wl))
 	for _, w := range wl {
 		r := LiveRegime{Instrument: w.Instrument.ID, Symbol: w.Instrument.Symbol}
 		for _, x := range rv { // newest first: the first with probabilities is the latest
 			if x.Instrument == w.Instrument.ID && len(x.Probs) > 0 {
 				r.Known, r.Regime, r.Probs, r.At = true, mostLikely(x.Probs), x.Probs, x.At
+				r.Mood, _ = domain.RegimeTextOf(r.Regime)
 				break
 			}
 		}
+		r.Stance, r.MayDo = strategy.MayDo(r.Probs, cfg)
 		out = append(out, r)
 	}
 	return out, nil

@@ -430,6 +430,10 @@ func (s *Service) observe(ctx context.Context, a domain.Account, pf domain.Portf
 			s.emitFor(ctx, a.ID, "agent", "risk.daily_stop", domain.SeverityWarning, "Daily loss limit reached on "+a.Name,
 				fmt.Sprintf("equity $%s, floor $%s: no new entries until the next risk day", pf.Equity(), domain.DailyFloor(next.State, l)))
 		}
+		if err == nil && cur.State.Day != "" && next.State.Day > cur.State.Day {
+			// The risk day ended: full autonomy adapts the aggressiveness to it (R28).
+			s.foldRiskDay(ctx, a, cur.State.Day, cur.State.DayStopped)
+		}
 		return saved, err
 	}
 	return domain.AccountRiskState{}, fmt.Errorf("app.observe: the risk state kept changing: %w", domain.ErrConflict)

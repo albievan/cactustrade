@@ -23,6 +23,13 @@ export type EventFeed = components["schemas"]["EventFeed"];
 export type AppEvent = components["schemas"]["Event"];
 export type RiskLimits = components["schemas"]["RiskLimits"];
 export type RiskLimitsView = components["schemas"]["RiskLimitsView"];
+export type RiskPreset = components["schemas"]["RiskPreset"];
+export type RiskPresetId = components["schemas"]["RiskPresetId"];
+export type RiskPresetList = components["schemas"]["RiskPresetList"];
+export type AgentStyle = components["schemas"]["AgentStyle"];
+export type AgentStyleChange = components["schemas"]["AgentStyleChange"];
+export type StyleLevel = components["schemas"]["StyleLevel"];
+export type RegimeText = components["schemas"]["RegimeText"];
 export type LlmSetup = components["schemas"]["LlmSetup"];
 export type Account = components["schemas"]["Account"];
 export type Theme = components["schemas"]["Theme"];
@@ -191,7 +198,12 @@ export const api = {
   events: (limit = 50) => request<EventFeed>("GET", `/api/v1/events?limit=${limit}`),
   eventsSeen: () => request<void>("POST", "/api/v1/events/seen"),
   riskLimits: () => request<RiskLimitsView>("GET", "/api/v1/risk/limits"),
-  setRiskLimits: (l: RiskLimits) => request<RiskLimits>("PUT", "/api/v1/risk/limits", l),
+  setRiskLimits: (l: RiskLimits) => request<RiskLimitsView>("PUT", "/api/v1/risk/limits", l),
+  // R28: presets, aggressiveness and autonomy. The server applies every rule.
+  riskPresets: () => request<RiskPresetList>("GET", "/api/v1/risk/presets"),
+  applyRiskPreset: (preset: RiskPresetId) => request<RiskLimitsView>("PUT", "/api/v1/risk/limits", { preset }),
+  agentStyle: () => request<AgentStyle>("GET", "/api/v1/agent/style"),
+  setAgentStyle: (c: AgentStyleChange) => request<AgentStyle>("PUT", "/api/v1/agent/style", c),
   reloadSettings: () => request<void>("POST", "/api/v1/system/reload"),
   restart: () => request<void>("POST", "/api/v1/system/restart"),
   llmSetup: () => request<LlmSetup>("GET", "/api/v1/llm"),

@@ -106,6 +106,9 @@ body[data-mode=real] .shell { outline: 4px solid var(--real); outline-offset: -4
 .rule-pass { color: #2f9e5a; } .rule-fail { color: var(--real); } .rule-skip { color: var(--muted); }
 .probbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; min-width: 90px; background: var(--border); }
 .probbar .t { background: #2f9e5a; } .probbar .c { background: #c9a227; } .probbar .h { background: var(--real); }
+.mood-swatch { display: inline-block; width: .75rem; height: .75rem; border-radius: 2px; }
+.mood-swatch.t { background: #2f9e5a; } .mood-swatch.c { background: #c9a227; } .mood-swatch.h { background: var(--real); }
+.preset-btn { min-width: 9rem; line-height: 1.2; }
 .account-switch { max-width: 260px; }
 body[data-mode=real] .account-switch { border-color: #fff; }
 

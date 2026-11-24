@@ -10,6 +10,7 @@ import (
 
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
+	"github.com/albievan/cactustrade/internal/strategy"
 )
 
 // The agent (PLAN 4.10) opens positions: at each bar close it walks the account's watchlist,
@@ -123,6 +124,8 @@ func (s *Service) agentTickAll(ctx context.Context, wg *sync.WaitGroup) {
 		s.d.Log.ErrorContext(ctx, "agent: listing accounts failed", "err", err)
 		return
 	}
+	// Full autonomy starts stopped demo agents at the first market open of a day (R28).
+	s.autoStartAll(ctx, as)
 	for _, a := range as {
 		if !a.Tradable() || a.Mode != domain.ModeDemo || s.agentState(ctx, a.ID) != domain.AgentRunning || !s.rt.claimTick(a.ID) {
 			continue
@@ -216,6 +219,17 @@ func (s *Service) agentTickLocked(ctx context.Context, a domain.Account, tr *Age
 		tr.Skipped = "the watchlist is empty"
 		return ""
 	}
+	pol := s.policyOf(ctx, a)
+	if pol.OwnerSharesOnly {
+		// Low autonomy (R28): only the shares a person put on the watchlist are traded.
+		wl = slices.DeleteFunc(wl, func(w domain.WatchItem) bool { return domain.IsAutoAdded(w.AddedBy) })
+		if len(wl) == 0 {
+			tr.Skipped = "no share on the watchlist was added by a person (low autonomy trades only those)"
+			return ""
+		}
+	}
+	cfg := s.strategyConfig(ctx, a, l)
+	s.markRan(ctx, a, domain.RiskDay(s.d.Clock.Now()))
 	pf, err := s.d.Broker.Portfolio(ports.WithAccount(ctx, a))
 	if err != nil {
 		tr.Skipped = "reading the portfolio failed"
@@ -243,7 +257,7 @@ func (s *Service) agentTickLocked(ctx context.Context, a domain.Account, tr *Age
 			return ""
 		}
 		it := InstrumentTrace{Instrument: w.Instrument.ID, Symbol: w.Instrument.Symbol, Market: w.Instrument.Market}
-		killWhy := s.consider(ctx, a, l, w.Instrument, elig[w.Instrument.ID], pf, sizing, &it)
+		killWhy := s.consider(ctx, a, l, cfg, w.Instrument, elig[w.Instrument.ID], pf, sizing, &it)
 		tr.Instruments = append(tr.Instruments, it)
 		if it.DecisionErr != "" {
 			tr.Errors = append(tr.Errors, it.DecisionErr)
@@ -289,7 +303,7 @@ func (s *Service) agentGate(ctx context.Context, a domain.Account) string {
 // every step passes. Once the strategy has proposed a valid candidate, exactly one decision
 // is logged for it (PLAN 5.5). It returns why the kill switch must be tripped ("" = it need
 // not).
-func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskLimits, in domain.Instrument, el domain.Eligibility, pf domain.Portfolio, sizing domain.Cents, it *InstrumentTrace) string {
+func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskLimits, cfg strategy.Config, in domain.Instrument, el domain.Eligibility, pf domain.Portfolio, sizing domain.Cents, it *InstrumentTrace) string {
 	bctx := ports.WithAccount(ctx, a)
 	now := s.d.Clock.Now()
 	// (1) The instrument's own market is in session, and not too close to its end.
@@ -315,7 +329,7 @@ func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskL
 	}
 	it.pass(StepCandles, fmt.Sprintf("%d closed bars", len(bars)))
 	// (3) The strategy, sized by min(budget, equity); shorts only when allowed.
-	c, ok := s.signal(in, bars, sizing, l, it)
+	c, ok := s.signal(in, bars, sizing, l, cfg, it)
 	if !ok {
 		return ""
 	}
@@ -548,8 +562,8 @@ func (s *Service) reservations(ctx context.Context, accountID string, pf domain.
 }
 
 // signal runs step (3): the strategy's candidate, checked for shape.
-func (s *Service) signal(in domain.Instrument, bars []domain.Candle, sizing domain.Cents, l domain.RiskLimits, it *InstrumentTrace) (domain.Candidate, bool) {
-	d := s.evaluate(in.ID, bars, sizing, l.MaxShort > 0)
+func (s *Service) signal(in domain.Instrument, bars []domain.Candle, sizing domain.Cents, l domain.RiskLimits, cfg strategy.Config, it *InstrumentTrace) (domain.Candidate, bool) {
+	d := s.evaluate(in.ID, bars, sizing, cfg)
 	if d.Candidate == nil {
 		return domain.Candidate{}, it.fail(StepSignal, "no signal: %s", d.Reason)
 	}

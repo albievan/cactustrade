@@ -140,7 +140,25 @@ type propScenario struct {
 	stats       propStats
 	// orderViolations are open orders stored before their pending decision (PLAN 5.5).
 	orderViolations []string
+	// style, when set, plays the scenario with a risk preset, an aggressiveness and an
+	// autonomy level (R28) instead of random limits.
+	style *propStyle
 }
+
+// propStyle is a scenario's risk preset, aggressiveness and autonomy (R28).
+type propStyle struct {
+	preset   domain.RiskPreset
+	aggr     domain.Aggressiveness
+	autonomy domain.Autonomy
+	// cfgs counts the strategy configurations the agent asked for, by entry probability.
+	cfgs map[float64]int
+	// ae is the scenario's environment, for checks after the run.
+	ae *agentEnv
+}
+
+// propScannerShare is the share the styled scenarios mark as added by the scanner: at low
+// autonomy it is never traded.
+const propScannerShare = domain.InstrumentID(105)
 
 func (s *propScenario) fail(format string, args ...any) {
 	s.t.Helper()
@@ -149,10 +167,17 @@ func (s *propScenario) fail(format string, args ...any) {
 
 func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 	t.Helper()
+	return runPropScenarioStyled(t, seed, ticks, nil)
+}
+
+// runPropScenarioStyled is runPropScenario with a style (nil = random limits, the defaults).
+func runPropScenarioStyled(t *testing.T, seed uint64, ticks int, style *propStyle) propStats {
+	t.Helper()
 	ae := newAgentEnv(t, instNYSE, instLSE, instASX)
 	s := &propScenario{
 		t: t, seed: seed, r: rand.New(rand.NewPCG(seed, seed*7919+17)), ae: ae,
 		price: map[domain.InstrumentID]domain.Micros{}, cands: map[domain.InstrumentID]*domain.Candidate{}, sent: map[string][]error{},
+		style: style,
 	}
 	for _, in := range propInstruments[3:] {
 		m, _ := domain.MarketForSymbol(in.sym)
@@ -160,7 +185,11 @@ func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 		if err := ae.store.Instruments().Upsert(ae.ctx, inst, domain.Eligibility{Instrument: in.id}, ae.clock.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if err := ae.store.Watchlist().Add(ae.ctx, ae.a.ID, in.id, "test", ae.clock.Now()); err != nil {
+		by := "test"
+		if style != nil && in.id == propScannerShare {
+			by = domain.WatchAddedByScanner
+		}
+		if err := ae.store.Watchlist().Add(ae.ctx, ae.a.ID, in.id, by, ae.clock.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -187,6 +216,13 @@ func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 			return strategy.Decision{Candidate: &cp}
 		}
 		return strategy.Decision{Reason: "no signal (scenario)"}
+	}
+	if style != nil {
+		style.cfgs, style.ae = map[float64]int{}, ae
+		ae.svc.evalConfigOverride = func(id domain.InstrumentID, bs []domain.Candle, cfg strategy.Config) strategy.Decision {
+			style.cfgs[cfg.EntryProb]++
+			return ae.svc.evalOverride(id, bs)
+		}
 	}
 	// The account: cash, perhaps a position the owner opened (OD1: never touched), limits.
 	if _, err := ae.svc.StopAgent(ae.ctx, ae.admin, ae.a.ID); err != nil {
@@ -228,6 +264,11 @@ func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 		ae.b.RefLookupNotFound, s.refNotFound = true, true
 	}
 	s.setLimits()
+	if style != nil {
+		if _, err := ae.svc.SetAgentStyle(ae.ctx, ae.admin, style.aggr, style.autonomy); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := ae.svc.StartAgent(ae.ctx, ae.admin, ae.a.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -260,6 +301,16 @@ func (s *propScenario) setLimits() {
 	eq := pf.Equity()
 	l := domain.DefaultRiskLimits
 	l.TradingBudget = min(eq, domain.Cents(1_000_00+s.r.Int64N(int64(max(eq, 2_000_00)))))
+	if s.style != nil {
+		// A preset keeps the budget and sets every other limit (R28).
+		if l, err = domain.ApplyPreset(l, s.style.preset, domain.ModeDemo); err != nil {
+			s.fail("preset %s: %v", s.style.preset, err)
+		}
+		if _, err := s.ae.svc.SetRiskLimits(s.ae.ctx, s.ae.admin, l); err != nil {
+			s.fail("limits %+v: %v", l, err)
+		}
+		return
+	}
 	l.DailyLoss = domain.BasisPoints(50 + s.r.IntN(450))
 	l.Drawdown = domain.BasisPoints(300 + s.r.IntN(1_200))
 	l.MaxPosition = []domain.BasisPoints{0, 500, 1_000, 2_000, 5_000}[s.r.IntN(5)]
@@ -537,6 +588,12 @@ func (s *propScenario) propose() {
 			c.TakeProfitRate = mid + sign*mid*domain.Micros(100+s.r.IntN(900))/10_000
 		}
 		c.SuggestedSize = 1 + domain.Cents(s.r.Int64N(int64(max(budget, 1))))
+		if s.style != nil {
+			// A bolder level proposes larger entries (up to twice the budget at full): the
+			// risk engine must still keep every entry inside the limits.
+			c.SuggestedSize = c.SuggestedSize * domain.Cents(s.style.aggr.Params().MaxPosition) / 2_000
+			c.SuggestedSize = max(c.SuggestedSize, 1)
+		}
 		s.cands[id] = c
 	}
 }

@@ -242,6 +242,18 @@ to be transferred from the account balance into the position margin." cactusTrad
   (fail closed). 429 and 5xx are retried (reads only) with `Retry-After` / jittered backoff;
   a 429 also pauses that quota group in the client-side limiter.
 
+## Settling Q1, U6 and the fixtures from real answers (console, 2026-11-24)
+
+`cactustrade etoro-probe --account ID --symbol SYM [--raw] [--record DIR]` asks, read only and
+with a demo account's own keys, search, instrument metadata, rates, the last 3 one-minute and
+one-day candles, eligibility and the costs of a $100 long (and short, when offered), and prints
+the bid/ask numbers exactly as sent and every `leverageConfigs` entry (incl. `isPotential`).
+The spec's instrument schema has **no currency field**; the probe lists any field whose name
+mentions "currency" if eToro sends one. `--raw`/`--record` output is sanitised (account ids,
+gcid, cid, user names, tokens). The client passes each read answer to
+`Config.RecordAnswer`; account changes never reach it. Nothing in this file changes until the
+owner's run records the answers (PLAN 2.7, "Console tooling for 2.7 and 3.6").
+
 ## Rate limits
 
 Rolling 60-second window per user key. `429` with `errorCode: TooManyRequests` and

@@ -73,7 +73,7 @@ function LiveDashboard({ account }: { account: Account }) {
       </div>
       <LivePositions snapshot={s} />
       <div className="row g-3 mb-4">
-        <div className="col-xl-6"><RegimeList regimes={s?.regimes ?? []} /></div>
+        <div className="col-xl-6"><RegimeList regimes={s?.regimes ?? []} legend={s?.regimeLegend ?? []} /></div>
         <div className="col-xl-6">
           <InfoCard id="dashboard-live" title="How the live view works">
             <ul className="small mb-0">

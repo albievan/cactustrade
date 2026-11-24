@@ -6,16 +6,21 @@ const OUTCOME: Record<Review["outcome"], { label: string; cls: string }> = {
   added: { label: "added to watchlist", cls: "text-bg-success" },
   candidate: { label: "signal (on watchlist)", cls: "text-bg-primary" },
   skipped: { label: "signal, not added", cls: "text-bg-warning" },
+  proposed: { label: "proposed for the watchlist", cls: "text-bg-info" },
   no_signal: { label: "no signal", cls: "text-bg-secondary" },
   error: { label: "no data", cls: "text-bg-danger" },
 };
 
 // "Under review": every stock the scanner looked at for this account, when, the market
-// regime, and each rule it was checked against with the result.
+// regime, and each rule it was checked against with the result. At low autonomy (R28) the
+// scanner only proposes shares: the owner accepts one by adding it here (the server says
+// whether the caller may, canAccept).
 export function ReviewBoard() {
   const [board, setBoard] = useState<Board | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [accepted, setAccepted] = useState<number[]>([]);
+  const [acceptError, setAcceptError] = useState("");
   const load = useCallback(() => {
     api.reviews(100).then(setBoard).catch((e) => setError(errorText(e)));
   }, []);
@@ -24,6 +29,15 @@ export function ReviewBoard() {
     const t = window.setInterval(load, 60_000);
     return () => window.clearInterval(t);
   }, [load]);
+  async function accept(id: number) {
+    setAcceptError("");
+    try {
+      await api.addToWatchlist(id);
+      setAccepted((a) => [...a, id]);
+    } catch (e) {
+      setAcceptError(errorText(e));
+    }
+  }
   return (
     <div className="card mb-4">
       <div className="card-body">
@@ -33,6 +47,7 @@ export function ReviewBoard() {
           <Link className="btn btn-sm btn-outline-secondary" to="/themes">Themes</Link>
         </div>
         {error && <p className="text-secondary mb-0">{error}</p>}
+        {acceptError && <div className="alert alert-warning py-2 small" role="alert">{acceptError}</div>}
         {board && board.reviews.length === 0 && (
           <p className="text-secondary mb-0">Nothing reviewed yet. Add a theme (e.g. Space, Semiconductors) under <Link to="/themes">Themes</Link>; the scanner runs every 15 minutes while a market is open, or press "Scan now" there.</p>
         )}
@@ -55,7 +70,17 @@ export function ReviewBoard() {
                             <div className="t" style={{ width: pct(p.trending) }} /><div className="c" style={{ width: pct(p.choppy) }} /><div className="h" style={{ width: pct(p.high_volatility) }} />
                           </div>
                         </td>
-                        <td><span className={"badge " + OUTCOME[r.outcome].cls}>{OUTCOME[r.outcome].label}</span></td>
+                        <td>
+                          <span className={"badge " + OUTCOME[r.outcome].cls}>{OUTCOME[r.outcome].label}</span>
+                          {r.outcome === "proposed" && board.canAccept && !accepted.includes(r.instrumentId) && (
+                            <button type="button" className="btn btn-sm btn-outline-success ms-1 py-0" title={`Add ${r.symbol} to the watchlist`}
+                              aria-label={`Add ${r.symbol} to the watchlist`}
+                              onClick={(e) => { e.stopPropagation(); void accept(r.instrumentId); }}>
+                              <i className="bi bi-plus-lg" aria-hidden="true" />
+                            </button>
+                          )}
+                          {accepted.includes(r.instrumentId) && <span className="badge text-bg-success ms-1">added</span>}
+                        </td>
                         <td className="small">
                           {r.checks.map((c, i) => (
                             <i key={i} className={"bi me-1 " + (c.pass ? "bi-check-circle-fill rule-pass" : "bi-x-circle rule-fail")} title={c.rule + (c.detail ? ": " + c.detail : "")} />

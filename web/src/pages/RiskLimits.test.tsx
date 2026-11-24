@@ -187,3 +187,41 @@ describe("RiskLimits", () => {
     }
   });
 });
+
+describe("RiskLimits presets and style (R28)", () => {
+  it("applies a preset, fills the form from the server and shows Custom once a field is edited", async () => {
+    const low = { ...limits, dailyLossBp: 50, drawdownBp: 300, maxPositionBp: 500, maxOpenPositions: 3, maxShortBp: 0 };
+    const preset = (id: string, label: string) => ({ id, label, summary: label + " in words", dailyLossBp: 50, drawdownBp: 300, maxPositionBp: 500, maxOpenPositions: 3, maxShortBp: 0 });
+    const puts: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+      if (url.endsWith("/api/v1/auth/me")) return json(me);
+      if (url.endsWith("/api/v1/system/status")) return json({ version: "0.1.0", build: "1", mode: "demo", agentState: "stopped", database: "sqlite", startedAt: "", now: "", account });
+      if (url.endsWith("/api/v1/risk/limits") && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body));
+        puts.push(body);
+        return json(body.preset ? { ...low, canEdit: true, preset: "low" } : { ...body, canEdit: true, preset: "custom" });
+      }
+      if (url.endsWith("/api/v1/risk/limits")) return json({ ...limits, canEdit: true, preset: "custom" });
+      if (url.endsWith("/api/v1/risk/presets")) return json({ current: "custom", clamped: false, presets: [preset("low", "Low"), preset("high", "High")] });
+      if (url.endsWith("/api/v1/agents")) return json([]);
+      return new Response("{}", { status: 404 });
+    });
+    render(<SessionProvider><ModeProvider><RiskLimits /></ModeProvider></SessionProvider>);
+    const lowBtn = await screen.findByRole("button", { name: /^Low preset/ });
+    expect(screen.getByRole("button", { name: /^Custom/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(lowBtn);
+    await waitFor(() => expect(screen.getByLabelText("Daily loss limit")).toHaveValue(50));
+    expect(puts).toEqual([{ preset: "low" }]);
+    expect(screen.getByLabelText("Trading budget")).toHaveValue(5000);
+    expect(screen.getByRole("button", { name: /^Low preset/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(screen.getByLabelText("Daily loss limit"), { target: { value: "70" } });
+    expect(screen.getByRole("button", { name: /^Custom/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Save limits" }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]).toEqual({ ...low, dailyLossBp: 70 }); // the limits only, never canEdit or preset
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Custom/ })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("button", { name: /^Low preset/ })).toHaveAttribute("aria-pressed", "false");
+  });
+});

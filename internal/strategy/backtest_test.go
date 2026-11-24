@@ -171,3 +171,25 @@ func TestBacktestShorts(t *testing.T) {
 		t.Errorf("short costs: %d vs %d (paid %d)", costly.EndEquity, rep.EndEquity, costly.CostsPaid)
 	}
 }
+
+// TestReportVerdict: the verdict classes, in order, and the report words each one.
+func TestReportVerdict(t *testing.T) {
+	one := []Trade{{}}
+	for _, c := range []struct {
+		r    Report
+		want Verdict
+		text string
+	}{
+		{Report{}, VerdictNoTrades, "no trades"},
+		{Report{Trades: one, NetReturn: -0.01, BuyAndHold: -0.05}, VerdictLostMoney, "LOST money"},
+		{Report{Trades: one, NetReturn: 0.01, BuyAndHold: 0.02}, VerdictWorseThanHolding, "worse than simply holding"},
+		{Report{Trades: one, NetReturn: 0.02, BuyAndHold: 0.02}, VerdictPositiveOnThisData, "does not predict future results"},
+	} {
+		if got := c.r.Verdict(); got != c.want {
+			t.Errorf("%+v: verdict %s, want %s", c.r, got, c.want)
+		}
+		if !strings.Contains(c.r.String(), c.text) {
+			t.Errorf("%s: report lacks %q", c.want, c.text)
+		}
+	}
+}

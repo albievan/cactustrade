@@ -1037,8 +1037,38 @@ export interface paths {
          *     UI only shows these.
          */
         get: operations["getRiskLimits"];
-        /** Change the risk limits (admin, web UI, only while the agent is stopped) */
+        /**
+         * Change the risk limits (owner, web UI, only while the agent is stopped)
+         * @description Either `{preset}` alone (R28: the preset's limits; the trading budget is kept, the
+         *     windows before the close are never shortened, and on a real-money account every
+         *     value is capped at the real ceilings) or every limit (a custom set). The same rules
+         *     apply to both: the account's owner, a web session, the agent stopped, no kill switch,
+         *     the budget at most the equity; raising any limit of an armed real-money account
+         *     disarms it. The answer names the preset the stored limits match, or `custom`.
+         */
         put: operations["setRiskLimits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/risk/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The risk presets for the current account (viewer)
+         * @description Each preset's limits in plain words, as the current account would get them (capped at
+         *     the real ceilings on a real-money account, `clamped`), and the preset its limits match
+         *     now (`current`, or `custom`).
+         */
+        get: operations["getRiskPresets"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1062,6 +1092,35 @@ export interface paths {
          */
         get: operations["getAgent"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/style": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The current account's aggressiveness and autonomy (viewer)
+         * @description The aggressiveness the owner chose and the one the strategy uses now (full autonomy
+         *     lowers it one step after a day that reached the daily loss limit), the autonomy level
+         *     and what it lets the platform do, each level explained in plain words, and whether the
+         *     caller may change them now (the rules of the risk limits).
+         */
+        get: operations["getAgentStyle"];
+        /**
+         * Change the aggressiveness and/or autonomy (owner, web UI, only while the agent is stopped)
+         * @description Neither changes a risk limit: the aggressiveness tunes the strategy inside the limits
+         *     (the risk engine still sizes and refuses every entry) and autonomy decides what the
+         *     scanner, the research and the start at the market open may do. Audited, with an event.
+         */
+        put: operations["setAgentStyle"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2184,6 +2243,80 @@ export interface components {
             canEdit: boolean;
             /** @description why not, for people (absent when canEdit) */
             editBlockedReason?: string;
+            preset: components["schemas"]["RiskPresetMatch"];
+        };
+        /** @enum {string} */
+        RiskPresetId: "low" | "low_medium" | "medium" | "medium_high" | "high";
+        /**
+         * @description the preset the limits match, or custom
+         * @enum {string}
+         */
+        RiskPresetMatch: "low" | "low_medium" | "medium" | "medium_high" | "high" | "custom";
+        /** @description A change of limits: `preset` alone, or every limit of RiskLimits (a custom set). */
+        RiskLimitsChange: {
+            preset?: components["schemas"]["RiskPresetId"];
+            tradingBudgetCents?: components["schemas"]["Cents"];
+            dailyLossBp?: number;
+            drawdownBp?: number;
+            maxPositionBp?: number;
+            maxOpenPositions?: number;
+            noEntryBeforeCloseMinutes?: number;
+            flattenBeforeCloseMinutes?: number;
+            maxPortfolioAgeSeconds?: number;
+            maxQuoteAgeSeconds?: number;
+            maxShortBp?: number;
+        };
+        RiskPreset: {
+            id: components["schemas"]["RiskPresetId"];
+            /** @description the preset's name for people */
+            label: string;
+            /** @description its limits in plain words */
+            summary: string;
+            dailyLossBp: number;
+            drawdownBp: number;
+            maxPositionBp: number;
+            maxOpenPositions: number;
+            maxShortBp: number;
+        };
+        RiskPresetList: {
+            presets: components["schemas"]["RiskPreset"][];
+            current: components["schemas"]["RiskPresetMatch"];
+            /** @description a real-money account: every preset is capped at the real ceilings */
+            clamped: boolean;
+        };
+        /** @enum {string} */
+        StyleLevel: "low" | "medium" | "high" | "full";
+        StyleLevelText: {
+            id: components["schemas"]["StyleLevel"];
+            label: string;
+            /** @description what the level does, in plain words */
+            summary: string;
+        };
+        /** @description what the autonomy level lets the platform do by itself */
+        AutonomyPolicy: {
+            /** @enum {string} */
+            researchMode: "off" | "propose" | "auto_add";
+            scanEveryMinutes: number;
+            ownerSharesOnly: boolean;
+            autoAssignThemes: boolean;
+            pruneStale: boolean;
+            /** @description never on a real-money account (OD26) */
+            autoStart: boolean;
+            adaptAggressiveness: boolean;
+        };
+        AgentStyle: {
+            aggressiveness: components["schemas"]["StyleLevel"];
+            effectiveAggressiveness: components["schemas"]["StyleLevel"];
+            autonomy: components["schemas"]["StyleLevel"];
+            policy: components["schemas"]["AutonomyPolicy"];
+            aggressivenessLevels: components["schemas"]["StyleLevelText"][];
+            autonomyLevels: components["schemas"]["StyleLevelText"][];
+            canEdit: boolean;
+            editBlockedReason?: string;
+        };
+        AgentStyleChange: {
+            aggressiveness?: components["schemas"]["StyleLevel"];
+            autonomy?: components["schemas"]["StyleLevel"];
         };
         LlmProvider: {
             id: string;
@@ -2480,7 +2613,7 @@ export interface components {
             /** Format: date-time */
             at: string;
             /** @enum {string} */
-            outcome: "no_signal" | "candidate" | "added" | "skipped" | "error";
+            outcome: "no_signal" | "candidate" | "added" | "skipped" | "proposed" | "error";
             /** @enum {string} */
             direction?: "long" | "short";
             probs?: {
@@ -2491,6 +2624,8 @@ export interface components {
         };
         ReviewBoard: {
             scannerEnabled: boolean;
+            /** @description the caller may add proposed shares to the watchlist (trade access) */
+            canAccept?: boolean;
             reviews: components["schemas"]["Review"][];
         };
         ScannerSwitch: {
@@ -3099,6 +3234,21 @@ export interface components {
             };
             /** Format: date-time */
             at?: string;
+            mood?: components["schemas"]["RegimeText"];
+            /**
+             * @description which playbooks may act at the account's current thresholds
+             * @enum {string}
+             */
+            stance?: "stay_out" | "trend" | "reversion" | "both" | "wait" | "unknown";
+            /** @description what the agent may do, in plain words */
+            mayDo?: string;
+        };
+        /** @description A market mood (regime) for people */
+        RegimeText: {
+            regime: string;
+            label: string;
+            description: string;
+            agentMayDo: string;
         };
         /** @description An account's live view (the `snapshot` message of GET /api/v1/live) */
         LiveSnapshot: {
@@ -3121,6 +3271,8 @@ export interface components {
             /** @description the latest 20 orders, newest first */
             recentOrders: components["schemas"]["Order"][];
             regimes: components["schemas"]["LiveRegime"][];
+            /** @description the market moods explained (R28) */
+            regimeLegend?: components["schemas"]["RegimeText"][];
             state: components["schemas"]["AgentState"];
             reconciliation: components["schemas"]["Reconciliation"];
             killed: boolean;
@@ -4761,7 +4913,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RiskLimits"];
+                "application/json": components["schemas"]["RiskLimitsChange"];
             };
         };
         responses: {
@@ -4771,7 +4923,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RiskLimits"];
+                    "application/json": components["schemas"]["RiskLimitsView"];
                 };
             };
             400: components["responses"]["Problem"];
@@ -4779,6 +4931,28 @@ export interface operations {
             403: components["responses"]["Problem"];
             409: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
+        };
+    };
+    getRiskPresets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Presets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RiskPresetList"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
         };
     };
     getAgent: {
@@ -4805,6 +4979,57 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    getAgentStyle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Style */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentStyle"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    setAgentStyle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentStyleChange"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentStyle"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
         };
     };
     listAgents: {

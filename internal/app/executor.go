@@ -77,6 +77,9 @@ type runtimeState struct {
 	// stuck order raises its warning once, not on every supervisor pass (live findings
 	// 2026-11-24).
 	warned map[string]bool
+	// lastScan is when each account was last scanned in the background (R28: the interval
+	// follows the account's autonomy).
+	lastScan map[string]time.Time
 }
 
 // agentLocks are one account's agent locks. Lock order: ctl before entry, never the other
@@ -94,7 +97,7 @@ func newRuntimeState() *runtimeState {
 	return &runtimeState{
 		reconciled: map[string]Reconciliation{}, supervising: map[string]bool{},
 		agents: map[string]*agentLocks{}, entryCancel: map[string]context.CancelFunc{}, ticking: map[string]bool{},
-		killed: map[string]bool{}, views: newViewCache(), warned: map[string]bool{},
+		killed: map[string]bool{}, views: newViewCache(), warned: map[string]bool{}, lastScan: map[string]time.Time{},
 	}
 }
 

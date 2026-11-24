@@ -34,6 +34,11 @@ var modeSites = map[string][]string{
 		`if m != ModeReal {`,        // ValidateFor (OD25)
 	},
 	"internal/domain/history.go": {`case t.Mode != ModeDemo && t.Mode != ModeReal:`}, // validation
+	// R28: presets are capped at the real ceilings on a real account; only demo starts itself.
+	"internal/domain/style.go": {
+		`if m == ModeReal {`, // PresetFor: RealCeilings (OD25)
+		`p.AutoStart, p.AdaptAggressiveness = m == ModeDemo, true`, // Policy: full autonomy never starts a real agent (OD26)
+	},
 	"internal/domain/realgate.go": {
 		`if o.Kind != OrderOpen || o.Mode != ModeDemo || o.Sends < 1 || (o.State != OrderFilled && o.State != OrderPartial) {`, // evidence: demo opens only
 		`c(CheckRealAccount, in.Real.Tradable() && in.Real.Mode == ModeReal, "an eToro real-money account", "not an eToro real-money account"),`,
@@ -76,6 +81,17 @@ var modeSites = map[string][]string{
 		`return domain.DefaultLimitsFor(accountMode(a))`,                // real accounts default to the real limits (OD25)
 		`if err := l.ValidateFor(accountMode(v.Account)); err != nil {`, // real limits checked against the real ceilings (OD25)
 	},
+	// R28: the style follows the account's mode only to narrow (presets capped, no real auto-start).
+	"internal/app/style.go": {
+		`return s.autonomyOf(ctx, a.ID).Policy(accountMode(a))`, // policyOf: real accounts never start themselves
+		`m := accountMode(v.Account)`,                           // RiskPresets: capped presets (a read)
+		`out := RiskPresetList{Current: domain.MatchPreset(s.riskLimitsFor(ctx, v.Account), m), Clamped: m == domain.ModeReal}`,
+		`next, err := domain.ApplyPreset(s.riskLimitsFor(ctx, v.Account), preset, accountMode(v.Account))`, // capped, then SetRiskLimits' rules
+		`return domain.MatchPreset(l, accountMode(a))`,                                                     // presetOf: the matching preset (a read)
+	},
+	"internal/app/autonomy.go": {
+		`if !a.Tradable() || a.Mode != domain.ModeDemo || !s.policyOf(ctx, a).AutoStart {`, // autoStartAll: demo only (OD26)
+	},
 	"internal/app/market.go":    {`mode := accountMode(v.Account)`}, // TestConnection: reports the mode (a read)
 	"internal/ports/account.go": {`if a.Mode != "" {`},              // log attributes name the mode (PLAN 7.2)
 	// The gate machinery (7.13): only ever narrows (a gate exists for real accounts only).
@@ -87,9 +103,10 @@ var modeSites = map[string][]string{
 		`if !isRealAccount(a) {`,         // disarmIfArmedQuietly: nothing to disarm
 		`if !isRealAccount(a) {`,         // sweepRealGates: nothing to sweep
 	},
-	// cmd: the environment account is demo; the backtester refuses a real account.
+	// cmd: the environment account is demo; the research commands (backtest, etoro-probe)
+	// read only with a demo account's keys and refuse any other before a request.
 	"cmd/cactustrade/main.go":     {`case x.Mode != domain.ModeReal:`},
-	"cmd/cactustrade/backtest.go": {`if !ok || acct.Mode == domain.ModeReal {`},
+	"cmd/cactustrade/research.go": {`if !ok || a.Mode != domain.ModeDemo {`, `case a.Mode != domain.ModeDemo:`},
 }
 
 // modeRef matches a line that decides on a trading mode: the constants, the app's helpers

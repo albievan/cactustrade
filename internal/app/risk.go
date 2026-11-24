@@ -238,6 +238,8 @@ type RiskLimitsView struct {
 	// CanEdit follows SetRiskLimits' rules; EditBlocked says why not ("" when CanEdit).
 	CanEdit     bool
 	EditBlocked string
+	// Preset is the risk preset the limits match, or domain.PresetCustom (R28).
+	Preset domain.RiskPreset
 }
 
 // RiskLimitsView returns the current account's limits (view access) and whether the caller
@@ -251,6 +253,7 @@ func (s *Service) RiskLimitsView(ctx context.Context, p Principal) (RiskLimitsVi
 	}
 	out := RiskLimitsView{Limits: s.riskLimitsFor(ctx, v.Account), EditBlocked: s.limitsEditBlocked(ctx, p, v)}
 	out.CanEdit = out.EditBlocked == ""
+	out.Preset = presetOf(v.Account, out.Limits)
 	return out, nil
 }
 

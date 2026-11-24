@@ -107,6 +107,9 @@ type Service struct {
 	oauth     *oauthStates
 	// evalOverride replaces the strategy in scanner tests.
 	evalOverride func(domain.InstrumentID, []domain.Candle) strategy.Decision
+	// evalConfigOverride replaces the strategy in tests that look at the account's strategy
+	// configuration (R28); it wins over evalOverride.
+	evalConfigOverride func(domain.InstrumentID, []domain.Candle, strategy.Config) strategy.Decision
 	// rt is the in-memory execution state: reconciliation flags, supervisor bookkeeping.
 	rt *runtimeState
 	// loop is whether this process's agent loop runs (PLAN 6.13; loopStarting until

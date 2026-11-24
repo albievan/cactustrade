@@ -493,10 +493,23 @@ func toLiveSnapshot(v app.LiveSnapshot) LiveSnapshot {
 				probs[string(k)] = p
 			}
 			x.Regime, x.Probabilities, x.At = ptr(string(rg.Regime)), &probs, ptr(rg.At)
+			x.Mood = ptr(toRegimeText(rg.Mood))
+		}
+		if rg.Stance != "" {
+			x.Stance, x.MayDo = ptr(LiveRegimeStance(rg.Stance)), ptr(rg.MayDo)
 		}
 		out.Regimes = append(out.Regimes, x)
 	}
+	legend := make([]RegimeText, 0, len(v.RegimeLegend))
+	for _, t := range v.RegimeLegend {
+		legend = append(legend, toRegimeText(t))
+	}
+	out.RegimeLegend = &legend
 	return out
+}
+
+func toRegimeText(t domain.RegimeText) RegimeText {
+	return RegimeText{Regime: string(t.Regime), Label: t.Label, Description: t.Description, AgentMayDo: t.AgentMayDo}
 }
 
 func toLiveTick(t app.TickSummary) LiveTick {
