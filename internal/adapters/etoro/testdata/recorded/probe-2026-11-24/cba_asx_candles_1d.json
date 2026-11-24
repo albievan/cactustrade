@@ -1,0 +1,42 @@
+{
+  "candles": [
+    {
+      "candles": [
+        {
+          "close": 168.73,
+          "fromDate": "2026-11-24T00:00:00Z",
+          "high": 169.19,
+          "instrumentID": 7003,
+          "low": 165.19,
+          "open": 166.81,
+          "volume": 131501.0
+        },
+        {
+          "close": 166.97,
+          "fromDate": "2026-11-23T00:00:00Z",
+          "high": 169.5,
+          "instrumentID": 7003,
+          "low": 165.27,
+          "open": 169.06,
+          "volume": 186111.0
+        },
+        {
+          "close": 170.6,
+          "fromDate": "2026-11-20T00:00:00Z",
+          "high": 172.11,
+          "instrumentID": 7003,
+          "low": 168.62,
+          "open": 168.62,
+          "volume": 198982.0
+        }
+      ],
+      "instrumentId": 7003,
+      "rangeClose": 170.6,
+      "rangeHigh": 172.11,
+      "rangeLow": 165.19,
+      "rangeOpen": 166.81,
+      "volume": 516594.0
+    }
+  ],
+  "interval": "OneDay"
+}

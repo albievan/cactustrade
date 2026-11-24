@@ -1,0 +1,27 @@
+{
+  "costs": [
+    {
+      "costType": "transactionFee",
+      "currency": "USD",
+      "value": 0.15
+    },
+    {
+      "costType": "markup",
+      "currency": "USD",
+      "value": 0.0
+    },
+    {
+      "costType": "marketSpread",
+      "currency": "USD",
+      "value": 0.02
+    },
+    {
+      "costType": "overnightFee",
+      "currency": "GBX",
+      "value": 0.0
+    }
+  ],
+  "instrumentId": 2013,
+  "lastUpdated": "2026-11-24T16:29:00.1211098Z",
+  "symbol": "BARC.L"
+}

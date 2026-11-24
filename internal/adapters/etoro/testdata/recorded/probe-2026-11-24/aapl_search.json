@@ -1,0 +1,48 @@
+{
+  "results": [
+    {
+      "displayName": "Apple",
+      "exchangeId": 4,
+      "image": {
+        "backgroundColor": "#494D5A",
+        "uri": "https://etoro-cdn.etorostatic.com/market-avatars/1001/1001_494D5A_F7F7F7.svg"
+      },
+      "instrumentId": 1001,
+      "symbol": "AAPL",
+      "type": "Stocks"
+    },
+    {
+      "displayName": "Apple Hospitality REIT Inc",
+      "exchangeId": 5,
+      "image": {
+        "backgroundColor": "#F7F7F7",
+        "uri": "https://etoro-cdn.etorostatic.com/market-avatars/6597/6597_F7F7F7_2C2C2C.svg"
+      },
+      "instrumentId": 6597,
+      "symbol": "APLE",
+      "type": "Stocks"
+    },
+    {
+      "displayName": "Apple",
+      "exchangeId": 6,
+      "image": {
+        "backgroundColor": "#F7F7F7",
+        "uri": "https://etoro-cdn.etorostatic.com/market-avatars/14254/14254_F7F7F7_2C2C2C.svg"
+      },
+      "instrumentId": 14254,
+      "symbol": "AAPL.EUR",
+      "type": "Stocks"
+    },
+    {
+      "displayName": "Apple 24/7",
+      "exchangeId": 5,
+      "image": {
+        "backgroundColor": "#1D1D1F",
+        "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15569/15569_1D1D1F_F7F7F7.svg"
+      },
+      "instrumentId": 15569,
+      "symbol": "AAPL.24-7",
+      "type": "Stocks"
+    }
+  ]
+}

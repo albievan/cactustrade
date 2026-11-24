@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "displayName": "Barclays",
+      "exchangeId": 7,
+      "image": {
+        "backgroundColor": "#00B0EC",
+        "uri": "https://etoro-cdn.etorostatic.com/market-avatars/2013/2013_00B0EC_F7F7F7.svg"
+      },
+      "instrumentId": 2013,
+      "symbol": "BARC.L",
+      "type": "Stocks"
+    }
+  ]
+}

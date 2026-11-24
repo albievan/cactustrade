@@ -1,0 +1,20 @@
+{
+  "pagination": {
+    "hasNext": false,
+    "nextPageToken": "redacted",
+    "pageSize": 100
+  },
+  "results": [
+    {
+      "displayName": "Apple",
+      "exchangeId": 4,
+      "image": {
+        "backgroundColor": "#494D5A",
+        "uri": "https://etoro-cdn.etorostatic.com/market-avatars/1001/1001_494D5A_F7F7F7.svg"
+      },
+      "instrumentId": 1001,
+      "symbol": "AAPL",
+      "type": "Stocks"
+    }
+  ]
+}

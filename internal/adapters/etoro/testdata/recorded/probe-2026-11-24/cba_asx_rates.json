@@ -1,0 +1,11 @@
+{
+  "results": [
+    {
+      "ask": 168.77,
+      "bid": 168.73,
+      "date": "2026-11-24T05:00:00.64",
+      "instrumentId": 7003,
+      "quoteType": "realtime"
+    }
+  ]
+}

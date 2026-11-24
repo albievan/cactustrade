@@ -1,0 +1,22 @@
+{
+  "costs": [
+    {
+      "costType": "markup",
+      "currency": "USD",
+      "value": 0.0
+    },
+    {
+      "costType": "marketSpread",
+      "currency": "USD",
+      "value": 0.07
+    },
+    {
+      "costType": "overnightFee",
+      "currency": "USD",
+      "value": 0.0
+    }
+  ],
+  "instrumentId": 1001,
+  "lastUpdated": "2026-11-24T22:07:07.213311Z",
+  "symbol": "AAPL"
+}

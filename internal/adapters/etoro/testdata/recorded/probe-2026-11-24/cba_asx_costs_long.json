@@ -1,0 +1,22 @@
+{
+  "costs": [
+    {
+      "costType": "markup",
+      "currency": "USD",
+      "value": 0.0
+    },
+    {
+      "costType": "marketSpread",
+      "currency": "USD",
+      "value": 0.05
+    },
+    {
+      "costType": "overnightFee",
+      "currency": "AUD",
+      "value": 0.0
+    }
+  ],
+  "instrumentId": 7003,
+  "lastUpdated": "2026-11-24T05:00:00.641679Z",
+  "symbol": "CBA.ASX"
+}

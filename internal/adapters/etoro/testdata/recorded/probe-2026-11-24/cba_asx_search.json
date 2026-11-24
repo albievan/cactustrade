@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "displayName": "Commonwealth Bank of Australia ",
+      "exchangeId": 31,
+      "image": {
+        "uri": "https://etoro-cdn.etorostatic.com/market-avatars/7003/150x150.png"
+      },
+      "instrumentId": 7003,
+      "symbol": "CBA.ASX",
+      "type": "Stocks"
+    }
+  ]
+}

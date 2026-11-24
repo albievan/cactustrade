@@ -45,8 +45,29 @@ type rateWire struct {
 	InstrumentID int64      `json:"instrumentId"`
 	Bid          *float64   `json:"bid"`
 	Ask          *float64   `json:"ask"`
-	Date         *time.Time `json:"date"`
+	Date         *etoroTime `json:"date"`
 	QuoteType    string     `json:"quoteType"`
+}
+
+// etoroTime reads eToro's timestamps: RFC 3339, or (verified live 2026-11-24 on the rates
+// endpoint) the same without a zone, e.g. "2026-11-24T22:05:09.84", which eToro means as UTC.
+type etoroTime struct{ time.Time }
+
+func (t *etoroTime) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+	if v, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		t.Time = v
+		return nil
+	}
+	v, err := time.ParseInLocation("2006-01-02T15:04:05.999999999", s, time.UTC)
+	if err != nil {
+		return fmt.Errorf("etoro time %q: %w", s, err)
+	}
+	t.Time = v
+	return nil
 }
 
 // Quotes returns the current bid/ask. Instruments eToro has no price for are left out
@@ -54,9 +75,12 @@ type rateWire struct {
 func (c *Client) Quotes(ctx context.Context, ids []domain.InstrumentID) ([]domain.Quote, error) {
 	var out []domain.Quote
 	for chunk := range slices.Chunk(ids, maxRateIDs) {
+		// Live answers (verified 2026-11-24) hold the rate fields flat in each result; an
+		// older documented shape nests them under "rate". Both are read.
 		var resp struct {
 			Results []struct {
-				Rate rateWire `json:"rate"`
+				rateWire
+				Rate *rateWire `json:"rate"`
 			} `json:"results"`
 		}
 		q := url.Values{"instrumentIds": {joinIDs(chunk)}}
@@ -64,7 +88,10 @@ func (c *Client) Quotes(ctx context.Context, ids []domain.InstrumentID) ([]domai
 			return nil, err
 		}
 		for _, r := range resp.Results {
-			w := r.Rate
+			w := r.rateWire
+			if r.Rate != nil {
+				w = *r.Rate
+			}
 			if w.Bid == nil || w.Ask == nil || w.Date == nil || *w.Bid <= 0 || *w.Ask <= 0 {
 				continue
 			}

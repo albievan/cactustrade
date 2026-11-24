@@ -304,3 +304,11 @@ duty) instead of modelling them itself. Open question for phase 2: GBX quote uni
 `/api/v1/user-info/*`, `/api/v1/pi-data/*`, `/api/v2/portfolios/*`, `/api/v1/portfolios/*`,
 `/api/v1/clubs`, `/api/v1/me`, `/api/v1/keydata/*`, `/api/v1/data/*`, the aggregate-portfolio
 endpoints, and the whole Partners API (onboarding, KYC, deposits, withdrawals).
+
+
+## Step 2.7 facts (verified 2026-11-24 with the demo keys)
+
+- LSE prices (rates, candles, stop-loss rates) are in **pence (GBX)**; the costs endpoint lists LSE overnight fees in GBX.
+- `GET rates` answers `{"results":[{"instrumentId","bid","ask","date","quoteType"}]}` (fields flat, not under `rate`); `date` has no zone and is UTC.
+- Eligibility for BARC.L, AAPL, CBA.ASX: `real`/long/[1] and `cfd`/short/[1,2,5,10,20], `isPotential` false, `minPositionAmount` 10.
+- Costs: SDRT on LSE buys; a $0.15 transaction fee on shorts. Recordings: `internal/adapters/etoro/testdata/recorded/probe-2026-11-24/`.

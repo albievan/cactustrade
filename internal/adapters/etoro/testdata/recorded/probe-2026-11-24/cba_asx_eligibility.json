@@ -1,0 +1,88 @@
+{
+  "currency": "usd",
+  "eligibilities": [
+    {
+      "allowClosePosition": true,
+      "allowEntryOrders": true,
+      "allowExitOrders": true,
+      "allowMitOrders": true,
+      "allowOpenPosition": true,
+      "allowPartialClosePosition": true,
+      "allowTrailingStopLoss": true,
+      "allowedOrderQuantityType": "all",
+      "instrumentId": 7003,
+      "leverageConfigs": [
+        {
+          "allowEditStopLoss": true,
+          "allowEditTakeProfit": true,
+          "allowStopLossTakeProfit": true,
+          "defaultStopLossPercentage": 100.0,
+          "defaultTakeProfitPercentage": 1000.0,
+          "direction": "long",
+          "isPotential": false,
+          "leverageValues": [
+            1
+          ],
+          "maxStopLossPercentage": 100.0,
+          "maxTakeProfitPercentage": 1000.0,
+          "minPositionAmount": 10.0,
+          "minStopLossPercentage": 0.0,
+          "minTakeProfitPercentage": 0.0,
+          "settlementType": "real"
+        },
+        {
+          "allowEditStopLoss": true,
+          "allowEditTakeProfit": true,
+          "allowStopLossTakeProfit": true,
+          "defaultStopLossPercentage": 50.0,
+          "defaultTakeProfitPercentage": 1000.0,
+          "direction": "short",
+          "isPotential": false,
+          "leverageValues": [
+            1,
+            2,
+            5,
+            10,
+            20
+          ],
+          "maxStopLossPercentage": 50.0,
+          "maxTakeProfitPercentage": 1000.0,
+          "minPositionAmount": 10.0,
+          "minStopLossPercentage": 0.0,
+          "minTakeProfitPercentage": 0.0,
+          "settlementType": "cfd"
+        },
+        {
+          "allowEditStopLoss": true,
+          "allowEditTakeProfit": true,
+          "allowStopLossTakeProfit": true,
+          "defaultStopLossPercentage": 50.0,
+          "defaultTakeProfitPercentage": 1000.0,
+          "direction": "long",
+          "isPotential": false,
+          "leverageValues": [
+            2,
+            5,
+            10,
+            20
+          ],
+          "maxStopLossPercentage": 50.0,
+          "maxTakeProfitPercentage": 1000.0,
+          "minPositionAmount": 10.0,
+          "minStopLossPercentage": 0.0,
+          "minTakeProfitPercentage": 0.0,
+          "settlementType": "cfd"
+        }
+      ],
+      "maxUnitsPerOrder": 8645.0,
+      "minPositionExposure": 10.0,
+      "orderFillBehaviorType": "bestEffort",
+      "requiresW8Ben": false,
+      "symbol": "CBA.ASX",
+      "tradeUnitType": "units",
+      "unitsQuantityType": "fractional"
+    }
+  ],
+  "notFoundInstrumentIds": [],
+  "notFoundSymbols": []
+}

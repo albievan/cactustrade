@@ -119,3 +119,44 @@ func TestLookupWithRaw(t *testing.T) {
 		t.Fatalf("404: %v", err)
 	}
 }
+
+// TestQuotesRecorded: the live rates answers (2026-11-24, demo keys) put the rate fields flat
+// in each result, with a timestamp that has no zone ("2026-11-24T22:05:09.84", UTC). Before
+// this was read, every REST quote was dropped as unusable (stale: no entries).
+func TestQuotesRecorded(t *testing.T) {
+	for _, tt := range []struct {
+		file     string
+		id       domain.InstrumentID
+		bid, ask domain.Micros
+		at       string
+	}{
+		{"recorded/probe-2026-11-24/aapl_rates.json", 1001, 353_760_000, 354_000_000, "2026-11-24T22:05:09.84Z"},
+		{"recorded/probe-2026-11-24/barc_l_rates.json", 2013, 0, 0, ""},
+		{"recorded/probe-2026-11-24/cba_asx_rates.json", 7003, 0, 0, ""},
+	} {
+		t.Run(tt.file, func(t *testing.T) {
+			e := newEnv(t)
+			body := readFixture(t, tt.file)
+			e.fake.route = func(*http.Request, int) (int, string, http.Header) { return 200, body, nil }
+			qs, err := e.c.Quotes(e.ctx(), []domain.InstrumentID{tt.id})
+			if err != nil || len(qs) != 1 {
+				t.Fatalf("Quotes = %+v %v", qs, err)
+			}
+			q := qs[0]
+			if q.Instrument != tt.id || q.Delayed || q.At.IsZero() || q.Bid <= 0 || q.Ask < q.Bid {
+				t.Fatalf("quote = %+v", q)
+			}
+			if tt.bid != 0 && (q.Bid != tt.bid || q.Ask != tt.ask || q.At.Format("2006-01-02T15:04:05.99Z07:00") != tt.at) {
+				t.Fatalf("quote = %+v, want bid %d ask %d at %s", q, tt.bid, tt.ask, tt.at)
+			}
+		})
+	}
+	// The older documented nested shape is still read.
+	var w struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	_ = json.Unmarshal([]byte(readFixture(t, "rates.json")), &w)
+	if len(w.Results) == 0 || !strings.Contains(string(w.Results[0]), `"rate"`) {
+		t.Fatal("the synthetic nested fixture is gone; keep one test of the nested shape")
+	}
+}
