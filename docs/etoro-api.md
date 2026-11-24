@@ -159,7 +159,7 @@ Each is handled fail-closed today. 4.17 records fixtures and settles them.
 | U3 | No lookup by reference for closes; what a second close of a closed position returns | Closes are read by eToro's order id; a lost close answer is settled by re-reading the portfolio; "position not found" and absent from the portfolio → recorded closed |
 | U4 | LSE stop and rate units (GBX vs GBP, Q1) | No LSE entries (OD9); every fill's stop must be within 1 % of ours (a ×100 mix-up fails) |
 | U5 | Whether the newest candle is still forming | Every bar that has not closed at the decision time is dropped; the newest closed bar must be at most two intervals old |
-| U6 | What `isPotential` means in eligibility | Counted as "not offered" |
+| U6 | What `isPotential` means in eligibility | Counted as "not offered". Observed 2026-11-24: false on every config eToro offered for BARC.L, AAPL and CBA.ASX |
 | U7 | Whether a 429 is answered before the request is processed | An open answered 429 is not sent again; the lookup after `Retry-After` adopts it if eToro processed it anyway, else it is abandoned after 2 min |
 | U8 | Whether a status-11 (waiting for market) order can be cancelled | A cancel is sent at 60 s (after a lookup) and confirmed by lookup. An accepted cancel is never repeated (eToro answers 200 even for a filled order, 2026-11-24); unconfirmed after a minute → one warning. A refused or abandoned cancel is retried at most 3 times in all, a minute apart. Entries in that instrument stay blocked while the order is open |
 | U9 | Partial fills of orders by amount | The filled part is recorded and checked like any fill; a partial that eToro reports final ends `cancelled` with its positions kept |
