@@ -210,15 +210,21 @@ func (s *Service) RiskLimitsView(ctx context.Context, p Principal) (RiskLimitsVi
 	if err != nil {
 		return RiskLimitsView{}, err
 	}
-	out := RiskLimitsView{Limits: s.riskLimits(ctx, v.ID)}
-	switch {
-	case !v.Access.AtLeast(domain.AccessOwner):
-		out.EditBlocked = msgLimitsNotOwner
-	case p.Via != ViaSession:
-		out.EditBlocked = msgLimitsNotSession
-	default:
-		out.EditBlocked, _ = s.limitsBlocked(ctx, v.ID)
-	}
+	out := RiskLimitsView{Limits: s.riskLimits(ctx, v.ID), EditBlocked: s.limitsEditBlocked(ctx, p, v)}
 	out.CanEdit = out.EditBlocked == ""
 	return out, nil
+}
+
+// limitsEditBlocked says why p may not change account v's limits now, by SetRiskLimits'
+// rules ("" = it may).
+func (s *Service) limitsEditBlocked(ctx context.Context, p Principal, v domain.AccountView) string {
+	switch {
+	case !v.Access.AtLeast(domain.AccessOwner):
+		return msgLimitsNotOwner
+	case p.Via != ViaSession:
+		return msgLimitsNotSession
+	default:
+		why, _ := s.limitsBlocked(ctx, v.ID)
+		return why
+	}
 }

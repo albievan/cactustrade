@@ -120,6 +120,14 @@ Three paths act on an eToro demo account. Only the executor (`app/executor.go`) 
   cancels the running tick, waits for the entry lock, then cancels our pending orders and
   closes our positions (each sent once; the supervisor follows them up). Limits change only
   while the agent is stopped. API keys may pause, stop and kill, never start or reset (OD11).
+- **Force close (R24).** An admin (`agent.force_close`), in a web session, with trade access
+  and the password typed again (the bounded argon2 hasher, D29; counted by the sign-in
+  limiter, D28) closes what cactusTrade opened on a demo account at once: control lock →
+  agent stopped (a killed agent stays killed) → running tick cancelled → entry lock → the
+  same `flatten` as Kill (pending opens cancelled, our positions closed, OD1), detached from
+  the request's context. No kill latch, no reset afterwards. A real account is refused before
+  any read (S7). `POST /api/v1/agent/force-close-all` does every demo account the admin can
+  trade, checking the password once. Audited, danger event (alert e-mail).
 - **Lease (D22).** `agent_leases` holds one row per account: holder and expiry (30 s). The
   executor renews it before every send and resend; the supervisor before every pass. Each
   process has its own holder id (host name + a random UUID, `Config.LeaseHolder`), so two

@@ -20,7 +20,7 @@ const agent = {
     noEntryBeforeCloseMinutes: 30, flattenBeforeCloseMinutes: 10, maxPortfolioAgeSeconds: 5, maxQuoteAgeSeconds: 5, maxShortBp: 2500 },
   killed: false, dayStopped: false, riskDay: "", today: "2026-11-24", startOfDayEquityCents: 0, highWaterMarkCents: 0,
   equityKnown: false, equityError: "the account's eToro keys are not set", blocked: [], flatten: [],
-  lease: { mine: false, other: false }, controls: { start: true, pause: true, stop: true, kill: true, reset: true, gated: false },
+  lease: { mine: false, other: false }, controls: { start: true, pause: true, stop: true, kill: true, reset: true, gated: false, forceClose: false },
   resetPhrase: "RESET Main demo", openPositions: 0, pendingOrders: 0, missing: [],
 };
 

@@ -107,7 +107,7 @@ func TestAgentStatusViewWithoutFigures(t *testing.T) {
 }
 
 func TestAgentControlsFor(t *testing.T) {
-	all := AgentControls{Start: true, Pause: true, Stop: true, Kill: true, Reset: true}
+	all := AgentControls{Start: true, Pause: true, Stop: true, Kill: true, Reset: true, ForceClose: true}
 	tests := []struct {
 		name string
 		who  func(t *testing.T, ae *agentEnv) Principal

@@ -703,6 +703,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/watchlist/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How many shares the watchlist of each eToro account the caller can see holds (viewer)
+         * @description Lets an empty watchlist page name the caller's accounts that do have shares (R25).
+         *     Accounts the caller cannot see (not owned, not shared) are never counted.
+         */
+        get: operations["listWatchlistCounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/watchlist/quotes": {
         parameters: {
             query?: never;
@@ -848,6 +869,78 @@ export interface paths {
         get: operations["getAgent"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The agent of every eToro account the caller can see, with the caller's controls (viewer)
+         * @description One card per account for the Risk limits page (R23): state, kill switch,
+         *     reconciliation, whether the caller may change its limits now, and `controls` decided
+         *     by the server exactly as in `GET /api/v1/agent`. Reads no eToro data.
+         */
+        get: operations["listAgents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/force-close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What a force close of the account would do now (admin, web session, trade access)
+         * @description Reads only cactusTrade's own records. 403 for a real-money account (phase-7 gate).
+         */
+        get: operations["forceClosePreview"];
+        put?: never;
+        /**
+         * Force close — close everything cactusTrade opened on the account now and stop its agent (admin, web session only, password)
+         * @description Cancels cactusTrade's pending orders, closes every position cactusTrade opened (never
+         *     positions opened outside cactusTrade) and stops the agent. Unlike the kill switch it
+         *     latches nothing: no admin reset is needed afterwards (a killed agent stays killed).
+         *     The caller's current password is checked like a sign-in and counted by the sign-in
+         *     limiter: a wrong one is 403, too many attempts 429. A real-money account is refused
+         *     (403, phase-7 gate) before anything is sent.
+         */
+        post: operations["forceCloseAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/force-close-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a force close of every eToro demo account the caller can trade would do now (admin, web session) */
+        get: operations["forceCloseAllPreview"];
+        put?: never;
+        /**
+         * Force close every eToro demo account the caller can trade (admin, web session only, password checked once)
+         * @description Real-money accounts are left out (phase-7 gate).
+         */
+        post: operations["forceCloseAll"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2131,6 +2224,50 @@ export interface components {
             /** @description why not OK (empty when OK) */
             reason: string;
         };
+        ForceCloseRequest: {
+            /** @description the caller's current password (never logged or stored) */
+            password: string;
+        };
+        ForceClosePlan: {
+            accountId: string;
+            name: string;
+            /** @description open positions cactusTrade opened */
+            positions: number;
+            /** @description open orders of cactusTrade's not final yet */
+            orders: number;
+            /** @description for people, e.g. "closes 3 positions and cancels 1 order on Demo" */
+            summary: string;
+        };
+        ForceCloseReport: {
+            accountId: string;
+            name: string;
+            /** @description cancels sent for cactusTrade's pending open orders */
+            cancelled: number;
+            /** @description closes sent or in flight for positions cactusTrade opened */
+            closing: number;
+            state: components["schemas"]["AgentState"];
+            errors: string[];
+        };
+        AgentCard: {
+            account: components["schemas"]["Account"];
+            /** @description the caller's current account (the limits form edits it) */
+            current: boolean;
+            state: components["schemas"]["AgentState"];
+            killed: boolean;
+            reconciliation: components["schemas"]["Reconciliation"];
+            /** @description the caller may change this account's limits now */
+            limitsEditable: boolean;
+            /** @description why not (absent when editable) */
+            limitsBlockedReason?: string;
+            controls: components["schemas"]["AgentControls"];
+            openPositions: number;
+            pendingOrders: number;
+        };
+        WatchlistCount: {
+            account: components["schemas"]["Account"];
+            count: number;
+            current: boolean;
+        };
         /** @description The agent actions the caller may take on this account */
         AgentControls: {
             start: boolean;
@@ -2140,6 +2277,10 @@ export interface components {
             reset: boolean;
             /** @description a real-money account: real trading needs the phase-7 gate */
             gated: boolean;
+            /** @description force close (admin, web session, trade access, demo account) */
+            forceClose: boolean;
+            /** @description Why `forceClose` is false on a real-money account for a caller who could otherwise use it. Absent otherwise. */
+            forceCloseBlockedReason?: string;
             /**
              * @description Why `start` is false although the caller could otherwise start the agent: this
              *     process's agent loop is not running (still starting up, or the start-up resume
@@ -3766,6 +3907,28 @@ export interface operations {
             503: components["responses"]["Problem"];
         };
     };
+    listWatchlistCounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row per eToro account, in the accounts list's order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistCount"][];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
     listWatchlistQuotes: {
         parameters: {
             query?: never;
@@ -3969,6 +4132,138 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    listAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agents, in the accounts list's order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCard"][];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    forceClosePreview: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForceClosePlan"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    forceCloseAgent: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForceCloseRequest"];
+            };
+        };
+        responses: {
+            /** @description What was sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForceCloseReport"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            500: components["responses"]["Problem"];
+        };
+    };
+    forceCloseAllPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One plan per account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForceClosePlan"][];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    forceCloseAll: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForceCloseRequest"];
+            };
+        };
+        responses: {
+            /** @description One report per account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForceCloseReport"][];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            500: components["responses"]["Problem"];
         };
     };
     startAgent: {

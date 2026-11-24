@@ -18,6 +18,9 @@ const (
 	// ExitKilled: the kill switch is on; every position cactusTrade opened is closed. Set by
 	// the supervisor, not by ExitsDue.
 	ExitKilled ExitReason = "kill_switch"
+	// ExitForceClosed: an admin force-closed the account (R24); every position cactusTrade
+	// opened is closed, without the kill switch.
+	ExitForceClosed ExitReason = "force_close"
 )
 
 // MarketSession is a calendar answer for one instrument's market at the moment of the check.

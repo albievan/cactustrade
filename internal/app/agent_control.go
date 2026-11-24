@@ -226,6 +226,9 @@ func (s *Service) Kill(ctx context.Context, p Principal, accountID, reason strin
 		why += ": " + truncate(r, 200)
 	}
 	rep := KillReport{AccountID: v.ID}
+	// Once authorized, the kill runs to the end even if the caller goes away (a closed
+	// browser tab must not stop the closes), as force close does.
+	ctx = context.WithoutCancel(ctx)
 	already, terr := s.tripLocked(ctx, v.Account, p, why)
 	rep.Already = already
 	if terr != nil {
@@ -236,20 +239,23 @@ func (s *Service) Kill(ctx context.Context, p Principal, accountID, reason strin
 	// the flattening starts, and later ticks see the kill.
 	locks.entry.Lock()
 	defer locks.entry.Unlock()
-	s.flattenKilled(ctx, v.Account, &rep)
+	s.flatten(ctx, v.Account, domain.ExitKilled, "the kill switch is on", &rep)
 	if terr != nil {
 		return rep, fmt.Errorf("app.Kill: %w", terr)
 	}
 	return rep, nil
 }
 
-// flattenKilled cancels every pending open order of ours and then closes every agent
-// position, sending each request once without polling (the supervisor follows them up).
-func (s *Service) flattenKilled(ctx context.Context, a domain.Account, rep *KillReport) {
+// flatten cancels every pending open order of ours and then closes every agent position
+// (OD1: never anyone else's), sending each request once without polling (the supervisor
+// follows them up). The kill switch and the force close (R24) share it; why is the reason
+// for people, recorded with exit on each cancel and close. A real-money account is left
+// alone (S7: exits there stay refused until PLAN 7.21).
+func (s *Service) flatten(ctx context.Context, a domain.Account, exit domain.ExitReason, why string, rep *KillReport) {
 	if a.Mode != domain.ModeDemo || !a.Tradable() || s.d.Broker == nil {
 		return // nothing of ours can be there
 	}
-	sup := SupervisorReport{AccountID: a.ID, Killed: true}
+	sup := SupervisorReport{AccountID: a.ID, Killed: exit == domain.ExitKilled, flatten: why}
 	s.superviseOrders(ctx, a, &sup)
 	rep.Cancelled = sup.Cancelled
 	rep.Errors = append(rep.Errors, sup.Errors...)
@@ -259,7 +265,7 @@ func (s *Service) flattenKilled(ctx context.Context, a domain.Account, rep *Kill
 		return
 	}
 	for _, ap := range ours {
-		if _, err := s.closePosition(ctx, a, ap, string(domain.ExitKilled)+": the kill switch is on", nil); err != nil {
+		if _, err := s.closePosition(ctx, a, ap, string(exit)+": "+why, nil); err != nil {
 			rep.Errors = append(rep.Errors, fmt.Sprintf("closing position %d: %v", ap.PositionID, err))
 			continue
 		}

@@ -43,6 +43,9 @@ type SupervisorReport struct {
 	Reconciled bool
 	// Errors lists what failed (the pass goes on after each).
 	Errors []string
+	// flatten, when set, cancels every pending open order of ours at once with this reason,
+	// as Killed does (the kill switch and the force close, R24, set it).
+	flatten string
 }
 
 func (r *SupervisorReport) fail(format string, args ...any) {
@@ -253,7 +256,7 @@ func (s *Service) superviseOrders(ctx context.Context, a domain.Account, rep *Su
 			if sent.IsZero() {
 				sent = o.CreatedAt
 			}
-			if !rep.Killed && now.Sub(sent) < pendingMax {
+			if !rep.Killed && rep.flatten == "" && now.Sub(sent) < pendingMax {
 				continue // the executor is still following it
 			}
 			if p := s.settleOrder(ctx, a, o, domain.Portfolio{}, orders); p != "" {
@@ -266,7 +269,10 @@ func (s *Service) superviseOrders(ctx context.Context, a domain.Account, rep *Su
 			}
 			if (cur.State == domain.OrderPending || cur.State == domain.OrderPartial) && cur.EtoroOrderID > 0 && !recent[cur.EtoroOrderID] {
 				why := fmt.Sprintf("pending for over %s", pendingMax)
-				if rep.Killed {
+				switch {
+				case rep.flatten != "":
+					why = rep.flatten
+				case rep.Killed:
 					why = "the kill switch is on"
 				}
 				if _, err := s.cancelOrder(ctx, a, cur, why); err != nil {

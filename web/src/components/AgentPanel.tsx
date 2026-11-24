@@ -4,6 +4,7 @@ import type { Live } from "../lib/live";
 import { useRefreshMode } from "../lib/mode";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FixButton, fixes } from "./FixButton";
+import { ForceCloseDialog, forceCloseNote } from "./ForceCloseDialog";
 import { ProblemAlert } from "./ProblemAlert";
 
 const stateBadge: Record<Panel["state"], string> = {
@@ -27,7 +28,7 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
   const [loadError, setLoadError] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState("");
-  const [dialog, setDialog] = useState<"" | "kill" | "reset">("");
+  const [dialog, setDialog] = useState<"" | "kill" | "reset" | "force">("");
 
   const load = useCallback(async () => {
     try {
@@ -121,6 +122,13 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
                 <i className="bi bi-arrow-counterclockwise" />
               </button>
             )}
+            {c.forceClose && (
+              <button className="btn btn-outline-danger btn-sm" aria-label="Force close"
+                title="Force close: close everything cactusTrade opened now and stop the agent (admin, password; no kill switch)"
+                disabled={!!busy} onClick={() => setDialog("force")}>
+                <i className="bi bi-door-closed" />
+              </button>
+            )}
           </div>
           <div className="flex-grow-1">
             <div className="d-flex align-items-center gap-2 mb-2">
@@ -134,6 +142,7 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
             {gated && (
               <div className="alert alert-secondary py-2 small mb-2">
                 <i className="bi bi-lock-fill me-1" />Real trading needs the phase-7 gate: the agent cannot be controlled on a real-money account.
+                {c.forceCloseBlockedReason && <div className="mt-1">No force close here: {c.forceCloseBlockedReason}.</div>}
               </div>
             )}
             {killed && (
@@ -209,6 +218,14 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
       {dialog === "reset" && (
         <ResetDialog phrase={p.resetPhrase} busy={busy === "reset"} onCancel={() => setDialog("")}
           onConfirm={(phrase) => act("reset", () => api.resetKill(phrase), "Kill switch reset: the agent is stopped.")} />
+      )}
+      {dialog === "force" && (
+        <ForceCloseDialog accountId={p.account.id} onCancel={() => setDialog("")}
+          onDone={async (reports) => {
+            setDialog(""); setError(null); setNote("Force close: " + forceCloseNote(reports));
+            await load();
+            await refreshMode();
+          }} />
       )}
     </div>
   );

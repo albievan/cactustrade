@@ -20,6 +20,8 @@ func TestRateLimitClassify(t *testing.T) {
 		want                  rateClass
 	}{
 		{"POST", "/api/v1/agent/kill", "POST /api/v1/agent/kill", classNever},
+		{"POST", "/api/v1/agent/force-close", "POST /api/v1/agent/force-close", classNever},
+		{"POST", "/api/v1/agent/force-close-all", "POST /api/v1/agent/force-close-all", classNever},
 		{"POST", "/api/v1/agent/pause", "POST /api/v1/agent/pause", classNever},
 		{"POST", "/api/v1/agent/stop", "POST /api/v1/agent/stop", classNever},
 		{"POST", "/api/v1/accounts/a1/real-gate/disarm", "POST /api/v1/accounts/{accountId}/real-gate/disarm", classNever},

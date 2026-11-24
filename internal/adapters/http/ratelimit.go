@@ -68,6 +68,8 @@ var neverThrottled = map[string]bool{
 	"POST /api/v1/agent/kill":                            true,
 	"POST /api/v1/agent/pause":                           true,
 	"POST /api/v1/agent/stop":                            true,
+	"POST /api/v1/agent/force-close":                     true,
+	"POST /api/v1/agent/force-close-all":                 true,
 	"POST /api/v1/accounts/{accountId}/real-gate/disarm": true,
 }
 

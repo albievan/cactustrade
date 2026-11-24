@@ -532,3 +532,21 @@ func TestTruncate(t *testing.T) {
 		}
 	}
 }
+
+// TestKillOutlivesItsRequest: a kill whose request is cancelled (the browser tab closed)
+// still persists the kill and closes every position cactusTrade opened.
+func TestKillOutlivesItsRequest(t *testing.T) {
+	ae := newAgentEnv(t)
+	for range 3 {
+		ae.openPosition(t, instNYSE, domain.Long)
+	}
+	ctx, cancel := context.WithCancel(ae.ctx)
+	cancel()
+	rep, err := ae.svc.Kill(ctx, ae.admin, ae.a.ID, "tab closed")
+	if err != nil || rep.Closing != 3 || ae.b.Closes != 3 || len(ae.b.Positions) != 0 {
+		t.Fatalf("kill = %+v %v, closes %d, left %d", rep, err, ae.b.Closes, len(ae.b.Positions))
+	}
+	if ae.svc.agentState(ae.ctx, ae.a.ID) != domain.AgentKilled {
+		t.Fatal("the kill was not stored")
+	}
+}

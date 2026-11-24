@@ -53,6 +53,9 @@ func TestBrokerErrors(t *testing.T) {
 	if !errors.Is(ErrRealModeGated, ErrForbidden) {
 		t.Fatal("real mode gated must be forbidden")
 	}
+	if !errors.Is(ErrWrongPassword, ErrForbidden) || errors.Is(ErrWrongPassword, ErrInvalid) {
+		t.Fatal("a wrong confirmation password must be forbidden (403), not invalid input")
+	}
 	tests := []struct {
 		name string
 		err  *NotAcceptedError

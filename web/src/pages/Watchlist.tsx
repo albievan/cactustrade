@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, errorText, type Instrument, type Quote, type WatchItem } from "../lib/api";
+import { api, errorText, type Instrument, type Quote, type WatchItem, type WatchlistCount } from "../lib/api";
 import { useSession } from "../lib/session";
-import { useMode } from "../lib/mode";
+import { useMode, useRefreshMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { ProblemAlert } from "../components/ProblemAlert";
 
@@ -17,8 +17,9 @@ export function Watchlist() {
   const [items, setItems] = useState<WatchItem[]>([]);
   const [quotes, setQuotes] = useState<Record<number, Quote>>({});
   const [error, setError] = useState<unknown>(null);
+  const [loaded, setLoaded] = useState(false);
   const load = useCallback(() => {
-    api.watchlist().then(setItems).catch(setError);
+    api.watchlist().then((ws) => { setItems(ws); setLoaded(true); }).catch(setError);
   }, []);
   const accountId = status?.account?.id;
   useEffect(() => { if (accountId) load(); }, [load, accountId]);
@@ -51,7 +52,7 @@ export function Watchlist() {
       <ProblemAlert error={error} />
       {admin && <AddInstrument onAdded={load} />}
       {items.length === 0 ? (
-        <p className="text-secondary">The watchlist is empty.</p>
+        loaded && status?.account && <EmptyWatchlist accountName={status.account.name} />
       ) : (
         <div className="table-responsive">
           <table className="table align-middle">
@@ -79,6 +80,45 @@ export function Watchlist() {
         </div>
       )}
     </>
+  );
+}
+
+// EmptyWatchlist says whose watchlist is empty (R25: a watchlist belongs to one eToro account)
+// and names the caller's other accounts that do have shares, from the server's counts, with a
+// button that switches to that account. Accounts the caller cannot see are never named.
+function EmptyWatchlist({ accountName }: { accountName: string }) {
+  const refreshMode = useRefreshMode();
+  const [others, setOthers] = useState<WatchlistCount[]>([]);
+  useEffect(() => {
+    api.watchlistCounts().then((cs) => setOthers(cs.filter((c) => !c.current && c.count > 0))).catch(() => undefined);
+  }, [accountName]);
+  async function pick(id: string) {
+    await api.setCurrentAccount(id);
+    await refreshMode(); // the page reloads the new account's watchlist
+  }
+  return (
+    <div className="card mb-3" aria-label="Empty watchlist">
+      <div className="card-body">
+        <p className="mb-2"><strong>{accountName}</strong> has no shares on its watchlist.</p>
+        {others.length > 0 && (
+          <p className="mb-2">
+            Shares are on the watchlist of{" "}
+            {others.map((c, i) => (
+              <span key={c.account.id}>
+                {i > 0 && ", "}
+                <button type="button" className="btn btn-link p-0 align-baseline" title={`Switch to ${c.account.name}`} onClick={() => void pick(c.account.id)}>
+                  {c.account.name}
+                </button>{" "}
+                ({c.count} {c.count === 1 ? "share" : "shares"})
+              </span>
+            ))}.
+          </p>
+        )}
+        <p className="small text-secondary mb-0">
+          Each eToro account has its own watchlist. An account another user owns appears here only after its owner shares it with you.
+        </p>
+      </div>
+    </div>
   );
 }
 

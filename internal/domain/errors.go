@@ -56,6 +56,10 @@ var (
 	// ErrRealModeGated means an order for a real-money account was refused: real trading is
 	// behind the phase-7 gate. It wraps ErrForbidden.
 	ErrRealModeGated = fmt.Errorf("real mode is gated (phase 7): only demo accounts trade: %w", ErrForbidden)
+	// ErrWrongPassword means a password re-entered to confirm an action (force close, R24)
+	// is not the caller's: nothing was done. It wraps ErrForbidden (403), and the HTTP
+	// adapter counts it as a failed sign-in attempt.
+	ErrWrongPassword = fmt.Errorf("the password is not correct: %w", ErrForbidden)
 	// ErrBusy means a bounded resource (the password-hashing slots, PLAN 7.1.4) is in use:
 	// nothing was done; try again shortly. The HTTP adapter answers 429 with Retry-After.
 	ErrBusy = errors.New("busy: try again in a moment")
