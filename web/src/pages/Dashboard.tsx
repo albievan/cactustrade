@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ReviewBoard } from "../components/ReviewBoard";
+import { AgentPanel } from "../components/AgentPanel";
 import { api, errorText, usd, type MarketSession, type Portfolio, type SystemStatus } from "../lib/api";
 
 export function Dashboard() {
@@ -29,6 +30,7 @@ export function Dashboard() {
           with <code>ETORO_DEMO_PUB</code> and <code>ETORO_DEMO_PK</code> (the first admin then gets "Demo (environment)").
         </div>
       )}
+      {status?.account && <AgentPanel key={status.account.id} />}
       <div className="row g-3 mb-4">
         {markets.map((m) => (
           <div className="col-md-6" key={m.market}>
@@ -76,7 +78,7 @@ export function Dashboard() {
             </div>
           )}
           <p className="small text-secondary mt-3 mb-0">
-            The agent cannot trade yet: orders arrive in phase 4 (demo first). This page only reads the account.
+            Every position in the account. cactusTrade closes only the ones it opened; the others are left alone.
           </p>
         </div>
       </div>

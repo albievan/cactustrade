@@ -1,0 +1,280 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/albievan/cactustrade/internal/domain"
+)
+
+// What the agent panel and the orders page read (PLAN 4.13), plus the manual reconcile and
+// the lease release at shutdown (4.14). Nothing here sends anything to eToro.
+
+// agentViewTimeout bounds the one portfolio read of AgentStatusView.
+const agentViewTimeout = 10 * time.Second
+
+// AgentControls says which agent actions the caller may take on the account, as the use
+// cases themselves decide (OD11): the web UI shows only these. Gated is set for a real-money
+// account: nothing may be started there until the phase-7 gate.
+type AgentControls struct {
+	Start, Pause, Stop, Kill, Reset bool
+	Gated                           bool
+}
+
+// FlattenTime is when the supervisor closes the positions of one market today.
+type FlattenTime struct {
+	Market  domain.Market
+	Trading bool      // the market trades today
+	Closes  time.Time // zero when not trading
+	At      time.Time // Closes − FlattenBeforeClose; zero when not trading
+	Note    string    // a calendar problem (the market is then treated as closed)
+}
+
+// BlockedInstrument is an instrument the agent may not enter on the account.
+type BlockedInstrument struct {
+	domain.InstrumentBlock
+	Symbol string
+}
+
+// LeaseStatus says who may send orders for the account (D22).
+type LeaseStatus struct {
+	// Mine: this process holds it; Other: another process holds an unexpired one.
+	Mine, Other bool
+	ExpiresAt   time.Time
+}
+
+// AgentView is an account's agent as the dashboard shows it.
+type AgentView struct {
+	Account        domain.AccountView
+	State          domain.AgentState
+	Reconciliation Reconciliation
+	Limits         domain.RiskLimits
+	// Risk is the stored risk state (zero Version: none yet). Today is the current risk day;
+	// the daily floor applies only when Risk.State.Day == Today.
+	Risk  domain.AccountRiskState
+	Today domain.RiskDate
+	// Equity is eToro's figure read now (EquityKnown false with EquityError when it could
+	// not be read). The floors and distances are set only when it is known.
+	Equity                 domain.Cents
+	EquityKnown            bool
+	EquityError            string
+	DailyFloor             domain.Cents
+	DailyFloorKnown        bool
+	ToDailyFloor           domain.Cents
+	DrawdownFloor          domain.Cents
+	ToDrawdownFloor        domain.Cents
+	Blocked                []BlockedInstrument
+	Flatten                []FlattenTime
+	Lease                  LeaseStatus
+	Controls               AgentControls
+	ResetPhrase            string
+	OpenPositions, Pending int
+}
+
+// AgentStatusView returns the agent of an account the caller can view (accountID "" = the
+// current account): its state, reconciliation, kill switch, risk-day figures and distances
+// to the daily floor and the drawdown limit, blocked instruments, today's flatten times and
+// which controls the caller may use. It reads the portfolio once (read-only).
+func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID string) (AgentView, error) {
+	if err := s.authorize(p, domain.PermView); err != nil {
+		return AgentView{}, err
+	}
+	v, err := s.account(ctx, p, accountID, domain.AccessView)
+	if err != nil {
+		return AgentView{}, err
+	}
+	now := s.d.Clock.Now()
+	out := AgentView{
+		Account: v, State: s.agentState(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
+		Limits: s.riskLimits(ctx, v.ID), Today: domain.RiskDay(now), ResetPhrase: ResetPhrase(v.Name),
+		Controls: s.controlsFor(p, v),
+	}
+	switch rs, err := s.d.Store.RiskStates().Get(ctx, v.ID); {
+	case err == nil:
+		out.Risk = rs
+	case !errors.Is(err, domain.ErrNotFound):
+		return AgentView{}, fmt.Errorf("app.AgentStatusView: %w", err)
+	default:
+		out.Risk = domain.AccountRiskState{AccountID: v.ID}
+	}
+	s.viewEquity(ctx, v, &out)
+	if err := s.viewBlocks(ctx, v.ID, &out); err != nil {
+		return AgentView{}, err
+	}
+	out.Flatten = s.flattenTimes(ctx, now, out.Limits)
+	if l, err := s.d.Store.AgentLeases().Get(ctx, v.ID); err == nil && now.Before(l.ExpiresAt) {
+		out.Lease = LeaseStatus{Mine: l.Holder == s.leaseHolder(), Other: l.Holder != s.leaseHolder(), ExpiresAt: l.ExpiresAt}
+	}
+	if ps, err := s.d.Store.AgentPositions().ListOpen(ctx, v.ID); err == nil {
+		out.OpenPositions = len(ps)
+	}
+	if pending, err := s.d.Store.Orders().ListOpen(ctx, v.ID); err == nil {
+		out.Pending = len(pending)
+	}
+	return out, nil
+}
+
+// controlsFor applies the same rules as the control use cases, without running them.
+func (s *Service) controlsFor(p Principal, v domain.AccountView) AgentControls {
+	trade := v.Access.AtLeast(domain.AccessTrade)
+	session := p.Via == ViaSession
+	c := AgentControls{Gated: v.Mode != domain.ModeDemo}
+	ctl := trade && p.Can(domain.PermAgentControl)
+	c.Pause, c.Stop = ctl, ctl
+	c.Start = ctl && session && !c.Gated
+	c.Kill = trade && p.Can(domain.PermKillSwitch)
+	c.Reset = c.Kill && session && p.Role == domain.RoleAdmin
+	return c
+}
+
+// viewEquity reads the equity now and works out the floors and distances.
+func (s *Service) viewEquity(ctx context.Context, v domain.AccountView, out *AgentView) {
+	switch {
+	case s.d.Broker == nil:
+		out.EquityError = "the eToro client is not configured"
+		return
+	case !s.hasKeys(ctx, v.Account):
+		out.EquityError = "the account's eToro keys are not set"
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, agentViewTimeout)
+	defer cancel()
+	pf, err := s.d.Broker.Portfolio(brokerCtx(cctx, v))
+	if err != nil {
+		out.EquityError = "reading the portfolio failed: " + err.Error()
+		return
+	}
+	out.Equity, out.EquityKnown = pf.Equity(), true
+	st := out.Risk.State
+	out.DrawdownFloor = domain.DrawdownFloor(out.Equity, st, out.Limits)
+	out.ToDrawdownFloor = out.Equity - out.DrawdownFloor
+	if st.Day == out.Today && st.StartOfDayEquity > 0 {
+		out.DailyFloor, out.DailyFloorKnown = domain.DailyFloor(st, out.Limits), true
+		out.ToDailyFloor = out.Equity - out.DailyFloor
+	}
+}
+
+func (s *Service) viewBlocks(ctx context.Context, accountID string, out *AgentView) error {
+	bs, err := s.d.Store.InstrumentBlocks().List(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("app.AgentStatusView: %w", err)
+	}
+	for _, b := range bs {
+		out.Blocked = append(out.Blocked, BlockedInstrument{InstrumentBlock: b, Symbol: s.instrumentLabel(ctx, b.Instrument)})
+	}
+	return nil
+}
+
+// flattenTimes gives today's session close and flatten time of every supported market.
+func (s *Service) flattenTimes(ctx context.Context, now time.Time, l domain.RiskLimits) []FlattenTime {
+	out := make([]FlattenTime, 0, len(domain.Markets))
+	for _, m := range domain.Markets {
+		ft := FlattenTime{Market: m}
+		if s.d.Calendar == nil {
+			ft.Note = "no market calendar: treated as closed"
+			out = append(out, ft)
+			continue
+		}
+		_, closeAt, trading, err := s.d.Calendar.Session(m, now)
+		if err != nil {
+			s.d.Log.WarnContext(ctx, "market calendar", "market", string(m), "err", err)
+			ft.Note = err.Error()
+		}
+		if trading && err == nil {
+			ft.Trading, ft.Closes, ft.At = true, closeAt.UTC(), domain.FlattenAt(closeAt, l).UTC()
+		}
+		out = append(out, ft)
+	}
+	return out
+}
+
+// OrderView is one of our orders with its instrument's symbol.
+type OrderView struct {
+	domain.Order
+	Symbol string
+}
+
+// Orders lists an account's orders, newest first (view access; accountID "" = the current
+// account). limit 0 is 100; it must be 1–500.
+func (s *Service) Orders(ctx context.Context, p Principal, accountID string, limit int) ([]OrderView, error) {
+	if err := s.authorize(p, domain.PermView); err != nil {
+		return nil, err
+	}
+	if limit == 0 {
+		limit = 100
+	}
+	if limit < 1 || limit > 500 {
+		return nil, domain.Invalid("limit", "must be 1–500")
+	}
+	v, err := s.account(ctx, p, accountID, domain.AccessView)
+	if err != nil {
+		return nil, err
+	}
+	orders, err := s.d.Store.Orders().List(ctx, v.ID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("app.Orders: %w", err)
+	}
+	out := make([]OrderView, 0, len(orders))
+	labels := map[domain.InstrumentID]string{}
+	for _, o := range orders {
+		sym, ok := labels[o.Instrument]
+		if !ok && o.Instrument > 0 {
+			sym = s.instrumentLabel(ctx, o.Instrument)
+			labels[o.Instrument] = sym
+		}
+		out = append(out, OrderView{Order: o, Symbol: sym})
+	}
+	return out, nil
+}
+
+// ReconcileAccount reconciles an account with eToro now (agent.control, trade access; a web
+// session or an API key). It only reads eToro. A pass that runs but finds a problem is a
+// result with OK false, not an error. While the supervisor is working on the account it is
+// a conflict (try again in a few seconds).
+func (s *Service) ReconcileAccount(ctx context.Context, p Principal, accountID string) (Reconciliation, error) {
+	v, err := s.controlled(ctx, p, accountID, domain.PermAgentControl, false, "reconciling")
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	if err := s.needBroker(); err != nil {
+		return Reconciliation{}, err
+	}
+	if !s.hasKeys(ctx, v.Account) {
+		return Reconciliation{}, fmt.Errorf("the account's eToro keys are not set: %w: %w", domain.ErrCredentialsMissing, domain.ErrUnavailable)
+	}
+	if !s.rt.claim(v.ID) {
+		return Reconciliation{}, fmt.Errorf("the supervisor is working on %s; try again in a few seconds: %w", v.Name, domain.ErrConflict)
+	}
+	defer s.rt.release(v.ID)
+	r, err := s.Reconcile(ctx, v.ID)
+	if err != nil && r.At.IsZero() {
+		return Reconciliation{}, err
+	}
+	s.audit(ctx, p, "agent.reconcile", v.ID, fmt.Sprintf("ok=%v %s", r.OK, r.Reason))
+	return r, nil
+}
+
+// ReleaseLeases gives up every account lease this process holds (graceful shutdown, 4.14),
+// so another process can take over at once instead of after domain.LeaseTTL. Positions are
+// left as they are (OD6).
+func (s *Service) ReleaseLeases(ctx context.Context) error {
+	as, err := s.d.Store.Accounts().List(ctx)
+	if err != nil {
+		return fmt.Errorf("app.ReleaseLeases: %w", err)
+	}
+	var errs []error
+	for _, a := range as {
+		if !a.Tradable() {
+			continue
+		}
+		if err := s.d.Store.AgentLeases().Release(ctx, a.ID, s.leaseHolder()); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			errs = append(errs, fmt.Errorf("account %s: %w", a.ID, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("app.ReleaseLeases: %w", errors.Join(errs...))
+	}
+	return nil
+}

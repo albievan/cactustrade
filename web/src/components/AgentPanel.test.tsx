@@ -1,0 +1,137 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AgentPanel } from "./AgentPanel";
+import type { AgentPanel as Panel } from "../lib/api";
+
+const all = { start: true, pause: true, stop: true, kill: true, reset: true, gated: false };
+
+function panel(over: Partial<Panel> = {}): Panel {
+  return {
+    account: { id: "a1", name: "Main demo", ownerId: "1", ownerName: "admin", mode: "demo", platform: "etoro", envKeys: false, access: "owner", createdAt: "" },
+    state: "running", reconciliation: { accountId: "a1", ok: true, reason: "", at: "2026-11-24T15:00:00Z" },
+    limits: { tradingBudgetCents: 500000, dailyLossBp: 200, drawdownBp: 1000, maxPositionBp: 2000, maxOpenPositions: 5,
+      noEntryBeforeCloseMinutes: 30, flattenBeforeCloseMinutes: 10, maxPortfolioAgeSeconds: 5, maxQuoteAgeSeconds: 5, maxShortBp: 2500 },
+    killed: false, dayStopped: false, riskDay: "2026-11-24", today: "2026-11-24", startOfDayEquityCents: 1000000, highWaterMarkCents: 1000000,
+    equityKnown: true, equityCents: 990000, dailyFloorCents: 980000, toDailyFloorCents: 10000, drawdownFloorCents: 900000, toDrawdownFloorCents: 90000,
+    blocked: [], flatten: [{ market: "NYSE", trading: true, closes: "2026-11-24T21:00:00Z", flattenAt: "2026-11-24T20:50:00Z" }],
+    lease: { mine: true, other: false }, controls: all, resetPhrase: "RESET Main demo", openPositions: 1, pendingOrders: 0,
+    ...over,
+  };
+}
+
+interface Call { method: string; url: string; body?: unknown }
+
+// serve answers the API with p (and answers per path) and mounts the panel.
+function serve(p: Panel, answers: Record<string, unknown> = {}) {
+  const calls: Call[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+    if (url.endsWith("/api/v1/agent") && method === "GET") return json(p);
+    const key = url.replace(/^.*\/api\/v1\//, "");
+    if (key in answers) return json(answers[key]);
+    return new Response("{}", { status: 404 });
+  });
+  render(<AgentPanel />);
+  return calls;
+}
+
+const posts = (calls: Call[]) => calls.filter((c) => c.method === "POST");
+
+afterEach(() => vi.restoreAllMocks());
+
+describe("AgentPanel", () => {
+  it("shows the state, the distances and the controls the server allows", async () => {
+    serve(panel());
+    expect(await screen.findByText("running")).toBeInTheDocument();
+    expect(screen.getByText("$100.00")).toBeInTheDocument(); // to the daily floor
+    expect(screen.getByText("$900.00")).toBeInTheDocument(); // to the drawdown floor
+    expect(screen.getByLabelText("Start the agent")).toBeDisabled(); // already running
+    expect(screen.getByLabelText("Pause the agent")).toBeEnabled();
+    expect(screen.getByLabelText("Stop the agent")).toBeEnabled();
+    expect(screen.getByLabelText("Kill switch")).toBeEnabled();
+    expect(screen.getByLabelText("Start the agent")).toHaveAttribute("title");
+    expect(screen.queryByLabelText("Reset the kill switch")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["a viewer", { start: false, pause: false, stop: false, kill: false, reset: false, gated: false }],
+    ["an operator with view access", { start: false, pause: false, stop: false, kill: false, reset: false, gated: false }],
+  ])("disables every control for %s", async (_who, controls) => {
+    serve(panel({ state: "stopped", controls }));
+    await screen.findByText("stopped");
+    for (const l of ["Start the agent", "Pause the agent", "Stop the agent", "Reconcile with eToro", "Kill switch"]) {
+      expect(screen.getByLabelText(l)).toBeDisabled();
+    }
+  });
+
+  it("lets an API-key-like role pause and kill but not start", async () => {
+    serve(panel({ state: "stopped", controls: { ...all, start: false, reset: false } }));
+    await screen.findByText("stopped");
+    expect(screen.getByLabelText("Start the agent")).toBeDisabled();
+    expect(screen.getByLabelText("Kill switch")).toBeEnabled();
+  });
+
+  it("asks in a dialog before pulling the kill switch, never with window.confirm", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const calls = serve(panel(), { "agent/kill": { accountId: "a1", already: false, cancelled: 0, closing: 1, errors: [] } });
+    fireEvent.click(await screen.findByLabelText("Kill switch"));
+    expect(screen.getByRole("dialog", { name: "Pull the kill switch?" })).toBeInTheDocument();
+    expect(posts(calls)).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(posts(calls)).toEqual([]);
+
+    fireEvent.click(screen.getByLabelText("Kill switch"));
+    fireEvent.change(screen.getByLabelText("Reason (optional)"), { target: { value: "market looks wrong" } });
+    fireEvent.click(screen.getByRole("button", { name: /Kill now/ }));
+    await waitFor(() => expect(posts(calls)).toEqual([{ method: "POST", url: "/api/v1/agent/kill", body: { reason: "market looks wrong" } }]));
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("resets the kill switch only with the typed phrase", async () => {
+    const calls = serve(panel({ state: "killed", killed: true, killReason: "drawdown 10 %" }), { "agent/reset": { accountId: "a1", state: "stopped" } });
+    expect(await screen.findByText(/drawdown 10 %/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Start the agent")).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Reset the kill switch"));
+    const confirm = screen.getByRole("button", { name: "Reset" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Type/), { target: { value: "RESET main demo" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Type/), { target: { value: "RESET Main demo" } });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(posts(calls)).toEqual([{ method: "POST", url: "/api/v1/agent/reset", body: { confirm: "RESET Main demo" } }]));
+  });
+
+  it("offers no reset to someone who may not reset", async () => {
+    serve(panel({ state: "killed", killed: true, controls: { ...all, reset: false } }));
+    await screen.findByText("killed");
+    expect(screen.queryByLabelText("Reset the kill switch")).not.toBeInTheDocument();
+  });
+
+  it("disables the controls on a real account: real trading needs the phase-7 gate", async () => {
+    serve(panel({ state: "stopped", controls: { ...all, start: false, gated: true } }));
+    expect(await screen.findByText(/Real trading needs the phase-7 gate/)).toBeInTheDocument();
+    for (const l of ["Start the agent", "Pause the agent", "Stop the agent", "Kill switch"]) {
+      expect(screen.getByLabelText(l)).toBeDisabled();
+    }
+  });
+
+  it("starts the agent and shows the server's refusal", async () => {
+    const calls: Call[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      calls.push({ method: init?.method ?? "GET", url });
+      if (url.endsWith("/api/v1/agent/start")) {
+        return new Response(JSON.stringify({ title: "Conflict", status: 409, detail: "the account is not reconciled" }), { status: 409 });
+      }
+      return new Response(JSON.stringify(panel({ state: "stopped" })), { status: 200 });
+    });
+    render(<AgentPanel />);
+    fireEvent.click(await screen.findByLabelText("Start the agent"));
+    expect(await screen.findByText("the account is not reconciled")).toBeInTheDocument();
+    expect(calls.some((c) => c.method === "POST" && c.url === "/api/v1/agent/start")).toBe(true);
+  });
+});

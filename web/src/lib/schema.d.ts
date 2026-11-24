@@ -816,6 +816,165 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The agent of an account — state, reconciliation, kill switch, distance to the limits (viewer)
+         * @description Reads the account's portfolio once (read-only) for the equity; when that fails the
+         *     figures that need it are left out and `equityError` says why. `controls` lists the
+         *     actions the caller may take (the server decides; the UI only shows them). On a real
+         *     account (`controls.gated`) nothing can be started until the phase-7 gate.
+         */
+        get: operations["getAgent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the agent (operator with trade access, web session only — never an API key)
+         * @description Refused (403) for a real-money account (phase 7) and for an API key; 409 while the
+         *     kill switch is on or the account is not reconciled; 422 without a trading budget or
+         *     with invalid limits; 503 without the account's eToro keys.
+         */
+        post: operations["startAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause a running agent — no new entries, exits continue, limits stay locked (operator; session or API key) */
+        post: operations["pauseAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop the agent — no new entries, exits continue, limits may change (operator; session or API key) */
+        post: operations["stopAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/kill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pull the kill switch (operator with trade access; session or API key)
+         * @description Stores the kill first, then cancels cactusTrade's pending orders and closes every
+         *     position cactusTrade opened (never positions opened outside cactusTrade). Only an
+         *     admin can reset it. Killing again flattens again.
+         */
+        post: operations["killAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset the kill switch (admin, web session only, typed phrase "RESET <account name>")
+         * @description The high-water mark becomes the equity read from eToro now; the agent comes back
+         *     stopped. 422 when the phrase is wrong, 409 when the kill switch is not on.
+         */
+        post: operations["resetKill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconcile the account with eToro now (operator with trade access; read-only on eToro)
+         * @description A pass that finds a problem answers 200 with `ok` false and the reason.
+         */
+        post: operations["reconcileAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The account's orders to eToro, newest first (viewer) */
+        get: operations["listOrders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/themes": {
         parameters: {
             query?: never;
@@ -1670,8 +1829,156 @@ export interface components {
             details: string;
             remoteIp: string;
         };
+        AgentStatusResult: {
+            accountId: string;
+            state: components["schemas"]["AgentState"];
+        };
+        KillRequest: {
+            /** @description why (kept in the audit log and the event) */
+            reason?: string;
+        };
+        KillReport: {
+            accountId: string;
+            /** @description the kill switch was already on (flattened again) */
+            already: boolean;
+            /** @description cancels sent for cactusTrade's pending open orders */
+            cancelled: number;
+            /** @description closes sent or in flight for positions cactusTrade opened */
+            closing: number;
+            errors: string[];
+        };
+        ResetKillRequest: {
+            /** @description exactly RESET <account name> */
+            confirm: string;
+        };
+        Reconciliation: {
+            accountId: string;
+            /** @description eToro and our records agree; entries need it */
+            ok: boolean;
+            /**
+             * Format: date-time
+             * @description absent = not reconciled since the start
+             */
+            at?: string;
+            /** @description why not OK (empty when OK) */
+            reason: string;
+        };
+        /** @description The agent actions the caller may take on this account */
+        AgentControls: {
+            start: boolean;
+            pause: boolean;
+            stop: boolean;
+            kill: boolean;
+            reset: boolean;
+            /** @description a real-money account: real trading needs the phase-7 gate */
+            gated: boolean;
+        };
+        BlockedInstrument: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            reason: string;
+            /** Format: date-time */
+            at: string;
+        };
+        FlattenTime: {
+            market: components["schemas"]["Market"];
+            /** @description the market trades today */
+            trading: boolean;
+            /** Format: date-time */
+            closes?: string;
+            /**
+             * Format: date-time
+             * @description every position of this market is closed from then on
+             */
+            flattenAt?: string;
+            note?: string;
+        };
+        /** @description Who may send orders for the account (one process at a time) */
+        AgentLease: {
+            /** @description this server holds it */
+            mine: boolean;
+            /** @description another process holds it: this server sends nothing */
+            other: boolean;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        AgentPanel: {
+            account: components["schemas"]["Account"];
+            state: components["schemas"]["AgentState"];
+            reconciliation: components["schemas"]["Reconciliation"];
+            limits: components["schemas"]["RiskLimits"];
+            killed: boolean;
+            killReason?: string;
+            /** Format: date-time */
+            killedAt?: string;
+            /** @description the daily floor was reached: no entries until the next risk day (22:00 UTC) */
+            dayStopped: boolean;
+            /** @description the risk day of the stored figures (empty = none yet) */
+            riskDay: string;
+            /** @description the current risk day */
+            today: string;
+            startOfDayEquityCents: components["schemas"]["Cents"];
+            highWaterMarkCents: components["schemas"]["Cents"];
+            equityKnown: boolean;
+            equityCents?: components["schemas"]["Cents"];
+            equityError?: string;
+            dailyFloorCents?: components["schemas"]["Cents"];
+            toDailyFloorCents?: components["schemas"]["Cents"];
+            drawdownFloorCents?: components["schemas"]["Cents"];
+            toDrawdownFloorCents?: components["schemas"]["Cents"];
+            blocked: components["schemas"]["BlockedInstrument"][];
+            flatten: components["schemas"]["FlattenTime"][];
+            lease: components["schemas"]["AgentLease"];
+            controls: components["schemas"]["AgentControls"];
+            /** @description what an admin types to reset the kill switch */
+            resetPhrase: string;
+            /** @description positions cactusTrade opened that are open */
+            openPositions: number;
+            /** @description orders of ours that are not final */
+            pendingOrders: number;
+        };
+        Order: {
+            /** @description our x-request-id, stored before the order is sent */
+            requestId: string;
+            mode: components["schemas"]["TradingMode"];
+            /** @description open, close or cancel */
+            kind: string;
+            /** @description long, short or empty (cancel) */
+            direction: string;
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            amountCents: components["schemas"]["Cents"];
+            entry?: components["schemas"]["Decimal"];
+            stopLoss?: components["schemas"]["Decimal"];
+            takeProfit?: components["schemas"]["Decimal"];
+            /** Format: int64 */
+            positionId?: number;
+            /** Format: int64 */
+            etoroOrderId?: number;
+            /** @description created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned */
+            state: string;
+            reason: string;
+            sends: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            sentAt?: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
     };
     responses: {
+        /** @description The agent's state after the action */
+        AgentStatus: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AgentStatusResult"];
+            };
+        };
         /** @description Error (RFC 9457 problem details) */
         Problem: {
             headers: {
@@ -1691,7 +1998,10 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /** @description The account (default the caller's current account) */
+        AccountIdQuery: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -3023,6 +3333,203 @@ export interface operations {
             403: components["responses"]["Problem"];
             409: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
+        };
+    };
+    getAgent: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPanel"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    startAgent: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["AgentStatus"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    pauseAgent: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["AgentStatus"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    stopAgent: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["AgentStatus"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    killAgent: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["KillRequest"];
+            };
+        };
+        responses: {
+            /** @description Killed; what was sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KillReport"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            500: components["responses"]["Problem"];
+        };
+    };
+    resetKill: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetKillRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["AgentStatus"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    reconcileAgent: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Reconciliation"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    listOrders: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Orders */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Order"][];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
         };
     };
     listThemes: {

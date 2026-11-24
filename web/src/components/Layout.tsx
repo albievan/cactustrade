@@ -12,6 +12,7 @@ const sections: { title: string; items: Item[] }[] = [
     { to: "/overview", icon: "bi-grid-1x2", label: "Overview" },
     { to: "/", icon: "bi-speedometer2", label: "Dashboard", end: true },
     { to: "/watchlist", icon: "bi-binoculars", label: "Watchlist" },
+    { to: "/orders", icon: "bi-receipt", label: "Orders" },
     { to: "/risk", icon: "bi-shield-check", label: "Risk limits" },
   ] },
   { title: "Research", items: [

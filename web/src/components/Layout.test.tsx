@@ -27,5 +27,6 @@ describe("Layout", () => {
     const links = screen.getAllByRole("link").map((l) => l.textContent);
     expect(links.indexOf("Overview")).toBeLessThan(links.indexOf("Dashboard"));
     expect(links).toContain("Platform accounts");
+    expect(links.indexOf("Orders")).toBeGreaterThan(links.indexOf("Dashboard")); // under Trading
   });
 });

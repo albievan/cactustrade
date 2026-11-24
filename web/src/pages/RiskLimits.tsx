@@ -3,6 +3,7 @@ import { api, errorText, usd, type RiskLimits as Limits } from "../lib/api";
 import { useSession } from "../lib/session";
 import { useMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
+import { InfoCard } from "../components/InfoCard";
 
 // The owner's limits. The risk engine enforces them on every entry; they can be changed only
 // while the agent is stopped, and every change is audited.
@@ -52,7 +53,24 @@ export function RiskLimits() {
         longs buy the real share, shorts are CFDs with a mandatory stop, and nothing is held overnight — fixed in the code.
       </p>
       {status?.account && <p className="small">Account: <strong>{status.account.name}</strong> ({status.account.mode}).</p>}
-      {owner && !editable && <div className="alert alert-info">Stop the agent to change the limits (it is <strong>{status?.agentState}</strong>).</div>}
+      <InfoCard id="risk-states" title="When the limits can change">
+        <p>The limits are locked while the agent could act on them. They can be changed only while it is <strong>stopped</strong>.</p>
+        <ul className="mb-0">
+          <li><strong>Running</strong>: the agent looks for entries at every 5-minute bar close.</li>
+          <li><strong>Paused</strong>: no new entries, but the agent is not stopped: the limits stay locked and it can be started
+            again as it was. Positions due are still closed before the close.</li>
+          <li><strong>Stopped</strong>: no new entries; positions due are still closed. The limits can be changed.</li>
+          <li><strong>Killed</strong>: the kill switch is on (by hand, or because equity fell by the drawdown limit). No entries;
+            cactusTrade closed its own positions. An admin must reset it on the dashboard — the agent then comes back stopped,
+            and the limits can be changed.</li>
+        </ul>
+      </InfoCard>
+      {owner && !editable && status?.agentState === "killed" && (
+        <div className="alert alert-danger">The kill switch is on: an admin must reset it on the dashboard before the limits can change.</div>
+      )}
+      {owner && !editable && status?.agentState !== "killed" && (
+        <div className="alert alert-info">Stop the agent to change the limits (it is <strong>{status?.agentState}</strong>).</div>
+      )}
       {!owner && <div className="alert alert-secondary">Only the account's owner can change its limits.</div>}
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
       {saved && <div className="alert alert-success" role="status">Saved and audited.</div>}

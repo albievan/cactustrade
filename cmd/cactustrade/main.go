@@ -233,7 +233,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 				cancelServe()
 			}()
 		},
-	}, app.Config{Version: version, Build: build, PublicURL: cfg.PublicURL})
+	}, app.Config{Version: version, Build: build, PublicURL: cfg.PublicURL, LeaseHolder: leaseHolderID(host, system.Random{})})
 	if err != nil {
 		return err
 	}
@@ -293,6 +293,9 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	go scannerLoop(ctx, svc, cal, 15*time.Minute)
 	go equityLoop(ctx, svc, time.Minute, 15*time.Minute)
 	go mailLoop(ctx, svc, log, 15*time.Second)
+	// Trading (PLAN 4.14): start-up reconciliation → OD5 resume → supervisor → agent. The
+	// web server is up meanwhile, so the kill switch works from the first second.
+	stopTrading := startTrading(ctx, svc, log)
 
 	errc := make(chan error, 2)
 	var redirect *http.Server
@@ -310,10 +313,11 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	}
 	log.Info("cactusTrade started", "version", version, "build", build, "addr", cfg.Addr, "scheme", scheme,
 		"database", store.Driver(), "container", cfg.Container)
+	var serveErr error
 	select {
 	case err := <-errc:
 		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+			serveErr = err
 		}
 	case <-ctx.Done():
 	}
@@ -323,8 +327,14 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	if redirect != nil {
 		_ = redirect.Shutdown(sctx)
 	}
-	if err := srv.Shutdown(sctx); err != nil {
-		return err
+	shutErr := srv.Shutdown(sctx) // requests in flight (a kill) finish first
+	// Then the loops stop and the leases are released; positions stay as they are (OD6).
+	stopTrading()
+	if serveErr != nil {
+		return serveErr
+	}
+	if shutErr != nil {
+		return shutErr
 	}
 	if restarting.Load() {
 		log.Info("restarting")

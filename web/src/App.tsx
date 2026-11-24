@@ -18,6 +18,7 @@ import { Account } from "./pages/Account";
 import { Email } from "./pages/Email";
 import { ResetPassword } from "./pages/ResetPassword";
 import { Overview } from "./pages/Overview";
+import { Orders } from "./pages/Orders";
 
 export function App() {
   const { me, loading } = useSession();
@@ -38,6 +39,7 @@ export function App() {
         <Route index element={<Dashboard />} />
         <Route path="overview" element={<Overview />} />
         <Route path="watchlist" element={<Watchlist />} />
+        <Route path="orders" element={<Orders />} />
         <Route path="accounts" element={<Accounts />} />
         <Route path="themes" element={<Themes />} />
         <Route path="credentials" element={<Navigate to="/accounts" replace />} />

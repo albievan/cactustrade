@@ -89,6 +89,44 @@ Response `{token, orderId, referenceId}` — **200 = accepted for processing, no
 - Still unverified (U1–U11 in `docs/PLAN.md`): e.g. what eToro does with a resent
   `x-request-id` (U1) and whether a 429 is answered before processing (U7).
 
+### How the app uses execution (phase 4.7–4.14, demo only)
+
+- **Request ids.** Every open, close and cancel is a row in `orders` (state `created`) before
+  anything is sent; the row's UUID is the `x-request-id`, and `orders:lookup?referenceId=` finds
+  the open again after a lost answer. The row moves to `sent` (stored) before the HTTP call.
+- **Polling.** An open is looked up at 1, 2, 4, 8, 15 and 30 s after the send; still pending at
+  60 s → a cancel (its own stored id); still unknown to eToro (404) 2 min after the send →
+  `abandoned`, never resent. A close is read by eToro's `orderForClose.orderID` at 1–30 s.
+- **Resends.** Only an open answered with 429, only with the same id, only after a lookup
+  returned 404, after `Retry-After` (at least 1 s), at most 3 sends. A close answered with 429
+  or lost (and the position still in the portfolio) is resent with the same id (≤ 5).
+- **Fill check.** Every execution must be the long shape (real, long, ×1) or the short shape
+  (cfd, short, ×1), on our instrument, with a stop on the losing side within 1 % of the stop we
+  sent. Otherwise the position is closed at once, the instrument blocked and an alert raised.
+- **Pacing.** The client's execution limiter (20 per 60 s per key) paces everything; a kill
+  with 15 positions and 5 pending orders sends exactly 20 requests in one window (D12 caps open
+  positions at 15).
+- **Real accounts.** Refused before any I/O by the eToro client, the executor, `IntentFor`, the
+  risk engine and agent Start. Reconciliation only reads them.
+
+### Unverified until the owner's live demo run (PLAN 4.17)
+
+Each is handled fail-closed today. 4.17 records fixtures and settles them.
+
+| # | Question | How cactusTrade behaves meanwhile |
+|---|---|---|
+| U1 | What eToro does with an open resent with the same `x-request-id` (deduplicate, refuse, or a second order) | Resent only after a 429 *and* a lookup 404, ≤ 3 sends; any other unclear outcome is never resent (OD2) |
+| U2 | How long until `orders:lookup` finds a new order | A 404 within 2 min of the send is "in flight": cash stays reserved and the instrument blocked; after 2 min → abandoned |
+| U3 | No lookup by reference for closes; what a second close of a closed position returns | Closes are read by eToro's order id; a lost close answer is settled by re-reading the portfolio; "position not found" and absent from the portfolio → recorded closed |
+| U4 | LSE stop and rate units (GBX vs GBP, Q1) | No LSE entries (OD9); every fill's stop must be within 1 % of ours (a ×100 mix-up fails) |
+| U5 | Whether the newest candle is still forming | Every bar that has not closed at the decision time is dropped; the newest closed bar must be at most two intervals old |
+| U6 | What `isPotential` means in eligibility | Counted as "not offered" |
+| U7 | Whether a 429 is answered before the request is processed | The lookup must return 404 before the same id is sent again |
+| U8 | Whether a status-11 (waiting for market) order can be cancelled | A cancel is sent at 60 s and confirmed by lookup; unconfirmed after 2 min → abandoned and retried by the supervisor at most once a minute; entries in that instrument stay blocked |
+| U9 | Partial fills of orders by amount | The filled part is recorded and checked like any fill; a partial that eToro reports final ends `cancelled` with its positions kept |
+| U10 | Whether `credit` already excludes cash held for pending orders | Our own non-final orders *and* eToro's `ordersForOpen` are both subtracted (double counting, conservative, D24) |
+| U11 | How quickly a fill shows in `pnl` | A recorded position missing from the portfolio is taken for closed only 2 min after it was recorded |
+
 ### Shorts (owner's decision D19)
 
 A short is `transaction: "sellShort"` with `settlementType: "cfd"` at `leverage: 1` — the

@@ -11,13 +11,27 @@ Kubernetes using the same `deploy.sh` as the other cactus apps.
 > implies that it is profitable. It runs in **demo mode by default**. Real money needs a
 > deliberate, gated switch, and you use it entirely at your own risk (see `LICENSE`).
 
-**Status: phases 1–2 done, phase 3 in progress (of 7).** Sign-in, roles, API keys, the encrypted write-only
-credential store, deployment, and now a **read-only** eToro client: test connection, account
-cash/equity/positions, market sessions (LSE, NYSE/NASDAQ) and a watchlist of eligible shares
-with live quotes (WebSocket stream, REST fallback), and the phase-3 regime model, playbooks
-and walk-forward backtester (`cactustrade backtest --instrument ID`). **It cannot trade yet:**
-order operations are refused inside the client until phase 4 (demo orders). Backtests
-describe the past only; they are not a forecast and not advice. See [`docs/PLAN.md`](docs/PLAN.md).
+**Status: phases 1–2 done, phase 3 done except its live check (3.6), phase 4 done except the owner's live demo run (4.17), of 7.** Sign-in,
+roles, API keys, the encrypted write-only credential store, deployment, the eToro client,
+market sessions (LSE, NYSE/NASDAQ, ASX), watchlists, the regime model, playbooks and
+walk-forward backtester (`cactustrade backtest --instrument ID`), and now **demo execution**:
+the risk engine, the agent (entries at each 5-minute bar close), the supervisor (exits), the
+kill switch, reconciliation with eToro and the Orders page. **Demo accounts only:** a real-money
+account is refused in five places until the phase-7 gate. The execution code has been tested
+against a simulated eToro account; it has **not yet run against eToro's demo** (PLAN 4.17,
+the owner's run) and several eToro behaviours are still unverified
+([`docs/etoro-api.md`](docs/etoro-api.md), U1–U11). Backtests describe the past only; they are
+not a forecast and not advice. See [`docs/PLAN.md`](docs/PLAN.md).
+
+> **Before you start the agent.** On a demo account the agent opens and closes positions by
+> itself. It can lose the account's demo money; the limits only bound how fast. The
+> supervisor also watches the account's whole equity: a fall of the drawdown limit (default
+> 10 %) — including from positions you opened yourself, or a withdrawal — trips the kill
+> switch, which stops entries and closes the positions **cactusTrade** opened (never yours).
+> Shorts are CFDs: their loss is not capped by the amount invested, and they carry overnight
+> fees and margin; each has a stop above the entry and every position is closed before the
+> session ends. A position eToro has not stopped out keeps its eToro-side stop when
+> cactusTrade is stopped or shut down; nothing closes it until cactusTrade runs again.
 
 ## Money guardrails (enforced in code, covered by tests)
 
@@ -26,13 +40,15 @@ describe the past only; they are not a forecast and not advice. See [`docs/PLAN.
   portfolio, order info, open, cancel, close and SL/TP. It has no transfer, deposit, withdrawal,
   balance-history, sub-account, copy-trading or social endpoints. A test parses the package
   source and fails the build if any other `/api/` path appears.
-- **Leverage 1, `buy`, `settlementType: real`.** These are constants, not parameters.
+- **Leverage 1, exactly two order shapes.** A long is `buy` + `settlementType: real` (the
+  share); a short is `sellShort` + `cfd`, with a stop above the entry, all shorts together at
+  most 25 % of the trading budget. These are constants, not parameters.
 - **Never spend more than is in the account.** Orders are capped at `min(available cash,
   remaining trading budget)`, using fresh balances, with cash reserved for pending orders.
-  *(Enforced from phase 4.)*
 - **The LLM can only approve, shrink or reject.** It has no tools and no path to the broker
   (depguard enforces this). It fails closed, exits always work, and orders are idempotent
-  through persisted request ids. *(Phases 4–5.)*
+  through request ids stored before they are sent. Start-up reconciles with eToro before
+  anything trades.
 
 The full list is in [`CLAUDE.md` §2](CLAUDE.md).
 

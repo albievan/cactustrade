@@ -52,6 +52,11 @@ export type PlatformInfo = components["schemas"]["PlatformInfo"];
 export type CredentialSpec = components["schemas"]["CredentialSpec"];
 export type AccountCredential = components["schemas"]["AccountCredential"];
 export type ConnectStart = components["schemas"]["ConnectStart"];
+export type AgentPanel = components["schemas"]["AgentPanel"];
+export type AgentStatusResult = components["schemas"]["AgentStatusResult"];
+export type KillReport = components["schemas"]["KillReport"];
+export type Reconciliation = components["schemas"]["Reconciliation"];
+export type Order = components["schemas"]["Order"];
 
 export class ApiError extends Error {
   constructor(
@@ -177,6 +182,16 @@ export const api = {
   setAccountCredentials: (id: string, values: Record<string, string>) =>
     request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/keys`, { values }),
   platforms: () => request<PlatformInfo[]>("GET", "/api/v1/platforms"),
+  // The agent of the current account (PLAN 4.13). The server decides who may do what
+  // (AgentPanel.controls); start and reset work only in a web session.
+  agent: () => request<AgentPanel>("GET", "/api/v1/agent"),
+  startAgent: () => request<AgentStatusResult>("POST", "/api/v1/agent/start"),
+  pauseAgent: () => request<AgentStatusResult>("POST", "/api/v1/agent/pause"),
+  stopAgent: () => request<AgentStatusResult>("POST", "/api/v1/agent/stop"),
+  killAgent: (reason: string) => request<KillReport>("POST", "/api/v1/agent/kill", { reason }),
+  resetKill: (confirm: string) => request<AgentStatusResult>("POST", "/api/v1/agent/reset", { confirm }),
+  reconcileAgent: () => request<Reconciliation>("POST", "/api/v1/agent/reconcile"),
+  orders: (limit = 100) => request<Order[]>("GET", `/api/v1/orders?limit=${limit}`),
   connectSaxo: (id: string) => request<ConnectStart>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/saxo/connect`),
   testAccount: (id: string) => request<BrokerCheck>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/test`),
   accountShares: (id: string) => request<AccountShare[]>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/shares`),

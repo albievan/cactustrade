@@ -36,7 +36,7 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `PasswordHasher` | `argon2` (argon2id, 64 MiB, t=3) |
 | `Clock`, `Random` | `system` |
 | `EventBus` | `eventbus` (in-process, never blocks a publisher) |
-| `MarketCalendar` | `calendar` (LSE, NYSE/NASDAQ; tables 2026–2027) |
+| `MarketCalendar` | `calendar` (LSE, NYSE/NASDAQ, ASX; tables 2026–2027) |
 | `MarketData` | `etoro.Feed` (WebSocket stream, REST fallback) |
 | `Broker` | `etoro.Client`: reads, plus open / close / cancel for **demo accounts only** (phase 4.6); `fakes.SimBroker` simulates a demo account for executor tests |
 | `Orders`, `AgentPositions`, `RiskStates`, `InstrumentBlocks`, `AgentLeases` (repository) | `sqlstore` (migration 00009): our orders keyed by `x-request-id`, the positions cactusTrade opened, the risk state per account (versioned), blocked instruments, the single-writer lease (D22) |
@@ -70,6 +70,74 @@ wiring can swap in a laxer one.
 - `orders.Update(prev, next)` is a compare-and-set on (state, sends); `risk_state` carries a
   version (stale write → `ErrConflict`, so a kill is never overwritten by an older read);
   `agent_leases.Acquire` lets exactly one holder win.
+
+### Trading runtime (phase 4)
+
+Three paths act on an eToro demo account. Only the executor (`app/executor.go`) talks to the
+`Broker` for account changes; the supervisor, the agent and the kill switch all go through it.
+
+```
+ start-up (cmd/cactustrade/trading.go, in this order, while the web server is already up)
+   migrate → app.New → default admin / LLM profile migration / environment account
+   → ReconcileAll (≤ 2 min)  → ResumeAgents (OD5)  → SuperviseLoop  → AgentLoop
+ shutdown: HTTP drains (a kill in flight finishes) → loops stop → ReleaseLeases; positions stay (OD6)
+```
+
+- **Executor.** `placeEntry` stores the order row (`created`) first, re-checks the
+  portfolio's age, marks it `sent` (stored), then calls `Open` with the row's id as
+  `x-request-id`. It polls `orders:lookup` by that id (1, 2, 4, 8, 15, 30 s, then cancel at
+  60 s, abandoned at 2 min when eToro never saw it). A 429 is the only case that resends,
+  with the same id (≤ 3 sends); a lost answer is resolved by lookup, never resent (OD2).
+  Every fill is checked against the two order shapes, leverage 1 and the stop we sent (± 1 %);
+  a fill that does not conform is closed at once and its instrument blocked.
+  `closePosition` and `cancelOrder` follow the same rules with their own stored ids.
+- **Reconciliation** (`app/reconcile.go`) resolves every non-final order of ours by its id and
+  matches the positions cactusTrade opened (`agent_positions`) with eToro. Positions opened
+  outside cactusTrade are never closed (OD1); a non-conforming one keeps the account
+  unreconciled. The result is an in-memory flag per account: entries need it, and "never
+  reconciled in this process" is not reconciled. It runs at start-up before any loop, every
+  5 minutes from the supervisor, and on demand (`POST /api/v1/agent/reconcile`).
+- **Supervisor (D21).** `SuperviseLoop` runs every 10 s, one goroutine per eToro demo account
+  with keys (2 min timeout; an account still busy is skipped). Whatever the agent's state, it
+  takes the lease, reads the portfolio (or, when that fails, uses the recorded agent positions
+  with the session rule only), folds the equity into the risk state (risk day from 22:00 UTC,
+  high-water mark, daily latch), trips the kill switch on a drawdown, closes positions due
+  (flatten 10 min before their own market's close, non-conforming, bad stop, killed) and
+  cancels open orders pending for over a minute. It needs no LLM, no prices and no
+  reconciliation.
+- **Agent (entries).** `AgentLoop` wakes at each 5-minute bar close + 5 s (D26). An account
+  ticks only when it is eToro, demo, running, not killed, reconciled, holds the lease and a
+  market calendar is configured (D25). Per watchlist share in session: closed bars only →
+  strategy → cost gate (OD8) → reviewer (OD7; only shrinks, D23) → fresh portfolio and quote
+  → reservations from our own orders (D24) → `domain.AssessEntry` (D20) → `placeEntry`.
+- **Control.** Start, Pause, Stop, Kill, ResetKill, `SetRiskLimits`, the supervisor's kill and
+  the OD5 resume take the account's *control* lock; one agent tick holds the *entry* lock.
+  Order: control, then entry; a tick never waits for control. Kill stores the kill first,
+  cancels the running tick, waits for the entry lock, then cancels our pending orders and
+  closes our positions (each sent once; the supervisor follows them up). Limits change only
+  while the agent is stopped. API keys may pause, stop and kill, never start or reset (OD11).
+- **Lease (D22).** `agent_leases` holds one row per account: holder and expiry (30 s). The
+  executor renews it before every send and resend; the supervisor before every pass. Each
+  process has its own holder id (host name + a random UUID, `Config.LeaseHolder`), so two
+  standalone binaries on one SQLite file, or an overlapping container during an upgrade, never
+  both send. A graceful shutdown releases it; a crash leaves it to expire.
+- **The web view.** `GET /api/v1/agent` shows state, reconciliation, kill reason, the risk-day
+  figures and the distance to the daily floor and to the drawdown floor (`domain.DailyFloor`,
+  `domain.DrawdownFloor`, the same arithmetic the engine uses), blocked instruments, today's
+  flatten time per market, the lease and which controls the caller may use (decided by the
+  use cases, not the UI). `GET /api/v1/orders` lists our orders. Agent endpoints answer 403
+  (forbidden, view-only, real mode gated), 409 (state conflict) and 422 (no budget, wrong
+  reset phrase).
+
+| # | Decision (PLAN) |
+|---|---|
+| D20 | The risk engine is the pure `domain.AssessEntry`; there is no `RiskEngine` port to swap. |
+| D21 | Exits never depend on the agent: the supervisor runs whatever the agent state. |
+| D22 | Single writer per account: the lease must be held to send anything. |
+| D23 | The reviewer's multiplier becomes integer basis points (floor) at the LLM edge; `ApplyVerdict` only shrinks. |
+| D24 | Reservations come from our own non-final orders; eToro's `ordersForOpen` counts too (conservative). An `unknown` order blocks entries. |
+| D25 | Entries need a calendar; without one every market is closed for entries. |
+| D26 | Decisions on 5-minute bars, at each bar close + 5 s. |
 
 ## Accounts
 

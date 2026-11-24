@@ -487,8 +487,96 @@ type AddWatchRequest struct {
 	InstrumentId int64 `json:"instrumentId"`
 }
 
+// AgentControls The agent actions the caller may take on this account
+type AgentControls struct {
+	// Gated a real-money account: real trading needs the phase-7 gate
+	Gated bool `json:"gated"`
+	Kill  bool `json:"kill"`
+	Pause bool `json:"pause"`
+	Reset bool `json:"reset"`
+	Start bool `json:"start"`
+	Stop  bool `json:"stop"`
+}
+
+// AgentLease Who may send orders for the account (one process at a time)
+type AgentLease struct {
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+	// Mine this server holds it
+	Mine bool `json:"mine"`
+
+	// Other another process holds it: this server sends nothing
+	Other bool `json:"other"`
+}
+
+// AgentPanel defines model for AgentPanel.
+type AgentPanel struct {
+	Account Account             `json:"account"`
+	Blocked []BlockedInstrument `json:"blocked"`
+
+	// Controls The agent actions the caller may take on this account
+	Controls AgentControls `json:"controls"`
+
+	// DailyFloorCents US dollars in cents (the eToro account currency is USD)
+	DailyFloorCents *Cents `json:"dailyFloorCents,omitempty"`
+
+	// DayStopped the daily floor was reached: no entries until the next risk day (22:00 UTC)
+	DayStopped bool `json:"dayStopped"`
+
+	// DrawdownFloorCents US dollars in cents (the eToro account currency is USD)
+	DrawdownFloorCents *Cents `json:"drawdownFloorCents,omitempty"`
+
+	// EquityCents US dollars in cents (the eToro account currency is USD)
+	EquityCents *Cents        `json:"equityCents,omitempty"`
+	EquityError *string       `json:"equityError,omitempty"`
+	EquityKnown bool          `json:"equityKnown"`
+	Flatten     []FlattenTime `json:"flatten"`
+
+	// HighWaterMarkCents US dollars in cents (the eToro account currency is USD)
+	HighWaterMarkCents Cents      `json:"highWaterMarkCents"`
+	KillReason         *string    `json:"killReason,omitempty"`
+	Killed             bool       `json:"killed"`
+	KilledAt           *time.Time `json:"killedAt,omitempty"`
+
+	// Lease Who may send orders for the account (one process at a time)
+	Lease  AgentLease `json:"lease"`
+	Limits RiskLimits `json:"limits"`
+
+	// OpenPositions positions cactusTrade opened that are open
+	OpenPositions int `json:"openPositions"`
+
+	// PendingOrders orders of ours that are not final
+	PendingOrders  int            `json:"pendingOrders"`
+	Reconciliation Reconciliation `json:"reconciliation"`
+
+	// ResetPhrase what an admin types to reset the kill switch
+	ResetPhrase string `json:"resetPhrase"`
+
+	// RiskDay the risk day of the stored figures (empty = none yet)
+	RiskDay string `json:"riskDay"`
+
+	// StartOfDayEquityCents US dollars in cents (the eToro account currency is USD)
+	StartOfDayEquityCents Cents      `json:"startOfDayEquityCents"`
+	State                 AgentState `json:"state"`
+
+	// ToDailyFloorCents US dollars in cents (the eToro account currency is USD)
+	ToDailyFloorCents *Cents `json:"toDailyFloorCents,omitempty"`
+
+	// ToDrawdownFloorCents US dollars in cents (the eToro account currency is USD)
+	ToDrawdownFloorCents *Cents `json:"toDrawdownFloorCents,omitempty"`
+
+	// Today the current risk day
+	Today string `json:"today"`
+}
+
 // AgentState defines model for AgentState.
 type AgentState string
+
+// AgentStatusResult defines model for AgentStatusResult.
+type AgentStatusResult struct {
+	AccountId string     `json:"accountId"`
+	State     AgentState `json:"state"`
+}
 
 // ApiKey defines model for ApiKey.
 type ApiKey struct {
@@ -511,6 +599,14 @@ type AuditEntry struct {
 	Id       int64     `json:"id"`
 	RemoteIp string    `json:"remoteIp"`
 	Target   string    `json:"target"`
+}
+
+// BlockedInstrument defines model for BlockedInstrument.
+type BlockedInstrument struct {
+	At           time.Time `json:"at"`
+	InstrumentId int64     `json:"instrumentId"`
+	Reason       string    `json:"reason"`
+	Symbol       string    `json:"symbol"`
 }
 
 // BrokerCheck defines model for BrokerCheck.
@@ -732,6 +828,21 @@ type EventFeed struct {
 	Unread int     `json:"unread"`
 }
 
+// FlattenTime defines model for FlattenTime.
+type FlattenTime struct {
+	Closes *time.Time `json:"closes,omitempty"`
+
+	// FlattenAt every position of this market is closed from then on
+	FlattenAt *time.Time `json:"flattenAt,omitempty"`
+
+	// Market LSE, NYSE (NYSE and NASDAQ share a calendar), ASX or "" when not tradable here
+	Market Market  `json:"market"`
+	Note   *string `json:"note,omitempty"`
+
+	// Trading the market trades today
+	Trading bool `json:"trading"`
+}
+
 // Health defines model for Health.
 type Health struct {
 	Detail *string      `json:"detail,omitempty"`
@@ -822,6 +933,27 @@ type Instrument struct {
 	Name   string `json:"name"`
 	Symbol string `json:"symbol"`
 	Type   string `json:"type"`
+}
+
+// KillReport defines model for KillReport.
+type KillReport struct {
+	AccountId string `json:"accountId"`
+
+	// Already the kill switch was already on (flattened again)
+	Already bool `json:"already"`
+
+	// Cancelled cancels sent for cactusTrade's pending open orders
+	Cancelled int `json:"cancelled"`
+
+	// Closing closes sent or in flight for positions cactusTrade opened
+	Closing int      `json:"closing"`
+	Errors  []string `json:"errors"`
+}
+
+// KillRequest defines model for KillRequest.
+type KillRequest struct {
+	// Reason why (kept in the audit log and the event)
+	Reason *string `json:"reason,omitempty"`
 }
 
 // LlmModelsRequest defines model for LlmModelsRequest.
@@ -952,6 +1084,43 @@ type NotifyPrefs struct {
 	Watchlist bool `json:"watchlist"`
 }
 
+// Order defines model for Order.
+type Order struct {
+	// AmountCents US dollars in cents (the eToro account currency is USD)
+	AmountCents Cents     `json:"amountCents"`
+	CreatedAt   time.Time `json:"createdAt"`
+
+	// Direction long, short or empty (cancel)
+	Direction string `json:"direction"`
+
+	// Entry An exact decimal (prices and units, up to 6 places)
+	Entry        *Decimal `json:"entry,omitempty"`
+	EtoroOrderId *int64   `json:"etoroOrderId,omitempty"`
+	InstrumentId int64    `json:"instrumentId"`
+
+	// Kind open, close or cancel
+	Kind       string      `json:"kind"`
+	Mode       TradingMode `json:"mode"`
+	PositionId *int64      `json:"positionId,omitempty"`
+	Reason     string      `json:"reason"`
+
+	// RequestId our x-request-id, stored before the order is sent
+	RequestId string     `json:"requestId"`
+	Sends     int        `json:"sends"`
+	SentAt    *time.Time `json:"sentAt,omitempty"`
+
+	// State created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned
+	State string `json:"state"`
+
+	// StopLoss An exact decimal (prices and units, up to 6 places)
+	StopLoss *Decimal `json:"stopLoss,omitempty"`
+	Symbol   string   `json:"symbol"`
+
+	// TakeProfit An exact decimal (prices and units, up to 6 places)
+	TakeProfit *Decimal  `json:"takeProfit,omitempty"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
 // OutboxMail defines model for OutboxMail.
 type OutboxMail struct {
 	Attempts  int        `json:"attempts"`
@@ -1078,9 +1247,29 @@ type Quote struct {
 	InstrumentId int64   `json:"instrumentId"`
 }
 
+// Reconciliation defines model for Reconciliation.
+type Reconciliation struct {
+	AccountId string `json:"accountId"`
+
+	// At absent = not reconciled since the start
+	At *time.Time `json:"at,omitempty"`
+
+	// Ok eToro and our records agree; entries need it
+	Ok bool `json:"ok"`
+
+	// Reason why not OK (empty when OK)
+	Reason string `json:"reason"`
+}
+
 // RenameAccountRequest defines model for RenameAccountRequest.
 type RenameAccountRequest struct {
 	Name string `json:"name"`
+}
+
+// ResetKillRequest defines model for ResetKillRequest.
+type ResetKillRequest struct {
+	// Confirm exactly RESET <account name>
+	Confirm string `json:"confirm"`
 }
 
 // Review defines model for Review.
@@ -1283,6 +1472,54 @@ type WatchItem struct {
 	Instrument  Instrument  `json:"instrument"`
 }
 
+// AccountIdQuery defines model for AccountIdQuery.
+type AccountIdQuery = string
+
+// AgentStatus defines model for AgentStatus.
+type AgentStatus = AgentStatusResult
+
+// GetAgentParams defines parameters for GetAgent.
+type GetAgentParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// KillAgentParams defines parameters for KillAgent.
+type KillAgentParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// PauseAgentParams defines parameters for PauseAgent.
+type PauseAgentParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// ReconcileAgentParams defines parameters for ReconcileAgent.
+type ReconcileAgentParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// ResetKillParams defines parameters for ResetKill.
+type ResetKillParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// StartAgentParams defines parameters for StartAgent.
+type StartAgentParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// StopAgentParams defines parameters for StopAgent.
+type StopAgentParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
 // ListAuditParams defines parameters for ListAudit.
 type ListAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -1303,6 +1540,13 @@ type SaxoCallbackParams struct {
 	Code  *string `form:"code,omitempty" json:"code,omitempty"`
 	State *string `form:"state,omitempty" json:"state,omitempty"`
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
+// ListOrdersParams defines parameters for ListOrders.
+type ListOrdersParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+	Limit     *int            `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetEquityHistoryParams defines parameters for GetEquityHistory.
@@ -1329,6 +1573,12 @@ type SetAccountKeysJSONRequestBody = SetAccountKeysRequest
 
 // ShareAccountJSONRequestBody defines body for ShareAccount for application/json ContentType.
 type ShareAccountJSONRequestBody = ShareAccountRequest
+
+// KillAgentJSONRequestBody defines body for KillAgent for application/json ContentType.
+type KillAgentJSONRequestBody = KillRequest
+
+// ResetKillJSONRequestBody defines body for ResetKill for application/json ContentType.
+type ResetKillJSONRequestBody = ResetKillRequest
 
 // CreateApiKeyJSONRequestBody defines body for CreateApiKey for application/json ContentType.
 type CreateApiKeyJSONRequestBody = CreateApiKeyRequest
@@ -1428,6 +1678,27 @@ type ServerInterface interface {
 	// TestAccount Test the account's eToro connection (owner; one read-only call)
 	// (POST /api/v1/accounts/{accountId}/test)
 	TestAccount(w http.ResponseWriter, r *http.Request, accountId string)
+	// GetAgent The agent of an account — state, reconciliation, kill switch, distance to the limits (viewer)
+	// (GET /api/v1/agent)
+	GetAgent(w http.ResponseWriter, r *http.Request, params GetAgentParams)
+	// KillAgent Pull the kill switch (operator with trade access; session or API key)
+	// (POST /api/v1/agent/kill)
+	KillAgent(w http.ResponseWriter, r *http.Request, params KillAgentParams)
+	// PauseAgent Pause a running agent — no new entries, exits continue, limits stay locked (operator; session or API key)
+	// (POST /api/v1/agent/pause)
+	PauseAgent(w http.ResponseWriter, r *http.Request, params PauseAgentParams)
+	// ReconcileAgent Reconcile the account with eToro now (operator with trade access; read-only on eToro)
+	// (POST /api/v1/agent/reconcile)
+	ReconcileAgent(w http.ResponseWriter, r *http.Request, params ReconcileAgentParams)
+	// ResetKill Reset the kill switch (admin, web session only, typed phrase "RESET <account name>")
+	// (POST /api/v1/agent/reset)
+	ResetKill(w http.ResponseWriter, r *http.Request, params ResetKillParams)
+	// StartAgent Start the agent (operator with trade access, web session only — never an API key)
+	// (POST /api/v1/agent/start)
+	StartAgent(w http.ResponseWriter, r *http.Request, params StartAgentParams)
+	// StopAgent Stop the agent — no new entries, exits continue, limits may change (operator; session or API key)
+	// (POST /api/v1/agent/stop)
+	StopAgent(w http.ResponseWriter, r *http.Request, params StopAgentParams)
 	// ListApiKeys List your API keys (admins see all)
 	// (GET /api/v1/api-keys)
 	ListApiKeys(w http.ResponseWriter, r *http.Request)
@@ -1524,6 +1795,9 @@ type ServerInterface interface {
 	// SaxoCallback Saxo sends the browser back here after sign-in (public; redirects to /accounts)
 	// (GET /api/v1/oauth/saxo/callback)
 	SaxoCallback(w http.ResponseWriter, r *http.Request, params SaxoCallbackParams)
+	// ListOrders The account's orders to eToro, newest first (viewer)
+	// (GET /api/v1/orders)
+	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
 	// GetOverview Every account you can view, on every platform — cash, equity, positions (viewer)
 	// (GET /api/v1/overview)
 	GetOverview(w http.ResponseWriter, r *http.Request)
@@ -1895,6 +2169,237 @@ func (siw *ServerInterfaceWrapper) TestAccount(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.TestAccount(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAgent operation middleware
+func (siw *ServerInterfaceWrapper) GetAgent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAgentParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAgent(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// KillAgent operation middleware
+func (siw *ServerInterfaceWrapper) KillAgent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params KillAgentParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.KillAgent(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PauseAgent operation middleware
+func (siw *ServerInterfaceWrapper) PauseAgent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PauseAgentParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PauseAgent(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReconcileAgent operation middleware
+func (siw *ServerInterfaceWrapper) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReconcileAgentParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReconcileAgent(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResetKill operation middleware
+func (siw *ServerInterfaceWrapper) ResetKill(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ResetKillParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResetKill(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartAgent operation middleware
+func (siw *ServerInterfaceWrapper) StartAgent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StartAgentParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartAgent(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopAgent operation middleware
+func (siw *ServerInterfaceWrapper) StopAgent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StopAgentParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopAgent(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2517,6 +3022,52 @@ func (siw *ServerInterfaceWrapper) SaxoCallback(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SaxoCallback(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOrders operation middleware
+func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOrdersParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrders(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3192,6 +3743,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/events/seen", wrapper.MarkEventsSeen)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.GetRiskLimits)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.SetRiskLimits)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent", wrapper.GetAgent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/start", wrapper.StartAgent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/pause", wrapper.PauseAgent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/stop", wrapper.StopAgent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/kill", wrapper.KillAgent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/reset", wrapper.ResetKill)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/reconcile", wrapper.ReconcileAgent)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/orders", wrapper.ListOrders)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/themes", wrapper.ListThemes)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/themes", wrapper.CreateTheme)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/themes/{themeId}", wrapper.DeleteTheme)
