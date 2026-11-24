@@ -22,6 +22,11 @@ const agentViewTimeout = 10 * time.Second
 type AgentControls struct {
 	Start, Pause, Stop, Kill, Reset bool
 	Gated                           bool
+	// ForceClose follows ForceClose's rules (R24): admin, web session, trade access, a demo
+	// account. ForceCloseBlocked says why it is false on a real-money account for a caller
+	// who could otherwise use it ("" otherwise).
+	ForceClose        bool
+	ForceCloseBlocked string
 }
 
 // FlattenTime is when the supervisor closes the positions of one market today.
@@ -137,6 +142,62 @@ func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID st
 	return out, nil
 }
 
+// AgentCard is one account's agent in the list on the Risk limits page (R23): no eToro
+// read, so a page with many accounts stays cheap.
+type AgentCard struct {
+	Account domain.AccountView
+	// Current: the caller's current account (the one the limits form edits).
+	Current        bool
+	State          domain.AgentState
+	Killed         bool
+	Reconciliation Reconciliation
+	// LimitsEditable follows SetRiskLimits' rules for this caller now; LimitsBlocked says
+	// why not ("" when editable).
+	LimitsEditable bool
+	LimitsBlocked  string
+	Controls       AgentControls
+	// StartBlocked: as AgentView.StartBlocked.
+	StartBlocked           string
+	OpenPositions, Pending int
+}
+
+// AgentCards lists the agent of every eToro account the caller can view (R23), with the
+// controls the caller may use there (the same rules as AgentStatusView) and whether the
+// caller may change its limits now. It reads only the database and this process's state.
+func (s *Service) AgentCards(ctx context.Context, p Principal) ([]AgentCard, error) {
+	vs, err := s.Accounts(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	cur := s.currentAccountID(ctx, p, vs)
+	why := s.agentLoopBlocked()
+	out := make([]AgentCard, 0, len(vs))
+	for _, v := range vs {
+		if !v.Tradable() {
+			continue
+		}
+		c := AgentCard{
+			Account: v, Current: v.ID == cur, State: s.agentState(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
+			LimitsBlocked: s.limitsEditBlocked(ctx, p, v), Controls: s.controlsFor(p, v),
+		}
+		c.LimitsEditable = c.LimitsBlocked == ""
+		if killed, err := s.isKilled(ctx, v.ID); killed && err == nil {
+			c.Killed = true
+		}
+		if why != "" && c.Controls.Start {
+			c.Controls.Start, c.StartBlocked = false, why
+		}
+		if ps, err := s.d.Store.AgentPositions().ListOpen(ctx, v.ID); err == nil {
+			c.OpenPositions = len(ps)
+		}
+		if os, err := s.d.Store.Orders().ListOpen(ctx, v.ID); err == nil {
+			c.Pending = len(os)
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
 // missingFor applies startable's rules without running StartAgent (R22), and adds an empty
 // watchlist and a switched-on reviewer that cannot review. A store error leaves the item out:
 // the list is guidance, StartAgent still checks everything.
@@ -235,6 +296,12 @@ func (s *Service) controlsFor(p Principal, v domain.AccountView) AgentControls {
 	c.Start = ctl && session && !c.Gated
 	c.Kill = trade && p.Can(domain.PermKillSwitch)
 	c.Reset = c.Kill && session && p.Role == domain.RoleAdmin
+	if trade && session && p.Can(domain.PermForceClose) {
+		c.ForceClose = !c.Gated
+		if c.Gated {
+			c.ForceCloseBlocked = msgForceCloseGated
+		}
+	}
 	return c
 }
 

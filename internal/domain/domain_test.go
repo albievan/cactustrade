@@ -24,6 +24,9 @@ func TestRoles(t *testing.T) {
 		{RoleAdmin, PermManageUsers, true},
 		{RoleAdmin, PermManageSecrets, true},
 		{RoleAdmin, PermSwitchMode, true},
+		{RoleAdmin, PermForceClose, true},
+		{RoleOperator, PermForceClose, false},
+		{RoleViewer, PermForceClose, false},
 		{Role("root"), PermView, false},
 	}
 	for _, tt := range tests {

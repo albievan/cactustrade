@@ -70,6 +70,15 @@ export type HistorySummary = components["schemas"]["HistorySummary"];
 export type HistoryTrade = components["schemas"]["HistoryTrade"];
 export type HistoryDay = components["schemas"]["HistoryDay"];
 export type DailyHistory = components["schemas"]["DailyHistory"];
+export type AgentCard = components["schemas"]["AgentCard"];
+export type ForceClosePlan = components["schemas"]["ForceClosePlan"];
+export type ForceCloseReport = components["schemas"]["ForceCloseReport"];
+export type WatchlistCount = components["schemas"]["WatchlistCount"];
+
+// forAccount is "?accountId=…" for a named account, "" for the current one.
+function forAccount(accountId?: string): string {
+  return accountId ? `?accountId=${encodeURIComponent(accountId)}` : "";
+}
 
 // HistoryFile is one of the CSV exports of GET /api/v1/history/export/{file}.
 export type HistoryFile = "trades.csv" | "daily.csv" | "equity.csv" | "orders.csv" | "decisions.csv";
@@ -217,9 +226,19 @@ export const api = {
   // The agent of the current account (PLAN 4.13). The server decides who may do what
   // (AgentPanel.controls); start and reset work only in a web session.
   agent: () => request<AgentPanel>("GET", "/api/v1/agent"),
-  startAgent: () => request<AgentStatusResult>("POST", "/api/v1/agent/start"),
-  pauseAgent: () => request<AgentStatusResult>("POST", "/api/v1/agent/pause"),
-  stopAgent: () => request<AgentStatusResult>("POST", "/api/v1/agent/stop"),
+  // accountId names another account than the current one (the agent cards, R23).
+  startAgent: (accountId?: string) => request<AgentStatusResult>("POST", "/api/v1/agent/start" + forAccount(accountId)),
+  pauseAgent: (accountId?: string) => request<AgentStatusResult>("POST", "/api/v1/agent/pause" + forAccount(accountId)),
+  stopAgent: (accountId?: string) => request<AgentStatusResult>("POST", "/api/v1/agent/stop" + forAccount(accountId)),
+  // The agent of every eToro account the caller can see (R23).
+  agents: () => request<AgentCard[]>("GET", "/api/v1/agents"),
+  // Force close (R24): admin, web session, password. The previews only read cactusTrade's records.
+  forceClosePreview: (accountId?: string) => request<ForceClosePlan>("GET", "/api/v1/agent/force-close" + forAccount(accountId)),
+  forceClose: (password: string, accountId?: string) =>
+    request<ForceCloseReport>("POST", "/api/v1/agent/force-close" + forAccount(accountId), { password }),
+  forceCloseAllPreview: () => request<ForceClosePlan[]>("GET", "/api/v1/agent/force-close-all"),
+  forceCloseAll: (password: string) => request<ForceCloseReport[]>("POST", "/api/v1/agent/force-close-all", { password }),
+  watchlistCounts: () => request<WatchlistCount[]>("GET", "/api/v1/watchlist/counts"),
   killAgent: (reason: string) => request<KillReport>("POST", "/api/v1/agent/kill", { reason }),
   resetKill: (confirm: string) => request<AgentStatusResult>("POST", "/api/v1/agent/reset", { confirm }),
   reconcileAgent: () => request<Reconciliation>("POST", "/api/v1/agent/reconcile"),

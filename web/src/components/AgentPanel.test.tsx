@@ -1,10 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentPanel } from "./AgentPanel";
 import type { AgentPanel as Panel } from "../lib/api";
 
-const all = { start: true, pause: true, stop: true, kill: true, reset: true, gated: false };
+const all = { start: true, pause: true, stop: true, kill: true, reset: true, gated: false, forceClose: false };
 
 function panel(over: Partial<Panel> = {}): Panel {
   return {
@@ -72,8 +72,8 @@ describe("AgentPanel", () => {
   });
 
   it.each([
-    ["a viewer", { start: false, pause: false, stop: false, kill: false, reset: false, gated: false }],
-    ["an operator with view access", { start: false, pause: false, stop: false, kill: false, reset: false, gated: false }],
+    ["a viewer", { start: false, pause: false, stop: false, kill: false, reset: false, gated: false, forceClose: false }],
+    ["an operator with view access", { start: false, pause: false, stop: false, kill: false, reset: false, gated: false, forceClose: false }],
   ])("disables every control for %s", async (_who, controls) => {
     serve(panel({ state: "stopped", controls }));
     await screen.findByText("stopped");
@@ -231,5 +231,76 @@ describe("AgentPanel missing setup (R22)", () => {
     expect(screen.getByLabelText("Start the agent")).toHaveAttribute("title", "Cannot start: " + reason);
     expect(screen.getByRole("status")).toHaveTextContent("The agent cannot be started: " + reason);
     expect(screen.getByLabelText("Kill switch")).toBeEnabled();
+  });
+});
+
+describe("AgentPanel force close (R24)", () => {
+  // serveForce answers the panel, the force-close preview and the force close itself (403 for
+  // a wrong password, as the server does).
+  function serveForce(p: Panel) {
+    const calls: Call[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, url, body });
+      const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status });
+      if (url.endsWith("/api/v1/agent") && method === "GET") return json(p);
+      if (url === "/api/v1/agent/force-close?accountId=a1" && method === "GET") {
+        return json({ accountId: "a1", name: "Main demo", positions: 3, orders: 1, summary: "closes 3 positions and cancels 1 order on Main demo" });
+      }
+      if (url === "/api/v1/agent/force-close?accountId=a1" && method === "POST") {
+        if (body.password !== "right one") return json({ title: "Forbidden", status: 403, detail: "the password is not correct" }, 403);
+        return json({ accountId: "a1", name: "Main demo", cancelled: 1, closing: 3, state: "stopped", errors: [] });
+      }
+      return json({}, 404);
+    });
+    mount();
+    return calls;
+  }
+
+  it("is not offered unless the server says so", async () => {
+    serveForce(panel());
+    await screen.findByText("running");
+    expect(screen.queryByLabelText("Force close")).not.toBeInTheDocument();
+  });
+
+  it("sits in the controls column, shows the server's summary and needs the password", async () => {
+    const calls = serveForce(panel({ controls: { ...all, forceClose: true } }));
+    const button = await screen.findByLabelText("Force close");
+    // in the first column, after the kill switch
+    const kill = screen.getByLabelText("Kill switch");
+    expect(kill.parentElement).toContainElement(button);
+    expect(kill.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(button);
+    const dialog = screen.getByRole("dialog", { name: "Force close?" });
+    expect(await screen.findByText("Closes 3 positions and cancels 1 order on Main demo.")).toBeInTheDocument();
+    const confirm = within(dialog).getByRole("button", { name: /^Force close$/ });
+    expect(confirm).toBeDisabled(); // no password yet
+    expect(posts(calls)).toEqual([]);
+
+    fireEvent.change(screen.getByLabelText("Your password"), { target: { value: "guess" } });
+    fireEvent.click(confirm);
+    expect(await screen.findByText("the password is not correct")).toBeInTheDocument();
+    expect(dialog).toBeInTheDocument(); // still open, the password cleared
+    expect(screen.getByLabelText("Your password")).toHaveValue("");
+
+    fireEvent.change(screen.getByLabelText("Your password"), { target: { value: "right one" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Force close$/ }));
+    expect(await screen.findByText(/Main demo: 3 closes and 1 cancel sent; the agent is stopped/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(posts(calls)).toEqual([
+      { method: "POST", url: "/api/v1/agent/force-close?accountId=a1", body: { password: "guess" } },
+      { method: "POST", url: "/api/v1/agent/force-close?accountId=a1", body: { password: "right one" } },
+    ]);
+  });
+
+  it("says why there is no force close on a real account", async () => {
+    serveForce(panel({
+      state: "stopped",
+      controls: { ...all, start: false, gated: true, forceCloseBlockedReason: "Real trading needs the phase-7 gate: no closes yet" },
+    }));
+    expect(await screen.findByText(/No force close here: Real trading needs the phase-7 gate: no closes yet/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Force close")).not.toBeInTheDocument();
   });
 });

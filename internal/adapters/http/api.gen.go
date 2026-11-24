@@ -553,8 +553,36 @@ type AddWatchRequest struct {
 	InstrumentId int64 `json:"instrumentId"`
 }
 
+// AgentCard defines model for AgentCard.
+type AgentCard struct {
+	Account Account `json:"account"`
+
+	// Controls The agent actions the caller may take on this account
+	Controls AgentControls `json:"controls"`
+
+	// Current the caller's current account (the limits form edits it)
+	Current bool `json:"current"`
+	Killed  bool `json:"killed"`
+
+	// LimitsBlockedReason why not (absent when editable)
+	LimitsBlockedReason *string `json:"limitsBlockedReason,omitempty"`
+
+	// LimitsEditable the caller may change this account's limits now
+	LimitsEditable bool           `json:"limitsEditable"`
+	OpenPositions  int            `json:"openPositions"`
+	PendingOrders  int            `json:"pendingOrders"`
+	Reconciliation Reconciliation `json:"reconciliation"`
+	State          AgentState     `json:"state"`
+}
+
 // AgentControls The agent actions the caller may take on this account
 type AgentControls struct {
+	// ForceClose force close (admin, web session, trade access, demo account)
+	ForceClose bool `json:"forceClose"`
+
+	// ForceCloseBlockedReason Why `forceClose` is false on a real-money account for a caller who could otherwise use it. Absent otherwise.
+	ForceCloseBlockedReason *string `json:"forceCloseBlockedReason,omitempty"`
+
 	// Gated a real-money account: real trading needs the phase-7 gate
 	Gated bool `json:"gated"`
 	Kill  bool `json:"kill"`
@@ -988,6 +1016,41 @@ type FlattenTime struct {
 
 	// Trading the market trades today
 	Trading bool `json:"trading"`
+}
+
+// ForceClosePlan defines model for ForceClosePlan.
+type ForceClosePlan struct {
+	AccountId string `json:"accountId"`
+	Name      string `json:"name"`
+
+	// Orders open orders of cactusTrade's not final yet
+	Orders int `json:"orders"`
+
+	// Positions open positions cactusTrade opened
+	Positions int `json:"positions"`
+
+	// Summary for people, e.g. "closes 3 positions and cancels 1 order on Demo"
+	Summary string `json:"summary"`
+}
+
+// ForceCloseReport defines model for ForceCloseReport.
+type ForceCloseReport struct {
+	AccountId string `json:"accountId"`
+
+	// Cancelled cancels sent for cactusTrade's pending open orders
+	Cancelled int `json:"cancelled"`
+
+	// Closing closes sent or in flight for positions cactusTrade opened
+	Closing int        `json:"closing"`
+	Errors  []string   `json:"errors"`
+	Name    string     `json:"name"`
+	State   AgentState `json:"state"`
+}
+
+// ForceCloseRequest defines model for ForceCloseRequest.
+type ForceCloseRequest struct {
+	// Password the caller's current password (never logged or stored)
+	Password string `json:"password"`
 }
 
 // Health defines model for Health.
@@ -2092,6 +2155,13 @@ type WatchItem struct {
 	Instrument  Instrument  `json:"instrument"`
 }
 
+// WatchlistCount defines model for WatchlistCount.
+type WatchlistCount struct {
+	Account Account `json:"account"`
+	Count   int     `json:"count"`
+	Current bool    `json:"current"`
+}
+
 // AccountIdQuery defines model for AccountIdQuery.
 type AccountIdQuery = string
 
@@ -2103,6 +2173,18 @@ type AgentStatus = AgentStatusResult
 
 // GetAgentParams defines parameters for GetAgent.
 type GetAgentParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// ForceClosePreviewParams defines parameters for ForceClosePreview.
+type ForceClosePreviewParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// ForceCloseAgentParams defines parameters for ForceCloseAgent.
+type ForceCloseAgentParams struct {
 	// AccountId The account (default the caller's current account)
 	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
 }
@@ -2279,6 +2361,12 @@ type SetAccountKeysJSONRequestBody = SetAccountKeysRequest
 // ShareAccountJSONRequestBody defines body for ShareAccount for application/json ContentType.
 type ShareAccountJSONRequestBody = ShareAccountRequest
 
+// ForceCloseAgentJSONRequestBody defines body for ForceCloseAgent for application/json ContentType.
+type ForceCloseAgentJSONRequestBody = ForceCloseRequest
+
+// ForceCloseAllJSONRequestBody defines body for ForceCloseAll for application/json ContentType.
+type ForceCloseAllJSONRequestBody = ForceCloseRequest
+
 // KillAgentJSONRequestBody defines body for KillAgent for application/json ContentType.
 type KillAgentJSONRequestBody = KillRequest
 
@@ -2383,6 +2471,18 @@ type ServerInterface interface {
 	// GetAgent The agent of an account — state, reconciliation, kill switch, distance to the limits (viewer)
 	// (GET /api/v1/agent)
 	GetAgent(w http.ResponseWriter, r *http.Request, params GetAgentParams)
+	// ForceClosePreview What a force close of the account would do now (admin, web session, trade access)
+	// (GET /api/v1/agent/force-close)
+	ForceClosePreview(w http.ResponseWriter, r *http.Request, params ForceClosePreviewParams)
+	// ForceCloseAgent Force close — close everything cactusTrade opened on the account now and stop its agent (admin, web session only, password)
+	// (POST /api/v1/agent/force-close)
+	ForceCloseAgent(w http.ResponseWriter, r *http.Request, params ForceCloseAgentParams)
+	// ForceCloseAllPreview What a force close of every eToro demo account the caller can trade would do now (admin, web session)
+	// (GET /api/v1/agent/force-close-all)
+	ForceCloseAllPreview(w http.ResponseWriter, r *http.Request)
+	// ForceCloseAll Force close every eToro demo account the caller can trade (admin, web session only, password checked once)
+	// (POST /api/v1/agent/force-close-all)
+	ForceCloseAll(w http.ResponseWriter, r *http.Request)
 	// KillAgent Pull the kill switch (operator with trade access; session or API key)
 	// (POST /api/v1/agent/kill)
 	KillAgent(w http.ResponseWriter, r *http.Request, params KillAgentParams)
@@ -2401,6 +2501,9 @@ type ServerInterface interface {
 	// StopAgent Stop the agent — no new entries, exits continue, limits may change (operator; session or API key)
 	// (POST /api/v1/agent/stop)
 	StopAgent(w http.ResponseWriter, r *http.Request, params StopAgentParams)
+	// ListAgents The agent of every eToro account the caller can see, with the caller's controls (viewer)
+	// (GET /api/v1/agents)
+	ListAgents(w http.ResponseWriter, r *http.Request)
 	// ListApiKeys List your API keys (admins see all)
 	// (GET /api/v1/api-keys)
 	ListApiKeys(w http.ResponseWriter, r *http.Request)
@@ -2590,6 +2693,9 @@ type ServerInterface interface {
 	// AddToWatchlist Add a share after eToro confirms it can be bought as a real share at leverage 1 (admin)
 	// (POST /api/v1/watchlist)
 	AddToWatchlist(w http.ResponseWriter, r *http.Request)
+	// ListWatchlistCounts How many shares the watchlist of each eToro account the caller can see holds (viewer)
+	// (GET /api/v1/watchlist/counts)
+	ListWatchlistCounts(w http.ResponseWriter, r *http.Request)
 	// ListWatchlistQuotes Current bid/ask of the watchlist (viewer)
 	// (GET /api/v1/watchlist/quotes)
 	ListWatchlistQuotes(w http.ResponseWriter, r *http.Request)
@@ -2931,6 +3037,100 @@ func (siw *ServerInterfaceWrapper) GetAgent(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// ForceClosePreview operation middleware
+func (siw *ServerInterfaceWrapper) ForceClosePreview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ForceClosePreviewParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ForceClosePreview(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ForceCloseAgent operation middleware
+func (siw *ServerInterfaceWrapper) ForceCloseAgent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ForceCloseAgentParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ForceCloseAgent(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ForceCloseAllPreview operation middleware
+func (siw *ServerInterfaceWrapper) ForceCloseAllPreview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ForceCloseAllPreview(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ForceCloseAll operation middleware
+func (siw *ServerInterfaceWrapper) ForceCloseAll(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ForceCloseAll(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // KillAgent operation middleware
 func (siw *ServerInterfaceWrapper) KillAgent(w http.ResponseWriter, r *http.Request) {
 
@@ -3120,6 +3320,20 @@ func (siw *ServerInterfaceWrapper) StopAgent(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StopAgent(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAgents operation middleware
+func (siw *ServerInterfaceWrapper) ListAgents(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAgents(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4605,6 +4819,20 @@ func (siw *ServerInterfaceWrapper) AddToWatchlist(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ListWatchlistCounts operation middleware
+func (siw *ServerInterfaceWrapper) ListWatchlistCounts(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWatchlistCounts(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListWatchlistQuotes operation middleware
 func (siw *ServerInterfaceWrapper) ListWatchlistQuotes(w http.ResponseWriter, r *http.Request) {
 
@@ -4839,6 +5067,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/instruments/search", wrapper.SearchInstruments)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist", wrapper.ListWatchlist)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist", wrapper.AddToWatchlist)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/counts", wrapper.ListWatchlistCounts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/quotes", wrapper.ListWatchlistQuotes)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/watchlist/{instrumentId}", wrapper.RemoveFromWatchlist)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/reload", wrapper.ReloadSettings)
@@ -4848,6 +5077,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.GetRiskLimits)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.SetRiskLimits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent", wrapper.GetAgent)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agents", wrapper.ListAgents)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent/force-close", wrapper.ForceClosePreview)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/force-close", wrapper.ForceCloseAgent)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent/force-close-all", wrapper.ForceCloseAllPreview)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/force-close-all", wrapper.ForceCloseAll)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/start", wrapper.StartAgent)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/pause", wrapper.PauseAgent)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/stop", wrapper.StopAgent)

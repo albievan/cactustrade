@@ -48,6 +48,20 @@ func toReconciliation(rc app.Reconciliation) Reconciliation {
 	return out
 }
 
+// toControls is the controls the app decided, with why start is blocked ("" = it is not).
+func toControls(c app.AgentControls, startBlocked string) AgentControls {
+	out := AgentControls{
+		Start: c.Start, Pause: c.Pause, Stop: c.Stop, Kill: c.Kill, Reset: c.Reset, Gated: c.Gated, ForceClose: c.ForceClose,
+	}
+	if startBlocked != "" {
+		out.StartBlockedReason = ptr(startBlocked)
+	}
+	if c.ForceCloseBlocked != "" {
+		out.ForceCloseBlockedReason = ptr(c.ForceCloseBlocked)
+	}
+	return out
+}
+
 func toAgentPanel(v app.AgentView) AgentPanel {
 	out := AgentPanel{
 		Account: toAccount(v.Account), State: AgentState(v.State), Reconciliation: toReconciliation(v.Reconciliation),
@@ -55,19 +69,13 @@ func toAgentPanel(v app.AgentView) AgentPanel {
 		DayStopped: v.Risk.State.DayStopped && v.Risk.State.Day == v.Today, RiskDay: string(v.Risk.State.Day), Today: string(v.Today),
 		StartOfDayEquityCents: Cents(v.Risk.State.StartOfDayEquity), HighWaterMarkCents: Cents(v.Risk.State.HighWaterMark),
 		EquityKnown: v.EquityKnown, Blocked: make([]BlockedInstrument, 0, len(v.Blocked)), Flatten: make([]FlattenTime, 0, len(v.Flatten)),
-		Lease: AgentLease{Mine: v.Lease.Mine, Other: v.Lease.Other},
-		Controls: AgentControls{
-			Start: v.Controls.Start, Pause: v.Controls.Pause, Stop: v.Controls.Stop, Kill: v.Controls.Kill,
-			Reset: v.Controls.Reset, Gated: v.Controls.Gated,
-		},
+		Lease:       AgentLease{Mine: v.Lease.Mine, Other: v.Lease.Other},
+		Controls:    toControls(v.Controls, v.StartBlocked),
 		ResetPhrase: v.ResetPhrase, OpenPositions: v.OpenPositions, PendingOrders: v.Pending,
 		Missing: make([]MissingItem, 0, len(v.Missing)),
 	}
 	for _, m := range v.Missing {
 		out.Missing = append(out.Missing, MissingItem{What: Missing(m.What), CanFix: m.CanFix})
-	}
-	if v.StartBlocked != "" {
-		out.Controls.StartBlockedReason = ptr(v.StartBlocked)
 	}
 	if v.Risk.KillReason != "" {
 		out.KillReason = ptr(v.Risk.KillReason)

@@ -1,20 +1,34 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { api, usd, type RiskLimits as Limits } from "../lib/api";
-import { useMode } from "../lib/mode";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { api, usd, type AgentCard, type RiskLimits as Limits } from "../lib/api";
+import { useMode, useRefreshMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
+import { AgentCardView, type AgentAction } from "../components/AgentCards";
+import { ForceCloseDialog, forceCloseNote } from "../components/ForceCloseDialog";
 
 // The owner's limits. The risk engine enforces them on every entry; they can be changed only
 // while the agent is stopped, and every change is audited. Whether the caller may change them
 // now comes from the server (canEdit, editBlockedReason); this page only shows it.
+//
+// Above the form, one card per eToro account (R23) stops, pauses and starts its agent without
+// leaving the page; which buttons work is the server's decision (card.controls). The page
+// remembers, in its own state only, which agents it stopped while they were running, and
+// offers to start the current one again after its limits were saved.
 export function RiskLimits() {
   const status = useMode();
+  const refreshMode = useRefreshMode();
   const [l, setL] = useState<Limits | null>(null);
   const [edit, setEdit] = useState<{ canEdit: boolean; reason?: string }>({ canEdit: false });
   const [budget, setBudget] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
+  const [cards, setCards] = useState<AgentCard[] | null>(null);
+  const [cardError, setCardError] = useState<unknown>(null);
+  const [cardNote, setCardNote] = useState("");
+  const [busy, setBusy] = useState("");
+  const [stoppedHere, setStoppedHere] = useState<string[]>([]); // accounts whose running agent this page stopped
+  const [forceClose, setForceClose] = useState<{ accountId?: string; all?: boolean } | null>(null);
   const accountId = status?.account?.id;
   const agentState = status?.agentState; // a change of state may change canEdit: fetch again
   useEffect(() => {
@@ -24,9 +38,85 @@ export function RiskLimits() {
       setBudget((x.tradingBudgetCents / 100).toFixed(2));
     }).catch(setError);
   }, [accountId, agentState]);
-  const editable = edit.canEdit;
+  const loadCards = useCallback(async () => {
+    try {
+      setCards(await api.agents());
+    } catch (e) {
+      setCardError(e);
+    }
+  }, []);
+  useEffect(() => { if (accountId) void loadCards(); }, [loadCards, accountId, agentState]);
+
+  async function act(card: AgentCard, action: AgentAction) {
+    const id = card.account.id;
+    if (action === "forceClose") {
+      setForceClose({ accountId: id });
+      return;
+    }
+    setBusy(id); setCardError(null); setCardNote("");
+    try {
+      const run = { start: api.startAgent, pause: api.pauseAgent, stop: api.stopAgent }[action];
+      const st = await run(id);
+      if (action === "stop" && card.state === "running") setStoppedHere((s) => (s.includes(id) ? s : [...s, id]));
+      if (action === "start") setStoppedHere((s) => s.filter((x) => x !== id));
+      setCardNote(`${card.account.name}: the agent is ${st.state}.`);
+    } catch (e) {
+      setCardError(e);
+    } finally {
+      setBusy("");
+      await loadCards();
+      await refreshMode();
+    }
+  }
+  async function switchTo(id: string) {
+    setBusy(id); setCardError(null); setCardNote(""); setSaved(false);
+    try {
+      await api.setCurrentAccount(id);
+      await refreshMode(); // the limits below follow the new current account
+    } catch (e) {
+      setCardError(e);
+    } finally {
+      setBusy("");
+    }
+  }
+
   if (status && !status.account) return <><h1 className="h3">Risk limits</h1><NeedAccount /></>;
-  if (!l) return <><h1 className="h3">Risk limits</h1><ProblemAlert error={error} /></>;
+  const current = cards?.find((c) => c.current);
+  const canForceCloseAll = (cards ?? []).filter((c) => c.controls.forceClose).length > 1;
+  const agents = (
+    <section className="mb-4" aria-labelledby="agents-heading">
+      <div className="d-flex align-items-center gap-2 mb-2">
+        <h2 className="h5 mb-0" id="agents-heading">Agents</h2>
+        {canForceCloseAll && (
+          <button type="button" className="btn btn-sm btn-outline-danger ms-auto" disabled={!!busy}
+            title="Force close every demo account you can trade (admin, password)" onClick={() => setForceClose({ all: true })}>
+            <i className="bi bi-door-closed me-1" />Force close all
+          </button>
+        )}
+      </div>
+      <p className="small text-secondary">Stop an agent to change its limits, then start it again. Click an account's name to edit its limits.</p>
+      <ProblemAlert error={cardError} className="py-2 small" />
+      {cardNote && <div className="alert alert-success py-2 small" role="status">{cardNote}</div>}
+      {cards && (
+        <div className="row row-cols-1 row-cols-md-2 row-cols-xxl-3 g-3">
+          {cards.map((c) => (
+            <AgentCardView key={c.account.id} card={c} busy={busy === c.account.id}
+              onAction={(a) => void act(c, a)} onSwitch={() => void switchTo(c.account.id)} />
+          ))}
+        </div>
+      )}
+      {forceClose && (
+        <ForceCloseDialog accountId={forceClose.accountId} all={forceClose.all} onCancel={() => setForceClose(null)}
+          onDone={async (reports) => {
+            setForceClose(null); setCardError(null); setCardNote("Force close: " + forceCloseNote(reports));
+            await loadCards();
+            await refreshMode();
+          }} />
+      )}
+    </section>
+  );
+  if (!l) return <><h1 className="h3">Risk limits</h1>{agents}<ProblemAlert error={error} /></>;
+  const editable = edit.canEdit;
   const num = (k: keyof Limits) => (e: React.ChangeEvent<HTMLInputElement>) => setL({ ...l, [k]: Number(e.target.value) });
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -39,6 +129,7 @@ export function RiskLimits() {
       setError(err);
     }
   }
+  const startAgain = saved && current && accountId && stoppedHere.includes(accountId);
   const field = (k: keyof Limits & string, label: string, help: string, unit: string) => (
     <div className="col-md-6 col-xl-4">
       <label className="form-label fw-semibold" htmlFor={k}>{label}</label>
@@ -56,6 +147,8 @@ export function RiskLimits() {
         Enforced by the risk engine on every order, in US dollars (the eToro account currency). Leverage is always 1;
         longs buy the real share, shorts are CFDs with a mandatory stop, and nothing is held overnight — fixed in the code.
       </p>
+      {agents}
+      <h2 className="h5">Limits</h2>
       {status?.account && <p className="small">Account: <strong>{status.account.name}</strong> ({status.account.mode}).</p>}
       <InfoCard id="risk-states" title="When the limits can change">
         <p>The limits are locked while the agent could act on them. They can be changed only while it is <strong>stopped</strong>.</p>
@@ -71,7 +164,18 @@ export function RiskLimits() {
       </InfoCard>
       {!editable && edit.reason && <div className="alert alert-info" role="status"><i className="bi bi-lock-fill me-1" />{edit.reason}.</div>}
       <ProblemAlert error={error} />
-      {saved && <div className="alert alert-success" role="status">Saved and audited.</div>}
+      {saved && (
+        <div className="alert alert-success d-flex flex-wrap align-items-center gap-2" role="status">
+          <span className="flex-grow-1">Saved and audited.</span>
+          {startAgain && current && (
+            <button type="button" className="btn btn-sm btn-success" disabled={!!busy || !current.controls.start}
+              title={current.controls.startBlockedReason ? "Cannot start: " + current.controls.startBlockedReason : "Start the agent with the new limits"}
+              onClick={() => void act(current, "start")}>
+              <i className="bi bi-play-fill me-1" />Start the agent again
+            </button>
+          )}
+        </div>
+      )}
       <form onSubmit={save} className="card"><div className="card-body row g-4">
         <div className="col-md-6 col-xl-4">
           <label className="form-label fw-semibold" htmlFor="budget">Trading budget</label>

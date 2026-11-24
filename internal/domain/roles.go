@@ -27,6 +27,10 @@ const (
 	PermManageSettings   Permission = "settings.write"    // limits, budget, watchlist
 	PermSwitchMode       Permission = "mode.switch"       // demo ↔ real (gated, phase 7)
 	PermViewAudit        Permission = "audit.view"        // audit log
+	// PermForceClose: close everything cactusTrade opened on an account at once and stop
+	// its agent, without the kill switch (R24). Admin only; the use case also needs a web
+	// session, trade access and the caller's password.
+	PermForceClose Permission = "agent.force_close"
 )
 
 var rolePerms = map[Role][]Permission{
@@ -34,7 +38,7 @@ var rolePerms = map[Role][]Permission{
 	RoleOperator: {PermView, PermManageOwnAPIKeys, PermAgentControl, PermKillSwitch},
 	RoleAdmin: {
 		PermView, PermManageOwnAPIKeys, PermAgentControl, PermKillSwitch, PermManageUsers,
-		PermManageSecrets, PermManageSettings, PermSwitchMode, PermViewAudit,
+		PermManageSecrets, PermManageSettings, PermSwitchMode, PermViewAudit, PermForceClose,
 	},
 }
 

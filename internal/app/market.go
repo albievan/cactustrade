@@ -149,6 +149,37 @@ func (s *Service) Watchlist(ctx context.Context, p Principal) ([]domain.WatchIte
 	return items, nil
 }
 
+// WatchlistCount is how many shares an account's watchlist holds.
+type WatchlistCount struct {
+	Account domain.AccountView
+	Count   int
+	// Current: the caller's current account.
+	Current bool
+}
+
+// WatchlistCounts gives the watchlist size of every eToro account the caller can view (R25),
+// so an empty watchlist page can name the accounts that do have shares. Accounts the caller
+// cannot see are never counted.
+func (s *Service) WatchlistCounts(ctx context.Context, p Principal) ([]WatchlistCount, error) {
+	vs, err := s.Accounts(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	cur := s.currentAccountID(ctx, p, vs)
+	out := make([]WatchlistCount, 0, len(vs))
+	for _, v := range vs {
+		if !v.Tradable() {
+			continue
+		}
+		items, err := s.d.Store.Watchlist().List(ctx, v.ID)
+		if err != nil {
+			return nil, fmt.Errorf("app.WatchlistCounts: %w", err)
+		}
+		out = append(out, WatchlistCount{Account: v, Count: len(items), Current: v.ID == cur})
+	}
+	return out, nil
+}
+
 // AddToWatchlist adds a share to the current account's watchlist after checking with eToro
 // that it is a share on LSE, NYSE/NASDAQ or the ASX and can be bought as a real share, long, at
 // leverage 1 (trade access). Anything else is refused with eToro's reason (fail closed).

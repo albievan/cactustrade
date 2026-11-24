@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionProvider } from "../lib/session";
 import { ModeProvider } from "../lib/mode";
@@ -25,6 +25,7 @@ function serve(canEdit: boolean, editBlockedReason?: string) {
     if (url.endsWith("/api/v1/system/status")) return json({ version: "0.1.0", build: "1", mode: "demo", agentState: "stopped", database: "sqlite", startedAt: "", now: "", account });
     if (url.endsWith("/api/v1/risk/limits") && init?.method === "PUT") { puts.push(JSON.parse(String(init.body))); return json(limits); }
     if (url.endsWith("/api/v1/risk/limits")) return json({ ...limits, canEdit, editBlockedReason });
+    if (url.endsWith("/api/v1/agents")) return json([]);
     return new Response("{}", { status: 404 });
   });
   render(<SessionProvider><ModeProvider><RiskLimits /></ModeProvider></SessionProvider>);
@@ -32,6 +33,127 @@ function serve(canEdit: boolean, editBlockedReason?: string) {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+const second = { ...account, id: "a2", name: "Second demo" };
+const allControls = { start: true, pause: true, stop: true, kill: true, reset: true, gated: false, forceClose: true };
+
+interface Call { method: string; url: string; body?: unknown }
+
+// serveAgents is a small stateful server: two accounts, a1 (current, running) and a2
+// (stopped). Stop, start, the current account and the limits follow what the page sends;
+// the limits are editable only while the current account's agent is stopped, as on the server.
+function serveAgents() {
+  const st: Record<string, string> = { a1: "running", a2: "stopped" };
+  let current = "a1";
+  const calls: Call[] = [];
+  const acct = (id: string) => (id === "a1" ? account : second);
+  const card = (id: string) => ({
+    account: acct(id), current: current === id, state: st[id], killed: false,
+    reconciliation: { accountId: id, ok: true, reason: "" }, limitsEditable: st[id] === "stopped",
+    limitsBlockedReason: st[id] === "stopped" ? undefined : `Stop the agent to change the limits (it is ${st[id]})`,
+    controls: allControls, openPositions: 0, pendingOrders: 0,
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ method, url, body });
+    const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+    const id = new URL(url, "http://x").searchParams.get("accountId") ?? current;
+    if (url.endsWith("/api/v1/auth/me")) return json(me);
+    if (url.endsWith("/api/v1/system/status")) {
+      return json({ version: "0.1.0", build: "1", mode: "demo", agentState: st[current], database: "sqlite", startedAt: "", now: "", account: acct(current) });
+    }
+    if (url.endsWith("/api/v1/risk/limits") && method === "PUT") return json(limits);
+    if (url.endsWith("/api/v1/risk/limits")) {
+      const c = card(current);
+      return json({ ...limits, canEdit: c.limitsEditable, editBlockedReason: c.limitsBlockedReason });
+    }
+    if (url.endsWith("/api/v1/agents")) return json(["a1", "a2"].map(card));
+    if (url.startsWith("/api/v1/agent/stop") && method === "POST") { st[id] = "stopped"; return json({ accountId: id, state: "stopped" }); }
+    if (url.startsWith("/api/v1/agent/start") && method === "POST") { st[id] = "running"; return json({ accountId: id, state: "running" }); }
+    if (url.endsWith("/api/v1/accounts/current") && method === "PUT") { current = body.accountId; return json(acct(current)); }
+    if (url.startsWith("/api/v1/agent/force-close") && method === "GET") {
+      return json({ accountId: id, name: acct(id).name, positions: 2, orders: 0, summary: `closes 2 positions on ${acct(id).name}` });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  render(<SessionProvider><ModeProvider><RiskLimits /></ModeProvider></SessionProvider>);
+  return calls;
+}
+
+const posts = (calls: Call[]) => calls.filter((c) => c.method !== "GET");
+
+describe("RiskLimits agents (R23)", () => {
+  it("shows one card per account, the icon buttons first and in order, the current account highlighted", async () => {
+    serveAgents();
+    const main = await screen.findByRole("group", { name: "Agent on Main demo" });
+    const other = screen.getByRole("group", { name: "Agent on Second demo" });
+    expect(main).toHaveAttribute("aria-current", "true");
+    expect(other).not.toHaveAttribute("aria-current");
+    const controls = within(main).getByRole("group", { name: "Agent controls for Main demo" });
+    // the controls are the first column of the card's body
+    expect(controls.parentElement?.firstElementChild).toBe(controls);
+    expect(within(controls).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Start the agent on Main demo", "Pause the agent on Main demo", "Stop the agent on Main demo", "Force close Main demo",
+    ]);
+    for (const b of within(controls).getAllByRole("button")) expect(b).toHaveAttribute("title");
+    expect(within(main).getByText("limits locked")).toBeInTheDocument();
+    expect(within(other).getByText("limits editable")).toBeInTheDocument();
+    expect(within(main).getByText("demo")).toBeInTheDocument();
+    expect(within(main).getByText("reconciled")).toBeInTheDocument();
+    expect(screen.getByLabelText("Start the agent on Main demo")).toBeDisabled(); // running
+    expect(screen.getByLabelText("Stop the agent on Second demo")).toBeDisabled(); // stopped
+  });
+
+  it("stops the agent, saves the limits and offers to start it again", async () => {
+    const calls = serveAgents();
+    const budget = await screen.findByLabelText("Trading budget");
+    expect(budget).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Stop the agent on Main demo"));
+    await waitFor(() => expect(screen.getByLabelText("Trading budget")).toBeEnabled());
+    expect(screen.queryByRole("button", { name: /Start the agent again/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Trading budget"), { target: { value: "4000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save limits" }));
+    const again = await screen.findByRole("button", { name: /Start the agent again/ });
+    fireEvent.click(again);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Start the agent again/ })).not.toBeInTheDocument());
+    expect(posts(calls).map((c) => c.method + " " + c.url)).toEqual([
+      "POST /api/v1/agent/stop?accountId=a1", "PUT /api/v1/risk/limits", "POST /api/v1/agent/start?accountId=a1",
+    ]);
+    expect(await screen.findByText("Main demo: the agent is running.")).toBeInTheDocument();
+  });
+
+  it("does not offer a start when the agent was not stopped from this page", async () => {
+    serveAgents();
+    fireEvent.click(await screen.findByRole("button", { name: "Second demo" })); // switch to the stopped account
+    await waitFor(() => expect(screen.getByLabelText("Trading budget")).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Save limits" }));
+    expect(await screen.findByText("Saved and audited.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Start the agent again/ })).not.toBeInTheDocument();
+  });
+
+  it("switches the current account when a card's name is clicked", async () => {
+    const calls = serveAgents();
+    fireEvent.click(await screen.findByRole("button", { name: "Second demo" }));
+    await waitFor(() => expect(screen.getByRole("group", { name: "Agent on Second demo" })).toHaveAttribute("aria-current", "true"));
+    expect(posts(calls)).toEqual([{ method: "PUT", url: "/api/v1/accounts/current", body: { accountId: "a2" } }]);
+    expect(await screen.findByText("Second demo", { selector: "strong" })).toBeInTheDocument(); // the limits form's account
+  });
+
+  it("asks for the password before a force close from a card", async () => {
+    const calls = serveAgents();
+    fireEvent.click(await screen.findByLabelText("Force close Main demo"));
+    const dialog = screen.getByRole("dialog", { name: "Force close?" });
+    expect(await within(dialog).findByText("Closes 2 positions on Main demo.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /^Force close$/ })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Your password"), { target: { value: "secret" } });
+    expect(within(dialog).getByRole("button", { name: /^Force close$/ })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(posts(calls)).toEqual([]);
+  });
+});
 
 describe("RiskLimits", () => {
   it.each([
