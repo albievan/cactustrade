@@ -590,18 +590,63 @@ Guardrails touched (CLAUDE.md §2): §2.1 no new path (allowlist test unchanged)
   locks, lease, start-up/shutdown, D20–D26); `docs/etoro-api.md` "How the app uses execution"
   and the U1–U11 table; README status and a risk note before starting the agent.
 
-## Phase 5 — LLM reviewer and decision log — `todo`
+## Phase 5 — LLM reviewer and decision log — `in_progress`
 
 | ID | Step | Files | Acceptance | Status |
 |---|---|---|---|---|
 | 5.1 | Reviewer port and providers: no tools, strict JSON, timeout = reject, invalid JSON = reject, multiplier clamped (R6, R15, R16; bp conversion in 4.2) | `internal/adapters/llm`, `internal/domain/llm.go` | `TestParseVerdict`, `TestOpenAIEmptyAndTimeout`, `TestAnthropic`, `TestClampVerdict` | done |
-| 5.2 | **Domain.** `LLMCall` (id, account, purpose agent/scanner/test, profile, provider, model served, prompt, response, input/output tokens, latency, cost micros, −1 = unknown, error, at). `LLMProfile` prices: USD per million input and output tokens as `Micros`, 0 = unknown; `Cost(in, out)` in integers. `Decision`: signal (playbook, direction, entry, stop, take-profit, suggested size, regime probabilities, reason), verdict (kind, bp, reason, call id), risk (allowed, size, reason), outcome (`rejected_reviewer`, `rejected_cost`, `rejected_risk`, `ordered`, `order_failed`), order request id. `Truncate` at 32 KiB, UTF-8 safe. | `internal/domain/{decisions.go,llm.go}` + tests | `go test ./internal/domain -run 'Decision\|LLMCost\|Truncate'`, including a property test that cost is monotonic and cannot overflow (tokens capped) | todo |
-| 5.3 | **Port and adapter trace.** `Reviewer.Review` returns `(Verdict, LLMCall, error)`, and the call is filled even on error (prompt, latency, error, raw response). Anthropic: `resp.Usage.InputTokens/OutputTokens`, `resp.Model` (the fallback may serve). OpenAI-compatible: `usage.prompt_tokens/completion_tokens`, `model`. Update callers (scanner `llmCheck`, `TestLLM`). | `internal/ports/ports.go`, `internal/adapters/llm/llm.go` (+tests), `internal/app/{scanner.go,llm.go}`, fakes | `go test ./internal/adapters/llm`. For every provider the recorded request body has no `tools`, `tool_choice` or `functions` key; usage is parsed; a timeout returns a trace with an error; invalid JSON is an error with the raw response kept. | todo |
-| 5.4 | **Migration 00010.** `llm_calls` (id PK, account_id `''` = system, no FK; purpose, profile_id, provider, model, prompt TEXT, response TEXT, tokens, cost_micros, latency_ms, error, at). `decisions` (id PK, account_id FK, at, instrument_id, symbol, direction, playbook, signal fields, probs TEXT JSON, llm_call_id, verdict, size_bp, verdict_reason, risk_allowed, risk_size_cents, risk_reason, outcome, order_request_id). Both dialects; repositories with `List(account, before, outcome, limit)`, `Get`, `DeleteBefore`. | `migrations/{sqlite,mariadb}/00010_decision_log.sql`, `internal/adapters/sqlstore/decisions.go`, `storetest` | `make test && make test-int`, `TestMigrationParity` | todo |
+| 5.2 | **Domain.** `LLMCall` (id, account, purpose agent/scanner/test, profile, provider, model served, prompt, response, input/output tokens, latency, cost micros, −1 = unknown, error, at). `LLMProfile` prices: USD per million input and output tokens as `Micros`, 0 = unknown; `Cost(in, out)` in integers. `Decision`: signal (playbook, direction, entry, stop, take-profit, suggested size, regime probabilities, reason), verdict (kind, bp, reason, call id), risk (allowed, size, reason), outcome (`rejected_reviewer`, `rejected_cost`, `rejected_risk`, `ordered`, `order_failed`), order request id. `Truncate` at 32 KiB, UTF-8 safe. | `internal/domain/{decisions.go,llm.go}` + tests | `go test ./internal/domain -run 'Decision\|LLMCost\|Truncate'`, including a property test that cost is monotonic and cannot overflow (tokens capped) | done |
+| 5.3 | **Port and adapter trace.** `Reviewer.Review` returns `(Verdict, LLMCall, error)`, and the call is filled even on error (prompt, latency, error, raw response). Anthropic: `resp.Usage.InputTokens/OutputTokens`, `resp.Model` (the fallback may serve). OpenAI-compatible: `usage.prompt_tokens/completion_tokens`, `model`. Update callers (scanner `llmCheck`, `TestLLM`). | `internal/ports/ports.go`, `internal/adapters/llm/llm.go` (+tests), `internal/app/{scanner.go,llm.go}`, fakes | `go test ./internal/adapters/llm`. For every provider the recorded request body has no `tools`, `tool_choice` or `functions` key; usage is parsed; a timeout returns a trace with an error; invalid JSON is an error with the raw response kept. | done |
+| 5.4 | **Migration 00010.** `llm_calls` (id PK, account_id `''` = system, no FK; purpose, profile_id, provider, model, prompt TEXT, response TEXT, tokens, cost_micros, latency_ms, error, at). `decisions` (id PK, account_id FK, at, instrument_id, symbol, direction, playbook, signal fields, probs TEXT JSON, llm_call_id, verdict, size_bp, verdict_reason, risk_allowed, risk_size_cents, risk_reason, outcome, order_request_id). Both dialects; repositories with `List(account, before, outcome, limit)`, `Get`, `DeleteBefore`. | `migrations/{sqlite,mariadb}/00010_decision_log.sql`, `internal/adapters/sqlstore/decisions.go`, `storetest` | `make test && make test-int`, `TestMigrationParity` | done |
 | 5.5 | **App decision log.** The agent pipeline (4.10) writes one `Decision` per candidate. It is persisted **before** the order row; a write failure means no order (fail closed). Then it is updated with the request id and outcome. Every LLM call is logged (agent, scanner, test); for agent entries a failed log write = reject. `Decisions`, `Decision` (view + account access), `LLMUsage(days)` (admin). Purge per OD12. | `internal/app/{decisions.go,agent.go,scanner.go,llm.go}` + tests | `go test -race ./internal/app -run Decision`. Every exit path of 4.10 writes exactly one decision with the right outcome; the decision exists before `Open`; store failure → no `Open`; another account's decision → 404; scanner calls logged as `scanner`. | todo |
 | 5.6 | **Contract and handlers.** `GET /api/v1/decisions?limit&before&outcome`, `GET /api/v1/decisions/{id}` (with the prompt and response), `GET /api/v1/llm/usage?days=` (admin), LLM profile schema with prices. | `api/openapi/cactustrade.yaml`, `internal/adapters/http/handlers_decisions.go` + tests | `make gen && go test ./internal/adapters/http -run 'Decision\|LLMUsage'`, contracts drift check green | todo |
 | 5.7 | **Web.** *Decision log* page under Trading: time, symbol, direction, playbook, verdict, risk, outcome, order state; outcome filter. A row expands to show signal, regime probabilities, reasons, and the prompt and response folded, with tokens, cost and latency. LLM page: price fields per profile and a usage card. | `web/src/pages/{DecisionLog.tsx,LlmReviewer.tsx}` + tests, `Layout.tsx`, `api.ts` | `pnpm -C web check` | todo |
 | 5.8 | **Docs and verification.** ARCHITECTURE and PLAN. Owner run: a demo agent with a configured reviewer produces decision rows end to end. | docs | `make check`; owner run blocked on the demo and LLM keys | todo |
+
+### Steps 5.2–5.4: decisions (2026-11-24)
+
+- **5.2-a Prices** are `LLMProfile.InputPrice` / `OutputPrice` (USD micros per million tokens,
+  0 = unknown, at most USD 1 000 000), stored in the profile JSON (`inputPriceMicros`,
+  `outputPriceMicros`; older profiles read as unknown). `Cost(in, out)` is `CostUnknown` (−1)
+  when **either** price is unknown (OD13), else the exact sum in 128-bit integers, rounded **up**
+  (a call is never shown cheaper), token counts clamped to [0, 2^40], result capped at
+  `MaxInt64`. Property test against `math/big`: exact, never negative, never falls.
+- **5.2-b `Decision`** gained an outcome **`pending`**: 5.5 writes the decision *before* the
+  order row and only then knows the request id and the outcome, so the first write needs a
+  state that is none of the five final ones. `Validate`: known outcome and direction, verdict
+  kind ∈ {none, approve, reduce, reject}, 0 ≤ bp ≤ 10 000, sizes ≥ 0, and `ordered` needs a
+  request id and the risk engine's approval. `Clip` cuts reasons to 500 bytes, symbol to 32.
+- **5.2-c `Truncate(s, n)`** first replaces invalid UTF-8 with U+FFFD (MariaDB's utf8mb4 would
+  refuse it), never splits a character, and ends a cut string with "…" inside the n bytes.
+- **5.3-a The trace's prompt is the request body exactly as sent** (JSON: model, system and user
+  message, output settings) and the response the raw response body. For Anthropic both are
+  captured by a per-call SDK middleware (last attempt; headers, which carry the key, are never
+  read); before anything is sent the prompt is the marshalled params. This makes "no `tools`,
+  `tool_choice` or `functions`" checkable on the stored record itself; the test checks it for
+  all nine providers and that the stored prompt equals the body the server received.
+- **5.3-b The adapter fills the provider side** (provider, model served, prompt, response,
+  tokens, latency, error); the caller fills id, account, purpose, profile, cost and time. The
+  key is redacted (`[redacted]`) from the error, prompt, response and model in case a provider
+  echoes it; keys under 8 bytes are not real keys and are left alone (else a test key "k"
+  would garble every message).
+- **5.3-c Transitional adapter for the agent tick** (agent.go is being changed elsewhere):
+  `Deps.LLM ports.Reviewer` is the traced reviewer (scanner, admin test, model list);
+  `Deps.Reviewer app.VerdictReviewer` keeps the two-value shape the tick calls and is wired
+  as `app.VerdictOnly(LLM)` in `cmd/cactustrade`. Step 5.5 moves the tick to `Deps.LLM` and
+  removes `VerdictReviewer`/`VerdictOnly`. The scanner and the test drop the trace until 5.5
+  logs it; `LLMTestResult` now also returns the served model and token counts.
+- **5.4-a Migration 00010:** prompt/response are `TEXT` (SQLite) / `MEDIUMTEXT` (MariaDB; 32 KiB
+  fits in `TEXT` too, `MEDIUMTEXT` leaves headroom for a multi-byte cut). `llm_calls` has no
+  foreign key (a call outlives its account, for the usage figures); `decisions` cascade with
+  the account. Latency is stored in whole milliseconds. Regime probabilities are a JSON object;
+  non-finite values are dropped (JSON has no NaN, and the log must never block a decision).
+- **5.4-b Repositories:** `LLMCalls{Add, Get, DeleteBefore}`; `Decisions{Add, Update, Get,
+  List, DeleteBefore}`. `Get` and `Update` take the account id, so another account's decision
+  is `ErrNotFound` in SQL, not only in the app. `Update` changes only verdict, risk, outcome
+  and request id (the signal is immutable). `List` is newest first with ties broken by id
+  descending; `before` is exclusive. The usage aggregation for `LLMUsage(days)` is left to 5.5.
+  The fake store has the same repositories plus `DecisionsErr` / `LLMCallsErr` for 5.5's
+  fail-closed tests.
 
 ## Phase 6 — live dashboard, history, exports — `todo`
 

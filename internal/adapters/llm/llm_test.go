@@ -114,9 +114,12 @@ func TestOpenAICompatible(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.Client())
 	cfg := domain.LLMConfig{Provider: "openai", Model: "m1", BaseURL: srv.URL + "/v1/"}
-	v, err := c.Review(context.Background(), cfg, "sk-test", sample())
+	v, call, err := c.Review(context.Background(), cfg, "sk-test", sample())
 	if err != nil || v.Kind != domain.VerdictReduce || v.SizeBp != 4_000 || v.Reason != "wide stop" {
 		t.Fatalf("verdict = %+v %v", v, err)
+	}
+	if call.Prompt == "" || call.Provider != "openai" || call.Model != "m1" || call.Error != "" || strings.Contains(call.Prompt+call.Response, "sk-test") {
+		t.Fatalf("trace = %+v", call)
 	}
 	if auth != "Bearer sk-test" || got["model"] != "m1" || got["response_format"].(map[string]any)["type"] != "json_object" {
 		t.Fatalf("request auth %q body %v", auth, got)
@@ -130,10 +133,10 @@ func TestOpenAICompatible(t *testing.T) {
 		t.Fatalf("models = %v %v", ms, err)
 	}
 	// errors: no key, unknown provider, HTTP error with the provider's message
-	if _, err := c.Review(context.Background(), cfg, "", sample()); !errors.Is(err, domain.ErrCredentialsMissing) {
+	if _, _, err := c.Review(context.Background(), cfg, "", sample()); !errors.Is(err, domain.ErrCredentialsMissing) {
 		t.Fatalf("no key: %v", err)
 	}
-	if _, err := c.Review(context.Background(), domain.LLMConfig{Provider: "x"}, "k", sample()); err == nil {
+	if _, _, err := c.Review(context.Background(), domain.LLMConfig{Provider: "x"}, "k", sample()); err == nil {
 		t.Fatal("unknown provider")
 	}
 	if _, err := c.Models(context.Background(), domain.LLMConfig{Provider: "x"}, "k"); err == nil {
@@ -141,7 +144,7 @@ func TestOpenAICompatible(t *testing.T) {
 	}
 	bad := cfg
 	bad.BaseURL = srv.URL + "/nope"
-	if _, err := c.Review(context.Background(), bad, "k", sample()); err == nil || !strings.Contains(err.Error(), "bad key") {
+	if _, _, err := c.Review(context.Background(), bad, "k", sample()); err == nil || !strings.Contains(err.Error(), "bad key") {
 		t.Fatalf("http error: %v", err)
 	}
 	if _, err := c.Models(context.Background(), bad, "k"); err == nil {
@@ -149,7 +152,7 @@ func TestOpenAICompatible(t *testing.T) {
 	}
 	// local Ollama needs no key
 	local := domain.LLMConfig{Provider: "ollama_local", Model: "llama", BaseURL: srv.URL + "/v1"}
-	if _, err := c.Review(context.Background(), local, "", sample()); err != nil {
+	if _, _, err := c.Review(context.Background(), local, "", sample()); err != nil {
 		t.Fatalf("ollama local: %v", err)
 	}
 }
@@ -162,7 +165,7 @@ func TestOpenAIEmptyAndTimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.Client())
-	if _, err := c.Review(context.Background(), domain.LLMConfig{Provider: "openai", Model: "m", BaseURL: srv.URL}, "k", sample()); err == nil {
+	if _, _, err := c.Review(context.Background(), domain.LLMConfig{Provider: "openai", Model: "m", BaseURL: srv.URL}, "k", sample()); err == nil {
 		t.Fatal("empty choices accepted")
 	}
 	if timeout(domain.LLMConfig{}) != time.Minute || timeout(domain.LLMConfig{TimeoutSeconds: 5}) != 5*time.Second {
@@ -197,9 +200,12 @@ func TestAnthropic(t *testing.T) {
 	c := New(srv.Client())
 	c.anthropicOpts = []option.RequestOption{option.WithBaseURL(srv.URL)}
 	cfg := domain.LLMConfig{Provider: "anthropic"}
-	v, err := c.Review(context.Background(), cfg, "sk-ant-test", sample())
+	v, call, err := c.Review(context.Background(), cfg, "sk-ant-test", sample())
 	if err != nil || v.Kind != domain.VerdictApprove || v.SizeBp != domain.FullSize {
 		t.Fatalf("verdict = %+v %v", v, err)
+	}
+	if call.InputTokens != 10 || call.OutputTokens != 5 || call.Model != "claude-opus-5-5" || !strings.Contains(call.Response, "consistent") {
+		t.Fatalf("trace = %+v", call)
 	}
 	if body["model"] != "claude-opus-5-5" || hdr.Get("Authorization") != "Bearer sk-ant-test" || !strings.Contains(hdr.Get("Anthropic-Beta"), "server-side-fallback-2026-07-01") || body["fallbacks"] != "default" {
 		t.Fatalf("request: headers %v model %v key %q beta %q fallbacks %v", hdr, body["model"], hdr.Get("X-Api-Key"), hdr.Get("Anthropic-Beta"), body["fallbacks"])
@@ -216,11 +222,11 @@ func TestAnthropic(t *testing.T) {
 		t.Fatalf("models = %v %v", ms, err)
 	}
 	stop = "refusal"
-	if _, err := c.Review(context.Background(), cfg, "sk-ant-test", sample()); err == nil {
+	if _, _, err := c.Review(context.Background(), cfg, "sk-ant-test", sample()); err == nil {
 		t.Fatal("a refusal must be an error (→ reject)")
 	}
 	withURL := domain.LLMConfig{Provider: "anthropic", Model: "claude-sonnet-5-5", BaseURL: srv.URL + "/nope"}
-	if _, err := c.Review(context.Background(), withURL, "k", sample()); err == nil {
+	if _, _, err := c.Review(context.Background(), withURL, "k", sample()); err == nil {
 		t.Fatal("bad base URL")
 	}
 	if _, err := c.Models(context.Background(), domain.LLMConfig{Provider: "anthropic"}, ""); !errors.Is(err, domain.ErrCredentialsMissing) {

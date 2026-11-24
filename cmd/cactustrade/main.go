@@ -199,6 +199,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return err
 	}
 	host, _ := os.Hostname()
+	reviewer := llm.New(&http.Client{Timeout: 10 * time.Minute})
 	svc, err = app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
@@ -207,7 +208,8 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 			domain.PlatformTrading212: t212, domain.PlatformSaxo: saxoClient, domain.PlatformTiger: tigerClient,
 		},
 		Connectors:   map[domain.Platform]ports.OAuthConnector{domain.PlatformSaxo: saxoClient},
-		Reviewer:     llm.New(&http.Client{Timeout: 10 * time.Minute}),
+		LLM:          reviewer,
+		Reviewer:     app.VerdictOnly(reviewer), // the agent tick, until step 5.5
 		Research:     broker,
 		Mailer:       mail.New(time.Now, host),
 		MailFallback: fallback.get,

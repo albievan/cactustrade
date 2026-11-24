@@ -146,10 +146,15 @@ type Store struct {
 	resets   map[string]domain.PasswordReset
 	equity   []domain.EquitySnapshot
 	exec     execState
+	log      logState
 	PingErr  error
 	// OrdersErr makes every Orders write (Create, Update) fail, e.g. to prove that nothing is
 	// sent when the order row cannot be persisted.
 	OrdersErr error
+	// DecisionsErr makes every Decisions write fail and LLMCallsErr every LLMCalls.Add, e.g.
+	// to prove that no order is sent when its decision cannot be logged.
+	DecisionsErr error
+	LLMCallsErr  error
 }
 
 type instrRec struct {
@@ -704,6 +709,7 @@ func (r accountRepo) Delete(_ context.Context, id string) error {
 	delete(r.s.watch, id)
 	r.s.equity = slices.DeleteFunc(r.s.equity, func(e domain.EquitySnapshot) bool { return e.AccountID == id })
 	r.s.exec.deleteAccount(id)
+	r.s.log.deleteAccount(id)
 	return nil
 }
 

@@ -25,6 +25,9 @@ type llmProfileJSON struct {
 	Model          string `json:"model"`
 	BaseURL        string `json:"baseUrl"`
 	TimeoutSeconds int    `json:"timeoutSeconds"`
+	// prices in USD micros per million tokens (0 = unknown, also for profiles stored before)
+	InputPrice  int64 `json:"inputPriceMicros,omitempty"`
+	OutputPrice int64 `json:"outputPriceMicros,omitempty"`
 }
 
 type llmStoreJSON struct {
@@ -69,7 +72,7 @@ func (s *Service) loadLLM(ctx context.Context) (domain.LLMSettings, []domain.LLM
 	for _, p := range j.Profiles {
 		ps = append(ps, domain.LLMProfile{ID: p.ID, Name: p.Name, LLMConfig: domain.LLMConfig{
 			Provider: domain.LLMProviderID(p.Provider), Model: p.Model, BaseURL: p.BaseURL, TimeoutSeconds: p.TimeoutSeconds,
-		}})
+		}, InputPrice: domain.Micros(p.InputPrice), OutputPrice: domain.Micros(p.OutputPrice)})
 	}
 	return domain.LLMSettings{Enabled: j.Enabled, Active: j.Active}, ps, nil
 }
@@ -77,7 +80,10 @@ func (s *Service) loadLLM(ctx context.Context) (domain.LLMSettings, []domain.LLM
 func (s *Service) saveLLM(ctx context.Context, st domain.LLMSettings, ps []domain.LLMProfile) error {
 	j := llmStoreJSON{Enabled: st.Enabled, Active: st.Active, Profiles: make([]llmProfileJSON, 0, len(ps))}
 	for _, p := range ps {
-		j.Profiles = append(j.Profiles, llmProfileJSON{ID: p.ID, Name: p.Name, Provider: string(p.Provider), Model: p.Model, BaseURL: p.BaseURL, TimeoutSeconds: p.TimeoutSeconds})
+		j.Profiles = append(j.Profiles, llmProfileJSON{
+			ID: p.ID, Name: p.Name, Provider: string(p.Provider), Model: p.Model, BaseURL: p.BaseURL, TimeoutSeconds: p.TimeoutSeconds,
+			InputPrice: int64(p.InputPrice), OutputPrice: int64(p.OutputPrice),
+		})
 	}
 	b, err := json.Marshal(j)
 	if err != nil {
@@ -371,7 +377,7 @@ func (s *Service) LLMModels(ctx context.Context, p Principal, req LLMModelsReque
 	if err := s.authorize(p, domain.PermManageSettings); err != nil {
 		return nil, err
 	}
-	if s.d.Reviewer == nil {
+	if s.d.LLM == nil {
 		return nil, fmt.Errorf("the LLM reviewer is not available: %w", domain.ErrUnavailable)
 	}
 	c := req.Config
@@ -401,7 +407,7 @@ func (s *Service) LLMModels(ctx context.Context, p Principal, req LLMModelsReque
 	if pr, _ := domain.LLMProviderByID(c.Provider); pr.KeyRequired && key == "" {
 		return nil, domain.Invalid("apiKey", "enter the API key first")
 	}
-	ms, err := s.d.Reviewer.Models(ctx, c, key)
+	ms, err := s.d.LLM.Models(ctx, c, key)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", domain.ErrUnavailable, err)
 	}
@@ -414,6 +420,11 @@ type LLMTestResult struct {
 	Verdict domain.Verdict
 	Error   string
 	Latency time.Duration
+	// Model is the model that answered (or was asked, without an answer); the token counts
+	// are the provider's.
+	Model        string
+	InputTokens  int64
+	OutputTokens int64
 }
 
 // sampleReview is the made-up trade the test sends (nothing is traded).
@@ -432,7 +443,7 @@ func (s *Service) TestLLM(ctx context.Context, p Principal, profileID string) (L
 	if err := s.authorize(p, domain.PermManageSettings); err != nil {
 		return LLMTestResult{}, err
 	}
-	if s.d.Reviewer == nil {
+	if s.d.LLM == nil {
 		return LLMTestResult{}, fmt.Errorf("the LLM reviewer is not available: %w", domain.ErrUnavailable)
 	}
 	_, ps, err := s.loadLLM(ctx)
@@ -455,8 +466,9 @@ func (s *Service) TestLLM(ctx context.Context, p Principal, profileID string) (L
 		return LLMTestResult{}, domain.Invalid("apiKey", pr.Name+" has no API key yet")
 	}
 	start := s.d.Clock.Now()
-	v, err := s.d.Reviewer.Review(ctx, pr.LLMConfig, key, sampleReview)
-	res := LLMTestResult{Latency: s.d.Clock.Now().Sub(start)}
+	// the call's trace is logged from step 5.5 on (purpose "test")
+	v, call, err := s.d.LLM.Review(ctx, pr.LLMConfig, key, sampleReview)
+	res := LLMTestResult{Latency: s.d.Clock.Now().Sub(start), Model: call.Model, InputTokens: call.InputTokens, OutputTokens: call.OutputTokens}
 	if err != nil {
 		if ctx.Err() != nil {
 			return LLMTestResult{}, ctx.Err() // the caller went away

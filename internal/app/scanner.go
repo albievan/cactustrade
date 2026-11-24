@@ -270,7 +270,7 @@ func (s *Service) reviewerFor(ctx context.Context, profileID string) (domain.LLM
 // adds it to the watchlist. ok is false when reviewing is off. Any failure is a "no"
 // (fail closed); the reviewer can only agree or refuse, never add anything.
 func (s *Service) llmCheck(ctx context.Context, profileID string, c domain.Candidate, bars []domain.Candle) (domain.ReviewCheck, bool) {
-	if s.d.Reviewer == nil {
+	if s.d.LLM == nil {
 		return domain.ReviewCheck{}, false
 	}
 	pr, key, on, err := s.reviewerFor(ctx, profileID)
@@ -295,7 +295,8 @@ func (s *Service) llmCheck(ctx context.Context, profileID string, c domain.Candi
 	}
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	v, err := s.d.Reviewer.Review(rctx, pr.LLMConfig, key, ports.ReviewInput{Candidate: c, RecentCandles: recent})
+	// the call's trace is logged from step 5.5 on (purpose "scanner")
+	v, _, err := s.d.LLM.Review(rctx, pr.LLMConfig, key, ports.ReviewInput{Candidate: c, RecentCandles: recent})
 	if err != nil {
 		return domain.ReviewCheck{Rule: rule, Detail: "no usable answer: " + err.Error()}, true
 	}

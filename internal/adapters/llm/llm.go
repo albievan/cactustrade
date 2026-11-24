@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
@@ -31,6 +32,8 @@ const maxResponse = 1 << 20
 // Client implements ports.Reviewer for every provider in domain.LLMProviders.
 type Client struct {
 	HTTP *http.Client
+	// now measures latency (nil = time.Now; tests pin it).
+	now func() time.Time
 	// anthropicOpts are extra SDK options (tests point the SDK at a local server).
 	anthropicOpts []option.RequestOption
 }
@@ -144,21 +147,70 @@ func timeout(cfg domain.LLMConfig) time.Duration {
 	return 60 * time.Second
 }
 
-// Review asks the configured provider for a verdict.
-func (c *Client) Review(ctx context.Context, cfg domain.LLMConfig, apiKey string, in ports.ReviewInput) (domain.Verdict, error) {
+// Review asks the configured provider for a verdict and returns the call's trace (see
+// ports.Reviewer), filled on every path. Neither the trace nor the error holds the key.
+func (c *Client) Review(ctx context.Context, cfg domain.LLMConfig, apiKey string, in ports.ReviewInput) (domain.Verdict, domain.LLMCall, error) {
+	call := domain.LLMCall{Provider: cfg.Provider, Model: cfg.Model}
 	p, ok := domain.LLMProviderByID(cfg.Provider)
 	if !ok {
-		return domain.Verdict{}, fmt.Errorf("llm: unknown provider %q", cfg.Provider)
+		return finish(&call, apiKey, fmt.Errorf("llm: unknown provider %q", cfg.Provider))
+	}
+	if p.Anthropic && call.Model == "" {
+		call.Model = domain.DefaultAnthropicModel
 	}
 	if p.KeyRequired && apiKey == "" {
-		return domain.Verdict{}, fmt.Errorf("llm: the %s API key is not set: %w", p.Label, domain.ErrCredentialsMissing)
+		return finish(&call, apiKey, fmt.Errorf("llm: the %s API key is not set: %w", p.Label, domain.ErrCredentialsMissing))
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout(cfg))
 	defer cancel()
+	start := c.clock()
+	var v domain.Verdict
+	var err error
 	if p.Anthropic {
-		return c.reviewAnthropic(ctx, cfg, apiKey, UserPrompt(in))
+		v, err = c.reviewAnthropic(ctx, cfg, apiKey, UserPrompt(in), &call)
+	} else {
+		v, err = c.reviewOpenAI(ctx, cfg, apiKey, UserPrompt(in), &call)
 	}
-	return c.reviewOpenAI(ctx, cfg, apiKey, UserPrompt(in))
+	call.Latency = c.clock().Sub(start)
+	if err != nil {
+		return finish(&call, apiKey, err)
+	}
+	_, call, _ = finish(&call, apiKey, nil)
+	return v, call, nil
+}
+
+// finish redacts the key from the trace (defence in depth: a provider could echo it in an
+// error message), records err in it and returns the failed result (no verdict) with it.
+func finish(call *domain.LLMCall, apiKey string, err error) (domain.Verdict, domain.LLMCall, error) {
+	if len(apiKey) < minRedact {
+		apiKey = "" // too short to be a real key; replacing it would garble the text
+	}
+	if err != nil {
+		if apiKey != "" && strings.Contains(err.Error(), apiKey) {
+			err = errors.New(strings.ReplaceAll(err.Error(), apiKey, redacted))
+		}
+		call.Error = err.Error()
+	}
+	if apiKey != "" {
+		call.Prompt = strings.ReplaceAll(call.Prompt, apiKey, redacted)
+		call.Response = strings.ReplaceAll(call.Response, apiKey, redacted)
+		call.Model = strings.ReplaceAll(call.Model, apiKey, redacted)
+	}
+	return domain.Verdict{}, *call, err
+}
+
+// redacted replaces the API key wherever a provider echoed it; keys shorter than minRedact
+// bytes are not real provider keys and are left alone.
+const (
+	redacted  = "[redacted]"
+	minRedact = 8
+)
+
+func (c *Client) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // --- Anthropic (official SDK) -------------------------------------------------------------
@@ -171,14 +223,63 @@ func (c *Client) anthropicClient(cfg domain.LLMConfig, apiKey string) anthropic.
 	return anthropic.NewClient(append(opts, c.anthropicOpts...)...)
 }
 
-func (c *Client) reviewAnthropic(ctx context.Context, cfg domain.LLMConfig, apiKey, prompt string) (domain.Verdict, error) {
-	model := cfg.Model
-	if model == "" {
-		model = domain.DefaultAnthropicModel
+// recorder keeps the request and response bodies of one SDK call (the last attempt). It
+// never looks at the headers, which carry the key.
+type recorder struct {
+	mu        sync.Mutex
+	req, resp []byte
+	seen      bool
+}
+
+func (r *recorder) middleware(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+	var body []byte
+	switch {
+	case req.GetBody != nil:
+		if rc, err := req.GetBody(); err == nil {
+			body, _ = io.ReadAll(io.LimitReader(rc, maxResponse))
+			_ = rc.Close()
+		}
+	case req.Body != nil:
+		b, err := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		body = b
+		req.Body = io.NopCloser(bytes.NewReader(b))
+		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(b)), nil }
 	}
-	client := c.anthropicClient(cfg, apiKey)
-	resp, err := client.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
-		Model:     model,
+	r.mu.Lock()
+	r.req, r.resp, r.seen = body, nil, true
+	r.mu.Unlock()
+	resp, err := next(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
+	r.mu.Lock()
+	r.resp = data
+	r.mu.Unlock()
+	// the SDK reads the same bytes, then whatever was beyond the limit
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(data), resp.Body), resp.Body}
+	return resp, nil
+}
+
+func (r *recorder) into(call *domain.LLMCall) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.seen {
+		call.Prompt = string(r.req)
+	}
+	call.Response = string(r.resp)
+}
+
+func (c *Client) reviewAnthropic(ctx context.Context, cfg domain.LLMConfig, apiKey, prompt string, call *domain.LLMCall) (domain.Verdict, error) {
+	params := anthropic.BetaMessageNewParams{
+		Model:     call.Model,
 		MaxTokens: 16000,
 		System:    []anthropic.BetaTextBlockParam{{Text: systemPrompt}},
 		Messages:  []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(prompt))},
@@ -189,10 +290,22 @@ func (c *Client) reviewAnthropic(ctx context.Context, cfg domain.LLMConfig, apiK
 		// A refusal is re-served by a fallback model inside the same call.
 		Betas:     []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01},
 		Fallbacks: anthropic.BetaFallbacksParamOfDefault(),
-	})
+	}
+	// the trace's prompt until the request is seen on the wire (then: the exact body)
+	if b, err := json.Marshal(params); err == nil {
+		call.Prompt = string(b)
+	}
+	rec := &recorder{}
+	client := c.anthropicClient(cfg, apiKey)
+	resp, err := client.Beta.Messages.New(ctx, params, option.WithMiddleware(rec.middleware))
+	rec.into(call)
 	if err != nil {
 		return domain.Verdict{}, fmt.Errorf("llm anthropic: %w", err)
 	}
+	if resp.Model != "" {
+		call.Model = resp.Model
+	}
+	call.InputTokens, call.OutputTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	if resp.StopReason == anthropic.BetaStopReasonRefusal {
 		return domain.Verdict{}, errors.New("llm anthropic: the model declined to review this trade")
 	}
@@ -202,23 +315,25 @@ func (c *Client) reviewAnthropic(ctx context.Context, cfg domain.LLMConfig, apiK
 			text.WriteString(t.Text)
 		}
 	}
-	return parseVerdict(text.String())
+	v, err := parseVerdict(text.String())
+	if err != nil {
+		return domain.Verdict{}, fmt.Errorf("llm anthropic: %w", err)
+	}
+	return v, nil
 }
 
 // --- OpenAI-compatible chat completions ---------------------------------------------------
 
-func (c *Client) do(ctx context.Context, method, url, apiKey string, body any, out any) error {
+// do sends body (nil = none) and returns the response body, also with an error status (then
+// with an error that explains it).
+func (c *Client) do(ctx context.Context, method, url, apiKey string, body []byte) ([]byte, error) {
 	var rd io.Reader
 	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		rd = bytes.NewReader(b)
+		rd = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, rd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
@@ -229,43 +344,77 @@ func (c *Client) do(ctx context.Context, method, url, apiKey string, body any, o
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
 	if err != nil {
-		return err
+		return data, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, providerMessage(resp.StatusCode, data))
+		return data, fmt.Errorf("HTTP %d: %s", resp.StatusCode, providerMessage(resp.StatusCode, data))
 	}
-	return json.Unmarshal(data, out)
+	return data, nil
 }
 
-func (c *Client) reviewOpenAI(ctx context.Context, cfg domain.LLMConfig, apiKey, prompt string) (domain.Verdict, error) {
-	body := map[string]any{
-		"model": cfg.Model,
-		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": prompt},
-		},
-		"response_format": map[string]string{"type": "json_object"},
-	}
-	var resp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		} `json:"choices"`
-	}
-	if err := c.do(ctx, http.MethodPost, cfg.Endpoint()+"/chat/completions", apiKey, body, &resp); err != nil {
+// chatRequest is the whole request: system and user message and JSON mode. There is
+// deliberately no tools, tool_choice or functions field (CLAUDE.md §2.5).
+type chatRequest struct {
+	Model          string            `json:"model"`
+	Messages       []chatMessage     `json:"messages"`
+	ResponseFormat map[string]string `json:"response_format"`
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatResponse struct {
+	Model   string `json:"model"`
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int64 `json:"prompt_tokens"`
+		CompletionTokens int64 `json:"completion_tokens"`
+	} `json:"usage"`
+}
+
+func (c *Client) reviewOpenAI(ctx context.Context, cfg domain.LLMConfig, apiKey, prompt string, call *domain.LLMCall) (domain.Verdict, error) {
+	body, err := json.Marshal(chatRequest{
+		Model:          cfg.Model,
+		Messages:       []chatMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: prompt}},
+		ResponseFormat: map[string]string{"type": "json_object"},
+	})
+	if err != nil {
 		return domain.Verdict{}, fmt.Errorf("llm %s: %w", cfg.Provider, err)
 	}
+	call.Prompt = string(body)
+	data, err := c.do(ctx, http.MethodPost, cfg.Endpoint()+"/chat/completions", apiKey, body)
+	call.Response = string(data)
+	if err != nil {
+		return domain.Verdict{}, fmt.Errorf("llm %s: %w", cfg.Provider, err)
+	}
+	var resp chatResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return domain.Verdict{}, fmt.Errorf("llm %s: the response is not JSON: %w", cfg.Provider, err)
+	}
+	if resp.Model != "" {
+		call.Model = resp.Model
+	}
+	call.InputTokens, call.OutputTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	if len(resp.Choices) == 0 {
 		return domain.Verdict{}, fmt.Errorf("llm %s: no answer", cfg.Provider)
 	}
-	return parseVerdict(resp.Choices[0].Message.Content)
+	v, err := parseVerdict(resp.Choices[0].Message.Content)
+	if err != nil {
+		return domain.Verdict{}, fmt.Errorf("llm %s: %w", cfg.Provider, err)
+	}
+	return v, nil
 }
 
 // Models lists the provider's models for the setup page.
@@ -295,7 +444,11 @@ func (c *Client) Models(ctx context.Context, cfg domain.LLMConfig, apiKey string
 				ID string `json:"id"`
 			} `json:"data"`
 		}
-		if err := c.do(ctx, http.MethodGet, cfg.Endpoint()+"/models", apiKey, nil, &resp); err != nil {
+		data, err := c.do(ctx, http.MethodGet, cfg.Endpoint()+"/models", apiKey, nil)
+		if err == nil {
+			err = json.Unmarshal(data, &resp)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("llm %s: %w", cfg.Provider, err)
 		}
 		for _, m := range resp.Data {

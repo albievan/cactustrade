@@ -1,8 +1,12 @@
 package domain
 
 import (
+	"math"
+	"math/bits"
 	"net/url"
 	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 // LLMProviderID names an LLM provider the reviewer can use.
@@ -131,6 +135,46 @@ type LLMProfile struct {
 	ID   string
 	Name string
 	LLMConfig
+	// InputPrice and OutputPrice are what the provider charges, in USD micros per million
+	// input and output tokens, as the admin entered them (OD13: no built-in price table).
+	// 0 = unknown, and then every call's cost is unknown.
+	InputPrice  Micros
+	OutputPrice Micros
+}
+
+// MaxLLMPrice bounds a price per million tokens: USD 1 000 000 (in micros).
+const MaxLLMPrice Micros = 1_000_000 * 1_000_000
+
+// MaxLLMTokens caps the token counts Cost uses; a count above it is a provider bug.
+const MaxLLMTokens int64 = 1 << 40
+
+// CostUnknown is LLMCall.CostMicros when the profile has no prices.
+const CostUnknown Micros = -1
+
+// tokensPerPrice is the unit of a price: one million tokens.
+const tokensPerPrice = 1_000_000
+
+// Cost returns what in input and out output tokens cost at the profile's prices, in USD
+// micros, rounded up so a call is never shown cheaper than it was. It is CostUnknown when
+// either price is unknown (0) or invalid (negative). Counts below 0 count as 0 and counts
+// above MaxLLMTokens as MaxLLMTokens; the sum is computed in 128 bits and capped at
+// math.MaxInt64, so the cost never overflows and never falls when a count grows.
+func (p LLMProfile) Cost(in, out int64) Micros {
+	if p.InputPrice <= 0 || p.OutputPrice <= 0 {
+		return CostUnknown
+	}
+	clamp := func(n int64) uint64 { return uint64(min(max(n, 0), MaxLLMTokens)) }
+	hi1, lo1 := bits.Mul64(clamp(in), uint64(p.InputPrice))
+	hi2, lo2 := bits.Mul64(clamp(out), uint64(p.OutputPrice))
+	lo, carry := bits.Add64(lo1, lo2, 0)
+	hi, _ := bits.Add64(hi1, hi2, carry) // < 2^127: no overflow
+	lo, carry = bits.Add64(lo, tokensPerPrice-1, 0)
+	hi += carry
+	if hi >= tokensPerPrice { // the quotient would not fit in 64 bits
+		return Micros(math.MaxInt64)
+	}
+	q, _ := bits.Div64(hi, lo, tokensPerPrice)
+	return Micros(min(q, math.MaxInt64))
 }
 
 // MaxLLMProfiles bounds how many reviewer setups can be stored.
@@ -162,6 +206,12 @@ func (p LLMProfile) Validate() error {
 	if p.Name == "" || len(p.Name) > 80 || strings.ContainsFunc(p.Name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return Invalid("name", "1-80 characters, no control characters")
 	}
+	if p.InputPrice < 0 || p.InputPrice > MaxLLMPrice {
+		return Invalid("inputPrice", "USD 0 (unknown) to 1 000 000 per million tokens")
+	}
+	if p.OutputPrice < 0 || p.OutputPrice > MaxLLMPrice {
+		return Invalid("outputPrice", "USD 0 (unknown) to 1 000 000 per million tokens")
+	}
 	return p.LLMConfig.Validate()
 }
 
@@ -169,4 +219,66 @@ func (p LLMProfile) Validate() error {
 type LLMSettings struct {
 	Enabled bool   // review every proposed trade
 	Active  string // the profile in use ("" = none)
+}
+
+// LLMPurpose says why an LLM call was made.
+type LLMPurpose string
+
+// LLM call purposes.
+const (
+	LLMPurposeAgent   LLMPurpose = "agent"   // the agent's review of a trade (4.10 step 5)
+	LLMPurposeScanner LLMPurpose = "scanner" // the scanner's check before the watchlist
+	LLMPurposeTest    LLMPurpose = "test"    // the admin's test on the LLM page
+)
+
+// Valid reports whether u is a known purpose.
+func (u LLMPurpose) Valid() bool {
+	return u == LLMPurposeAgent || u == LLMPurposeScanner || u == LLMPurposeTest
+}
+
+// MaxLLMText bounds a stored prompt or response (32 KiB); longer ones are cut by Truncate.
+const MaxLLMText = 32 << 10
+
+// LLMCall is one request to an LLM reviewer: what was sent, what came back, what it used and
+// cost. The reviewer adapter fills the provider's side (Provider, Model, Prompt, Response,
+// tokens, Latency, Error), even when the call fails; the caller fills the rest. It never
+// holds the API key or any request header.
+type LLMCall struct {
+	ID        string
+	AccountID string // "" = not for an account (the admin's test)
+	Purpose   LLMPurpose
+	ProfileID string
+	Provider  LLMProviderID
+	// Model is the model that answered (Anthropic's server-side fallback may serve another
+	// one than asked for); the requested one when there was no answer.
+	Model string
+	// Prompt is the request body as sent; Response the raw response body (both cut at
+	// MaxLLMText by the repository).
+	Prompt       string
+	Response     string
+	InputTokens  int64
+	OutputTokens int64
+	Latency      time.Duration
+	// CostMicros is the cost in USD micros (LLMProfile.Cost); CostUnknown = -1.
+	CostMicros Micros
+	Error      string // "" = the call returned a usable answer
+	At         time.Time
+}
+
+// Truncate cuts s to at most n bytes of valid UTF-8: invalid bytes become U+FFFD first, and
+// a cut never splits a character. A cut string ends with "…" within the n bytes.
+func Truncate(s string, n int) string {
+	s = strings.ToValidUTF8(s, "\uFFFD")
+	if len(s) <= n {
+		return s
+	}
+	const mark = "…"
+	if n < len(mark) {
+		return ""
+	}
+	cut := n - len(mark)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + mark
 }

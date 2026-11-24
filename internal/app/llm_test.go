@@ -17,10 +17,14 @@ type fakeReviewer struct {
 	calls  int
 }
 
-func (f *fakeReviewer) Review(_ context.Context, c domain.LLMConfig, k string, _ ports.ReviewInput) (domain.Verdict, error) {
+func (f *fakeReviewer) Review(_ context.Context, c domain.LLMConfig, k string, _ ports.ReviewInput) (domain.Verdict, domain.LLMCall, error) {
 	f.gotCfg, f.gotKey = c, k
 	f.calls++
-	return f.v, f.err
+	call := domain.LLMCall{Provider: c.Provider, Model: "served-" + c.Model, Prompt: "{}", InputTokens: 100, OutputTokens: 20}
+	if f.err != nil {
+		call.Error = f.err.Error()
+	}
+	return f.v, call, f.err
 }
 
 func (f *fakeReviewer) Models(_ context.Context, _ domain.LLMConfig, k string) ([]string, error) {
@@ -45,7 +49,7 @@ func TestLLMProfiles(t *testing.T) {
 		t.Fatal("models without a reviewer")
 	}
 	r := &fakeReviewer{v: domain.Verdict{Kind: domain.VerdictReduce, SizeBp: 40_000, Reason: "r"}}
-	e.svc.d.Reviewer = r
+	e.svc.d.LLM = r
 
 	ds := domain.LLMProfile{Name: "DeepSeek chat", LLMConfig: domain.LLMConfig{Provider: "deepseek", Model: "deepseek-chat"}}
 	if _, err := e.svc.SaveLLMProfile(ctx, viewer, ds, nil); !errors.Is(err, domain.ErrForbidden) {
@@ -99,7 +103,8 @@ func TestLLMProfiles(t *testing.T) {
 
 	// test with the stored key; the multiplier is clamped
 	res, err := e.svc.TestLLM(ctx, e.admin, p1.ID)
-	if err != nil || !res.OK || res.Verdict.SizeBp != domain.FullSize || r.gotKey != "sk-1" || r.gotCfg.Model != "deepseek-chat" {
+	if err != nil || !res.OK || res.Verdict.SizeBp != domain.FullSize || r.gotKey != "sk-1" || r.gotCfg.Model != "deepseek-chat" ||
+		res.Model != "served-deepseek-chat" || res.InputTokens != 100 || res.OutputTokens != 20 {
 		t.Fatalf("test = %+v %v", res, err)
 	}
 	if _, err := e.svc.TestLLM(ctx, e.admin, p2.ID); !errors.Is(err, domain.ErrInvalid) {
@@ -240,5 +245,58 @@ func TestMigrateLLMSetup(t *testing.T) {
 	_ = e2.store.Settings().Set(ctx, settingLLMLegacy, `garbage`, e2.clock.T)
 	if ok, err := e2.svc.MigrateLLMSetup(ctx); ok || err != nil {
 		t.Fatal("garbage migrated")
+	}
+}
+
+// TestVerdictOnly: the agent tick's adapter returns the traced reviewer's verdict and error
+// and drops the trace; nil stays nil.
+func TestVerdictOnly(t *testing.T) {
+	if VerdictOnly(nil) != nil {
+		t.Fatal("nil reviewer wrapped")
+	}
+	for _, tt := range []struct {
+		name string
+		r    *fakeReviewer
+	}{
+		{"verdict", &fakeReviewer{v: domain.Verdict{Kind: domain.VerdictReduce, SizeBp: 2_500, Reason: "r"}}},
+		{"error", &fakeReviewer{err: errors.New("HTTP 500")}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			v, err := VerdictOnly(tt.r).Review(context.Background(), domain.LLMConfig{Provider: "openai", Model: "m"}, "k", ports.ReviewInput{})
+			if v != tt.r.v || !errors.Is(err, tt.r.err) || (tt.r.err == nil) != (err == nil) || tt.r.calls != 1 || tt.r.gotKey != "k" {
+				t.Fatalf("VerdictOnly = %+v %v", v, err)
+			}
+		})
+	}
+}
+
+// TestLLMProfilePricesStored: a profile's prices survive the settings round trip, invalid
+// prices are refused, and profiles stored before prices existed read as unknown (0).
+func TestLLMProfilePricesStored(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	in := domain.LLMProfile{
+		Name: "Priced", LLMConfig: domain.LLMConfig{Provider: "openai", Model: "m"},
+		InputPrice: 3_000_000, OutputPrice: 15_000_000,
+	}
+	p, err := e.svc.SaveLLMProfile(ctx, e.admin, in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := e.svc.LLMSetup(ctx, e.admin)
+	if err != nil || len(st.Profiles) != 1 || st.Profiles[0].InputPrice != 3_000_000 || st.Profiles[0].OutputPrice != 15_000_000 {
+		t.Fatalf("stored = %+v %v", st, err)
+	}
+	if got := st.Profiles[0].Cost(1_000, 1_000); got != 18_000 {
+		t.Fatalf("cost = %d", got)
+	}
+	bad := in
+	bad.ID, bad.InputPrice = p.ID, -1
+	if _, err := e.svc.SaveLLMProfile(ctx, e.admin, bad, nil); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("negative price: %v", err)
+	}
+	_ = e.store.Settings().Set(ctx, settingLLMProfiles, `{"enabled":false,"active":"a","profiles":[{"id":"a","name":"A","provider":"openai","model":"m"}]}`, e.clock.T)
+	if st, err := e.svc.LLMSetup(ctx, e.admin); err != nil || st.Profiles[0].InputPrice != 0 || st.Profiles[0].Cost(1, 1) != domain.CostUnknown {
+		t.Fatalf("old profile = %+v %v", st, err)
 	}
 }

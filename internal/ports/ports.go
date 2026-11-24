@@ -186,6 +186,35 @@ type Orders interface {
 	List(ctx context.Context, accountID string, limit int) ([]domain.Order, error)
 }
 
+// LLMCalls stores every call to an LLM reviewer (OD12: kept 400 days). AccountID "" is a call
+// for no account (the admin's test); it has no foreign key, so a call outlives its account.
+type LLMCalls interface {
+	// Add stores a call: ErrConflict when the id exists. Prompt and response are cut at
+	// domain.MaxLLMText, the error at 500 bytes.
+	Add(ctx context.Context, c domain.LLMCall) error
+	Get(ctx context.Context, id string) (domain.LLMCall, error)
+	// DeleteBefore removes calls made before t and returns how many.
+	DeleteBefore(ctx context.Context, t time.Time) (int64, error)
+}
+
+// Decisions stores the decision log: one entry per candidate the agent handled (OD12: kept
+// 400 days). Entries go with their account.
+type Decisions interface {
+	// Add stores a validated decision (domain.Decision.Validate): ErrConflict when the id
+	// exists, ErrNotFound when the account does not.
+	Add(ctx context.Context, d domain.Decision) error
+	// Update replaces the verdict, risk answer, outcome and order request id of the
+	// account's decision id; ErrNotFound when there is none.
+	Update(ctx context.Context, d domain.Decision) error
+	// Get returns the account's decision id; ErrNotFound for another account's.
+	Get(ctx context.Context, accountID, id string) (domain.Decision, error)
+	// List returns the account's decisions made before before (zero = no bound) with the
+	// outcome (empty = any), newest first, at most limit.
+	List(ctx context.Context, accountID string, before time.Time, outcome domain.DecisionOutcome, limit int) ([]domain.Decision, error)
+	// DeleteBefore removes decisions made before t, of every account, and returns how many.
+	DeleteBefore(ctx context.Context, t time.Time) (int64, error)
+}
+
 // AgentPositions stores the positions cactusTrade opened (OD1: only these are closed by it).
 type AgentPositions interface {
 	// Add records a position: ErrConflict when the account already has it, ErrNotFound when
@@ -249,6 +278,8 @@ type Store interface {
 	RiskStates() RiskStates
 	InstrumentBlocks() InstrumentBlocks
 	AgentLeases() AgentLeases
+	LLMCalls() LLMCalls
+	Decisions() Decisions
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
@@ -401,7 +432,12 @@ type ReviewInput struct {
 // Reviewer is the LLM. It has no tools and no broker access; it only returns a verdict,
 // which the caller clamps (domain.ClampVerdict). Any error is a rejection (fail closed).
 type Reviewer interface {
-	Review(ctx context.Context, cfg domain.LLMConfig, apiKey string, in ReviewInput) (domain.Verdict, error)
+	// Review asks for a verdict and returns the call's trace, filled even when it fails:
+	// Provider, Model (the one that answered, else the requested one), Prompt (the request
+	// body as sent), Response (the raw body, kept when it is unusable), the token counts,
+	// Latency and Error. The caller sets ID, AccountID, Purpose, ProfileID, CostMicros and
+	// At. The trace never holds the API key or a request header.
+	Review(ctx context.Context, cfg domain.LLMConfig, apiKey string, in ReviewInput) (domain.Verdict, domain.LLMCall, error)
 	// Models lists the model ids the provider offers with this key.
 	Models(ctx context.Context, cfg domain.LLMConfig, apiKey string) ([]string, error)
 }
