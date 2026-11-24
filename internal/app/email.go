@@ -196,7 +196,8 @@ func (s *Service) SendTestEmail(ctx context.Context, p Principal, to string) err
 		return fmt.Errorf("app.SendTestEmail: %w", err)
 	}
 	if !ok {
-		return domain.Invalid("enabled", "no mail server: fill in the server and tick \"Use this server\"")
+		const msg = "No mail server: fill in the server and tick \"Use this server\""
+		return &domain.MissingError{What: domain.MissingEmailServer, Msg: msg, CanFix: true, Err: domain.Invalid("enabled", msg)}
 	}
 	err = s.d.Mailer.Send(ctx, server, pw, domain.Mail{
 		ID: s.d.Random.ID(), To: to, Subject: "cactusTrade test e-mail",
@@ -420,7 +421,12 @@ func (s *Service) PasswordResetAvailable(ctx context.Context) bool {
 // domain.PasswordResetPerHour links per user per hour.
 func (s *Service) RequestPasswordReset(ctx context.Context, username, remoteIP string) error {
 	if !s.PasswordResetAvailable(ctx) {
-		return fmt.Errorf("password reset by e-mail is not set up: %w", domain.ErrUnavailable)
+		// Asked before signing in: nobody here can fix it (CanFix false); an admin can.
+		what, msg := domain.MissingEmailServer, "Password reset by e-mail is not set up: an admin must set up a mail server"
+		if s.cfg.PublicURL == "" {
+			what, msg = domain.MissingPublicURL, "Password reset by e-mail is not set up: the server's public address (CACTUSTRADE_PUBLIC_URL) is not set"
+		}
+		return domain.MissingSetup(what, msg, fmt.Errorf("password reset by e-mail is not set up: %w", domain.ErrUnavailable))
 	}
 	u, err := s.d.Store.Users().GetByUsername(ctx, domain.NormalizeUsername(username))
 	if errors.Is(err, domain.ErrNotFound) {

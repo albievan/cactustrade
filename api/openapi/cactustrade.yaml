@@ -1415,6 +1415,23 @@ components:
         status: { type: integer }
         detail: { type: string }
         field: { type: string, description: The invalid field, for 400s }
+        missing: { $ref: "#/components/schemas/Missing" }
+        canFix: { type: boolean, description: "with missing: the caller may fix it (the web UI then shows a button to the fix)" }
+    Missing:
+      type: string
+      description: >-
+        Setup an action needs and does not have yet (R22). trading_budget: Risk limits; account_keys: the account's
+        keys (Platform accounts); account: no eToro account (Platform accounts); watchlist: the watchlist is empty;
+        reconcile: run a reconciliation; kill_reset: an admin resets the kill switch; llm_profile: the LLM reviewer
+        has no usable default profile or key; email_server: no mail server (E-mail); public_url: the deployment
+        setting CACTUSTRADE_PUBLIC_URL is not set.
+      enum: [trading_budget, account_keys, account, watchlist, reconcile, kill_reset, llm_profile, email_server, public_url]
+    MissingItem:
+      type: object
+      required: [what, canFix]
+      properties:
+        what: { $ref: "#/components/schemas/Missing" }
+        canFix: { type: boolean, description: "the caller may fix it" }
     Health:
       type: object
       required: [status]
@@ -2190,7 +2207,7 @@ components:
     AgentPanel:
       type: object
       required: [account, state, reconciliation, limits, killed, dayStopped, riskDay, today, startOfDayEquityCents, highWaterMarkCents,
-                 equityKnown, blocked, flatten, lease, controls, resetPhrase, openPositions, pendingOrders]
+                 equityKnown, blocked, flatten, lease, controls, resetPhrase, openPositions, pendingOrders, missing]
       properties:
         account: { $ref: "#/components/schemas/Account" }
         state: { $ref: "#/components/schemas/AgentState" }
@@ -2218,6 +2235,10 @@ components:
         resetPhrase: { type: string, description: "what an admin types to reset the kill switch" }
         openPositions: { type: integer, description: "positions cactusTrade opened that are open" }
         pendingOrders: { type: integer, description: "orders of ours that are not final" }
+        missing:
+          type: array
+          description: "what must be set up before the agent can start (empty while it runs and on a real-money account)"
+          items: { $ref: "#/components/schemas/MissingItem" }
     Order:
       type: object
       required: [requestId, mode, kind, direction, instrumentId, symbol, amountCents, state, reason, sends, createdAt, updatedAt]

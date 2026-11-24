@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -71,6 +72,16 @@ type AgentView struct {
 	Controls               AgentControls
 	ResetPhrase            string
 	OpenPositions, Pending int
+	// Missing lists what must be set up before the agent can start (R22), in the order
+	// StartAgent checks it, plus an empty watchlist and an unusable LLM reviewer. Empty while
+	// the agent runs and on a real-money account (nothing there may start before phase 7).
+	Missing []MissingItem
+}
+
+// MissingItem is one piece of missing setup and whether the caller may fix it.
+type MissingItem struct {
+	What   domain.Missing
+	CanFix bool
 }
 
 // AgentStatusView returns the agent of an account the caller can view (accountID "" = the
@@ -113,7 +124,96 @@ func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID st
 	if pending, err := s.d.Store.Orders().ListOpen(ctx, v.ID); err == nil {
 		out.Pending = len(pending)
 	}
+	out.Missing = s.missingFor(ctx, p, v, out)
 	return out, nil
+}
+
+// missingFor applies startable's rules without running StartAgent (R22), and adds an empty
+// watchlist and a switched-on reviewer that cannot review. A store error leaves the item out:
+// the list is guidance, StartAgent still checks everything.
+func (s *Service) missingFor(ctx context.Context, p Principal, v domain.AccountView, out AgentView) []MissingItem {
+	if out.State == domain.AgentRunning || out.Controls.Gated {
+		return []MissingItem{}
+	}
+	var ms []domain.Missing
+	if !s.hasKeys(ctx, v.Account) {
+		ms = append(ms, domain.MissingAccountKeys)
+	}
+	if killed, err := s.isKilled(ctx, v.ID); killed && err == nil {
+		ms = append(ms, domain.MissingKillReset)
+	}
+	if out.Limits.TradingBudget <= 0 {
+		ms = append(ms, domain.MissingTradingBudget)
+	}
+	if !out.Reconciliation.OK {
+		ms = append(ms, domain.MissingReconcile)
+	}
+	if items, err := s.d.Store.Watchlist().List(ctx, v.ID); err == nil && len(items) == 0 {
+		ms = append(ms, domain.MissingWatchlist)
+	}
+	if !s.reviewerUsable(ctx) {
+		ms = append(ms, domain.MissingLLMProfile)
+	}
+	items := make([]MissingItem, 0, len(ms))
+	for _, m := range ms {
+		items = append(items, MissingItem{What: m, CanFix: s.canFix(p, v, m)})
+	}
+	return items
+}
+
+// reviewerUsable reports whether reviewing is off, or on with a valid default profile that
+// has a key when its provider needs one. An unreadable setup counts as unusable.
+func (s *Service) reviewerUsable(ctx context.Context) bool {
+	st, ps, err := s.loadLLM(ctx)
+	if err != nil {
+		return false
+	}
+	if !st.Enabled {
+		return true
+	}
+	i := slices.IndexFunc(ps, func(x domain.LLMProfile) bool { return x.ID == st.Active })
+	if i < 0 || ps[i].Validate() != nil {
+		return false
+	}
+	if pr, _ := domain.LLMProviderByID(ps[i].Provider); pr.KeyRequired {
+		k, err := s.llmKey(ctx, ps[i].ID)
+		return err == nil && k != ""
+	}
+	return true
+}
+
+// canFix says whether p may fix what on account v, by the rules of the use case that fixes
+// it (R22): SetRiskLimits and SetAccountCredentials (owner, web session), ReconcileAccount
+// and ResetKill (as controlsFor), AddToWatchlist (trade access), the LLM reviewer and e-mail
+// setup (settings, web session), CreateAccount (agent.control). A deployment setting such as
+// CACTUSTRADE_PUBLIC_URL is never fixed in the app.
+func (s *Service) canFix(p Principal, v domain.AccountView, what domain.Missing) bool {
+	session := p.Via == ViaSession
+	switch what {
+	case domain.MissingTradingBudget, domain.MissingAccountKeys:
+		return session && v.Access == domain.AccessOwner
+	case domain.MissingReconcile:
+		return s.controlsFor(p, v).Pause
+	case domain.MissingKillReset:
+		return s.controlsFor(p, v).Reset
+	case domain.MissingWatchlist:
+		return v.Access.AtLeast(domain.AccessTrade)
+	case domain.MissingLLMProfile, domain.MissingEmailServer:
+		return session && p.Can(domain.PermManageSettings)
+	case domain.MissingAccount:
+		return p.Can(domain.PermAgentControl)
+	default:
+		return false
+	}
+}
+
+// fixable sets CanFix on the *domain.MissingError in err (if any) for p on account v and
+// returns err.
+func (s *Service) fixable(p Principal, v domain.AccountView, err error) error {
+	if me, ok := errors.AsType[*domain.MissingError](err); ok {
+		me.CanFix = s.canFix(p, v, me.What)
+	}
+	return err
 }
 
 // controlsFor applies the same rules as the control use cases, without running them.
@@ -242,7 +342,8 @@ func (s *Service) ReconcileAccount(ctx context.Context, p Principal, accountID s
 		return Reconciliation{}, err
 	}
 	if !s.hasKeys(ctx, v.Account) {
-		return Reconciliation{}, fmt.Errorf("the account's eToro keys are not set: %w: %w", domain.ErrCredentialsMissing, domain.ErrUnavailable)
+		return Reconciliation{}, s.fixable(p, v, domain.MissingSetup(domain.MissingAccountKeys, msgNoKeys,
+			fmt.Errorf("%w: %w", domain.ErrCredentialsMissing, domain.ErrUnavailable)))
 	}
 	if !s.rt.claim(v.ID) {
 		return Reconciliation{}, fmt.Errorf("the supervisor is working on %s; try again in a few seconds: %w", v.Name, domain.ErrConflict)

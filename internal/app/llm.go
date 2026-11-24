@@ -241,7 +241,8 @@ func (s *Service) SetLLMSettings(ctx context.Context, p Principal, st domain.LLM
 			if k, err := s.llmKey(ctx, active.ID); err != nil {
 				return LLMSetup{}, fmt.Errorf("app.SetLLMSettings: %w", err)
 			} else if k == "" {
-				return LLMSetup{}, domain.Invalid("activeProfileId", active.Name+" has no API key yet")
+				msg := active.Name + " has no API key yet"
+				return LLMSetup{}, &domain.MissingError{What: domain.MissingLLMProfile, Msg: msg, CanFix: true, Err: domain.Invalid("activeProfileId", msg)}
 			}
 		}
 	}
@@ -466,7 +467,10 @@ func (s *Service) TestLLM(ctx context.Context, p Principal, profileID string) (L
 		return LLMTestResult{}, fmt.Errorf("app.TestLLM: %w", err)
 	}
 	if prov, _ := domain.LLMProviderByID(pr.Provider); prov.KeyRequired && key == "" {
-		return LLMTestResult{}, domain.Invalid("apiKey", pr.Name+" has no API key yet")
+		msg := pr.Name + " has no API key yet"
+		return LLMTestResult{}, &domain.MissingError{
+			What: domain.MissingLLMProfile, Msg: msg, CanFix: s.canFix(p, domain.AccountView{}, domain.MissingLLMProfile), Err: domain.Invalid("apiKey", msg),
+		}
 	}
 	start := s.d.Clock.Now()
 	v, call, err := s.d.LLM.Review(ctx, pr.LLMConfig, key, sampleReview)

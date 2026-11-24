@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { SessionProvider } from "../lib/session";
 import { LlmReviewer } from "./LlmReviewer";
 
@@ -126,5 +127,26 @@ describe("LlmReviewer prices and usage", () => {
     fireEvent.click(await screen.findByLabelText("Test Claude"));
     expect(await screen.findByText("claude-sonnet-fallback")).toBeInTheDocument();
     expect(screen.getByText(/812 in \/ 40 out tokens · cost \$0\.003036/)).toBeInTheDocument();
+  });
+});
+
+describe("LlmReviewer missing key (R22)", () => {
+  it("offers to open the profile's editor when its test needs a key", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status });
+      if (url.endsWith("/api/v1/auth/me")) return json(me);
+      if (url.endsWith("/llm/profiles/p2/test") && init?.method === "POST") {
+        return json({ title: "Invalid input", status: 400, field: "apiKey", detail: "DeepSeek desk has no API key yet", missing: "llm_profile", canFix: true }, 400);
+      }
+      if (url.endsWith("/api/v1/llm")) return json(llm);
+      return new Response("{}", { status: 404 });
+    });
+    render(<MemoryRouter><SessionProvider><LlmReviewer /></SessionProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByLabelText("Test DeepSeek desk"));
+    expect((await screen.findByText("DeepSeek desk has no API key yet")).closest(".alert")).toHaveClass("alert-danger");
+    fireEvent.click(screen.getByRole("button", { name: /^Fix reviewer/ }));
+    expect(screen.queryByText("DeepSeek desk has no API key yet")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Actions for DeepSeek desk" })).not.toBeInTheDocument(); // its card became the form
   });
 });

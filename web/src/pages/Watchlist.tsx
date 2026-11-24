@@ -3,6 +3,7 @@ import { api, errorText, type Instrument, type Quote, type WatchItem } from "../
 import { useSession } from "../lib/session";
 import { useMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
+import { ProblemAlert } from "../components/ProblemAlert";
 
 const QUOTE_REFRESH_MS = 15_000; // 4 calls a minute: well inside eToro's market-data quota
 
@@ -15,9 +16,9 @@ export function Watchlist() {
   const admin = can("agent.control") && (access === "trade" || access === "owner");
   const [items, setItems] = useState<WatchItem[]>([]);
   const [quotes, setQuotes] = useState<Record<number, Quote>>({});
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const load = useCallback(() => {
-    api.watchlist().then(setItems).catch((e) => setError(errorText(e)));
+    api.watchlist().then(setItems).catch(setError);
   }, []);
   const accountId = status?.account?.id;
   useEffect(() => { if (accountId) load(); }, [load, accountId]);
@@ -37,7 +38,7 @@ export function Watchlist() {
       await api.removeFromWatchlist(id);
       load();
     } catch (e) {
-      setError(errorText(e));
+      setError(e);
     }
   }
   if (status && !status.account) return <><h1 className="h3">Watchlist</h1><NeedAccount /></>;
@@ -47,7 +48,7 @@ export function Watchlist() {
       <p className="text-secondary">
         Shares the agent may trade: London (LSE), New York (NYSE / NASDAQ) and Sydney (ASX; search e.g. “CBA.ASX”) only, bought as the real share at leverage 1.
       </p>
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      <ProblemAlert error={error} />
       {admin && <AddInstrument onAdded={load} />}
       {items.length === 0 ? (
         <p className="text-secondary">The watchlist is empty.</p>

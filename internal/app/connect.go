@@ -129,7 +129,8 @@ func (s *Service) ConnectAccount(ctx context.Context, p Principal, pl domain.Pla
 	}
 	redirect := s.redirectURI(pl)
 	if redirect == "" {
-		return ConnectStart{}, fmt.Errorf("set CACTUSTRADE_PUBLIC_URL (the address the browser comes back to) first: %w", domain.ErrUnavailable)
+		return ConnectStart{}, domain.MissingSetup(domain.MissingPublicURL, "Set CACTUSTRADE_PUBLIC_URL (the address the browser comes back to) first",
+			fmt.Errorf("CACTUSTRADE_PUBLIC_URL is not set: %w", domain.ErrUnavailable))
 	}
 	state := s.d.Random.Token()
 	now := s.d.Clock.Now().UTC()

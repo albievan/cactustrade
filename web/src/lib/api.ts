@@ -62,7 +62,11 @@ export type DecisionDetail = components["schemas"]["DecisionDetail"];
 export type LlmCall = components["schemas"]["LlmCall"];
 export type LlmUsage = components["schemas"]["LlmUsage"];
 export type LlmUsageRow = components["schemas"]["LlmUsageRow"];
+export type Missing = components["schemas"]["Missing"];
+export type MissingItem = components["schemas"]["MissingItem"];
 
+// ApiError is a refused request with the server's problem (RFC 9457), kept whole so a page
+// can show what is missing (problem.missing, problem.canFix; R22).
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -70,6 +74,11 @@ export class ApiError extends Error {
   ) {
     super(problem?.detail || problem?.title || `HTTP ${status}`);
   }
+}
+
+// problemOf returns the server's problem of a refused request, if e is one.
+export function problemOf(e: unknown): Problem | undefined {
+  return e instanceof ApiError ? e.problem : undefined;
 }
 
 let csrf = "";

@@ -245,6 +245,45 @@ func (e MeVia) Valid() bool {
 	}
 }
 
+// Defines values for Missing.
+const (
+	MissingAccount       Missing = "account"
+	MissingAccountKeys   Missing = "account_keys"
+	MissingEmailServer   Missing = "email_server"
+	MissingKillReset     Missing = "kill_reset"
+	MissingLlmProfile    Missing = "llm_profile"
+	MissingPublicUrl     Missing = "public_url"
+	MissingReconcile     Missing = "reconcile"
+	MissingTradingBudget Missing = "trading_budget"
+	MissingWatchlist     Missing = "watchlist"
+)
+
+// Valid indicates whether the value is a known member of the Missing enum.
+func (e Missing) Valid() bool {
+	switch e {
+	case MissingAccount:
+		return true
+	case MissingAccountKeys:
+		return true
+	case MissingEmailServer:
+		return true
+	case MissingKillReset:
+		return true
+	case MissingLlmProfile:
+		return true
+	case MissingPublicUrl:
+		return true
+	case MissingReconcile:
+		return true
+	case MissingTradingBudget:
+		return true
+	case MissingWatchlist:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Platform.
 const (
 	Etoro      Platform = "etoro"
@@ -541,6 +580,9 @@ type AgentPanel struct {
 	// Lease Who may send orders for the account (one process at a time)
 	Lease  AgentLease `json:"lease"`
 	Limits RiskLimits `json:"limits"`
+
+	// Missing what must be set up before the agent can start (empty while it runs and on a real-money account)
+	Missing []MissingItem `json:"missing"`
 
 	// OpenPositions positions cactusTrade opened that are open
 	OpenPositions int `json:"openPositions"`
@@ -1220,6 +1262,18 @@ type MeVia string
 // cents, GBP pence…), whole units for JPY and KRW.
 type MinorUnits = int64
 
+// Missing Setup an action needs and does not have yet (R22). trading_budget: Risk limits; account_keys: the account's keys (Platform accounts); account: no eToro account (Platform accounts); watchlist: the watchlist is empty; reconcile: run a reconciliation; kill_reset: an admin resets the kill switch; llm_profile: the LLM reviewer has no usable default profile or key; email_server: no mail server (E-mail); public_url: the deployment setting CACTUSTRADE_PUBLIC_URL is not set.
+type Missing string
+
+// MissingItem defines model for MissingItem.
+type MissingItem struct {
+	// CanFix the caller may fix it
+	CanFix bool `json:"canFix"`
+
+	// What Setup an action needs and does not have yet (R22). trading_budget: Risk limits; account_keys: the account's keys (Platform accounts); account: no eToro account (Platform accounts); watchlist: the watchlist is empty; reconcile: run a reconciliation; kill_reset: an admin resets the kill switch; llm_profile: the LLM reviewer has no usable default profile or key; email_server: no mail server (E-mail); public_url: the deployment setting CACTUSTRADE_PUBLIC_URL is not set.
+	What Missing `json:"what"`
+}
+
 // NotifyPrefs defines model for NotifyPrefs.
 type NotifyPrefs struct {
 	// Alerts warnings and errors: kill switch, limits, failures
@@ -1360,13 +1414,18 @@ type Position struct {
 
 // Problem defines model for Problem.
 type Problem struct {
+	// CanFix with missing: the caller may fix it (the web UI then shows a button to the fix)
+	CanFix *bool   `json:"canFix,omitempty"`
 	Detail *string `json:"detail,omitempty"`
 
 	// Field The invalid field
-	Field  *string `json:"field,omitempty"`
-	Status int     `json:"status"`
-	Title  string  `json:"title"`
-	Type   *string `json:"type,omitempty"`
+	Field *string `json:"field,omitempty"`
+
+	// Missing Setup an action needs and does not have yet (R22). trading_budget: Risk limits; account_keys: the account's keys (Platform accounts); account: no eToro account (Platform accounts); watchlist: the watchlist is empty; reconcile: run a reconciliation; kill_reset: an admin resets the kill switch; llm_profile: the LLM reviewer has no usable default profile or key; email_server: no mail server (E-mail); public_url: the deployment setting CACTUSTRADE_PUBLIC_URL is not set.
+	Missing *Missing `json:"missing,omitempty"`
+	Status  int      `json:"status"`
+	Title   string   `json:"title"`
+	Type    *string  `json:"type,omitempty"`
 }
 
 // Profile defines model for Profile.

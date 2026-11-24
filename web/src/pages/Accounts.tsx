@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   api, errorText, platformBadge, platformLabel, usd, viewOnly,
   type Account, type AccountKeys, type AccountShare, type BrokerCheck, type CredentialSpec, type Platform, type PlatformInfo,
 } from "../lib/api";
 import { useSession } from "../lib/session";
 import { useRefreshMode } from "../lib/mode";
+import { ProblemAlert } from "../components/ProblemAlert";
 
 // Each user's trading platform accounts (eToro, and the view-only Trading 212, Saxo and Tiger
 // Brokers) and the ones shared with them, as a grid of cards. Every credential field comes
@@ -90,15 +91,17 @@ export function Accounts() {
   const refreshMode = useRefreshMode();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [specs, setSpecs] = useState<Specs>({});
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  // ?keys=<id>: a fix button elsewhere (R22) asks to open that account's keys
+  const [openKeys] = useState(() => new URLSearchParams(window.location.search).get("keys") ?? "");
   const load = useCallback(() => {
-    api.accounts().then(setAccounts).catch((e) => setError(errorText(e)));
+    api.accounts().then(setAccounts).catch(setError);
     void refreshMode();
   }, [refreshMode]);
   useEffect(load, [load]);
   useEffect(() => {
-    api.platforms().then((ps) => setSpecs(Object.fromEntries(ps.map((p) => [p.platform, p])))).catch((e) => setError(errorText(e)));
+    api.platforms().then((ps) => setSpecs(Object.fromEntries(ps.map((p) => [p.platform, p])))).catch(setError);
   }, []);
   useEffect(() => {
     // the Saxo sign-in comes back here with ?connected=<id> or ?connect_error=<reason>
@@ -110,7 +113,7 @@ export function Accounts() {
     };
     if (q.has("connected")) setNotice({ ok: true, text: "Connected to Saxo. The account appears on the Overview page." });
     else if (q.has("connect_error")) setNotice({ ok: false, text: reasons[q.get("connect_error") ?? ""] ?? reasons.failed });
-    if (q.has("connected") || q.has("connect_error")) window.history.replaceState(null, "", window.location.pathname);
+    if (q.has("connected") || q.has("connect_error") || q.has("keys")) window.history.replaceState(null, "", window.location.pathname);
   }, []);
   return (
     <>
@@ -130,12 +133,12 @@ export function Accounts() {
         <li><strong>Tiger Brokers</strong> — Tiger ID, account number and an RSA private key whose public key is uploaded in
           the Tiger developer console. View-only; Tiger paper accounts have no Australian market.</li>
       </ul>
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      <ProblemAlert error={error} />
       {notice && <div className={"alert " + (notice.ok ? "alert-success" : "alert-warning")} role="status">{notice.text}</div>}
       {can("agent.control") && <CreateAccount specs={specs} onCreated={load} />}
       {accounts.length === 0 && <p className="text-secondary">No accounts yet.</p>}
       <div className="row row-cols-1 row-cols-md-2 row-cols-xxl-3 g-3">
-        {accounts.map((a) => <AccountCard key={a.id} a={a} spec={specs[a.platform]} onChange={load} />)}
+        {accounts.map((a) => <AccountCard key={a.id} a={a} spec={specs[a.platform]} onChange={load} openKeys={a.id === openKeys} />)}
       </div>
     </>
   );
@@ -236,7 +239,7 @@ function KeyStatus({ keys, platform }: { keys: AccountKeys | null; platform: Pla
   );
 }
 
-function AccountCard({ a, spec, onChange }: { a: Account; spec?: PlatformInfo; onChange: () => void }) {
+function AccountCard({ a, spec, onChange, openKeys }: { a: Account; spec?: PlatformInfo; onChange: () => void; openKeys?: boolean }) {
   const owner = a.access === "owner";
   const vo = viewOnly(a.platform);
   const saxo = a.platform === "saxo";
@@ -247,18 +250,20 @@ function AccountCard({ a, spec, onChange }: { a: Account; spec?: PlatformInfo; o
   const [shares, setShares] = useState<AccountShare[]>([]);
   const [shareUser, setShareUser] = useState("");
   const [shareAccess, setShareAccess] = useState<"view" | "trade">("view");
-  const [panel, setPanel] = useState<Panel>("");
+  const [panel, setPanel] = useState<Panel>(openKeys && a.access === "owner" ? "keys" : "");
   const [msg, setMsg] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (openKeys) cardRef.current?.scrollIntoView?.({ block: "center" }); }, [openKeys]);
   const loadDetails = useCallback(() => {
     api.accountKeys(a.id).then(setKeys).catch(() => undefined);
     if (owner) api.accountShares(a.id).then(setShares).catch(() => undefined);
   }, [a.id, owner]);
   useEffect(loadDetails, [loadDetails]);
   async function run(f: () => Promise<void>) {
-    setBusy(true); setError(""); setMsg("");
-    try { await f(); } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+    setBusy(true); setError(null); setMsg("");
+    try { await f(); } catch (e) { setError(e); } finally { setBusy(false); }
   }
   const toggle = (p: Panel) => setPanel(panel === p ? "" : p);
   const setKeySet = new Set((keys?.credentials ?? []).filter((c) => c.set).map((c) => c.key));
@@ -267,7 +272,7 @@ function AccountCard({ a, spec, onChange }: { a: Account; spec?: PlatformInfo; o
     window.location.assign(cs.authorizeUrl);
   });
   return (
-    <div className="col">
+    <div className="col" ref={cardRef}>
       <div className={"card h-100 " + (a.mode === "real" ? "border-danger" : "")}><div className="card-body d-flex gap-3">
         {owner && (
           <div className="btn-group-vertical btn-group-sm align-self-start" role="group" aria-label={`Actions for ${a.name}`}>
@@ -319,7 +324,7 @@ function AccountCard({ a, spec, onChange }: { a: Account; spec?: PlatformInfo; o
             </div>
           )}
           {msg && <div className="alert alert-success py-2 small">{msg}</div>}
-          {error && <div className="alert alert-danger py-2 small">{error}</div>}
+          <ProblemAlert error={error} accountId={a.id} fixes={owner ? { account_keys: () => setPanel("keys") } : undefined} className="py-2 small" />
           {check && (check.ok
             ? <div className="alert alert-success py-2 small">Connected ({check.mode}, {check.latencyMs} ms): cash {usd(check.availableCashCents)}, equity {usd(check.equityCents)}, {check.positions} position(s).</div>
             : <div className="alert alert-warning py-2 small">{check.configuredKeys ? <>eToro refused or did not answer: {check.error}</> : "The key pair is not complete."}</div>)}

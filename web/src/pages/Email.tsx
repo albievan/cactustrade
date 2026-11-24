@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, errorText, type EmailSetup, type EmailSetupInput, type OutboxMail } from "../lib/api";
+import { api, type EmailSetup, type EmailSetupInput, type OutboxMail } from "../lib/api";
 import { useSession } from "../lib/session";
+import { ProblemAlert } from "../components/ProblemAlert";
 
 const P = ({ children }: { children: ReactNode }) => <span className="fw-semibold">{children}</span>;
 
@@ -43,7 +44,7 @@ export function Email() {
   const [showGuide, setShowGuide] = useState(false);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const apply = (s: EmailSetup) => {
     setSetup(s);
     setForm({ enabled: s.enabled, host: s.host, port: s.port, username: s.username, from: s.from, tls: s.tls as EmailSetupInput["tls"] });
@@ -51,15 +52,15 @@ export function Email() {
   };
   const loadOutbox = () => api.outbox().then(setOutbox).catch(() => undefined);
   useEffect(() => {
-    api.emailSetup().then(apply).catch((e) => setError(errorText(e)));
+    api.emailSetup().then(apply).catch(setError);
     void loadOutbox();
     api.myProfile().then((p) => setTo(p.email)).catch(() => undefined);
   }, []);
   async function run(label: string, f: () => Promise<void>) {
-    setBusy(label); setError(""); setMsg("");
-    try { await f(); } catch (e) { setError(errorText(e)); } finally { setBusy(""); }
+    setBusy(label); setError(null); setMsg("");
+    try { await f(); } catch (e) { setError(e); } finally { setBusy(""); }
   }
-  if (!setup || !form) return <><h1 className="h3">E-mail</h1>{error && <div className="alert alert-danger">{error}</div>}</>;
+  if (!setup || !form) return <><h1 className="h3">E-mail</h1><ProblemAlert error={error} /></>;
   const set = (patch: Partial<EmailSetupInput>) => setForm({ ...form, ...patch });
   const choosePreset = (id: string) => {
     setPreset(id);
@@ -83,7 +84,8 @@ export function Email() {
         a message the server accepted is never sent twice.
       </p>
       {msg && <div className="alert alert-success" role="status">{msg}</div>}
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      {/* no mail server: the fix is the form below — switch it on and fill in the host */}
+      <ProblemAlert error={error} fixes={{ email_server: () => { set({ enabled: true }); document.getElementById("host")?.focus(); } }} />
       {!form.enabled && (
         <div className="alert alert-light border small">
           {setup.fallback

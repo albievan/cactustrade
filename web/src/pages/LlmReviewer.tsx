@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type LlmProfile, type LlmProfileInput, type LlmSetup, type LlmTestResult, type LlmUsage, type LlmUsageRow } from "../lib/api";
 import { useSession } from "../lib/session";
 import { InfoCard } from "../components/InfoCard";
+import { ProblemAlert } from "../components/ProblemAlert";
 
 const blank: LlmProfileInput = { name: "", provider: "anthropic", model: "", baseUrl: "", timeoutSeconds: 0, inputPricePerMTok: "", outputPricePerMTok: "" };
 
@@ -22,18 +23,22 @@ export function LlmReviewer() {
   const [tests, setTests] = useState<Record<string, LlmTestResult>>({});
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
-  const [error, setError] = useState("");
-  const load = () => api.llmSetup().then(setSetup).catch((e) => setError(errorText(e)));
+  const [error, setError] = useState<unknown>(null);
+  // subject: the profile the last action was about, so "no API key yet" can open its editor
+  const [subject, setSubject] = useState<LlmProfile | null>(null);
+  const load = () => api.llmSetup().then(setSetup).catch(setError);
   useEffect(() => { void load(); }, []);
   async function run(label: string, f: () => Promise<void>) {
-    setBusy(label); setError(""); setMsg("");
-    try { await f(); } catch (e) { setError(errorText(e)); } finally { setBusy(""); }
+    setBusy(label); setError(null); setMsg("");
+    try { await f(); } catch (e) { setError(e); } finally { setBusy(""); }
   }
-  if (!setup) return <><h1 className="h3">LLM reviewer</h1>{error && <div className="alert alert-danger">{error}</div>}</>;
+  if (!setup) return <><h1 className="h3">LLM reviewer</h1><ProblemAlert error={error} /></>;
   const s = setup.settings;
   const label = (id: string) => setup.providers.find((p) => p.id === id)?.label ?? id;
-  const setSettings = (enabled: boolean, activeProfileId: string) =>
-    run("settings", async () => { setSetup(await api.setLlmSettings({ enabled, activeProfileId })); setMsg("Saved and audited."); });
+  const setSettings = (enabled: boolean, activeProfileId: string) => {
+    setSubject(setup.profiles.find((p) => p.id === activeProfileId) ?? null);
+    return run("settings", async () => { setSetup(await api.setLlmSettings({ enabled, activeProfileId })); setMsg("Saved and audited."); });
+  };
   return (
     <>
       <h1 className="h3">LLM reviewer</h1>
@@ -53,7 +58,7 @@ export function LlmReviewer() {
         </ul>
       </InfoCard>
       {msg && <div className="alert alert-success" role="status">{msg}</div>}
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      <ProblemAlert error={error} fixes={subject && admin ? { llm_profile: () => { setError(null); setEditing(subject); } } : undefined} />
 
       <div className="card mb-4"><div className="card-body row g-3 align-items-end">
         <div className="col-md-6">
@@ -97,7 +102,7 @@ export function LlmReviewer() {
               {admin && (
                 <div className="btn-group-vertical btn-group-sm align-self-start" role="group" aria-label={`Actions for ${p.name}`}>
                   <button className="btn btn-outline-success" disabled={!!busy} title="Test" aria-label={`Test ${p.name}`}
-                    onClick={() => void run("test" + p.id, async () => setTests({ ...tests, [p.id]: await api.testLlmProfile(p.id) }))}>
+                    onClick={() => { setSubject(p); void run("test" + p.id, async () => setTests({ ...tests, [p.id]: await api.testLlmProfile(p.id) })); }}>
                     {busy === "test" + p.id ? <span className="spinner-border spinner-border-sm" /> : <i className="bi bi-chat-square-text" />}</button>
                   <button className="btn btn-outline-secondary" disabled={!!busy || p.id === s.activeProfileId}
                     title={p.id === s.activeProfileId ? "This is the default" : "Make default"} aria-label={`Make ${p.name} the default`}

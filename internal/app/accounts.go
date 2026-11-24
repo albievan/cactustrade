@@ -37,6 +37,9 @@ func (s *Service) Accounts(ctx context.Context, p Principal) ([]domain.AccountVi
 	return vs, nil
 }
 
+// MsgNoAccount explains domain.ErrNoAccount to people.
+const MsgNoAccount = "You have no eToro account yet: add one under Platform accounts, or ask an account owner to share theirs"
+
 // account resolves an account the caller trades or works on (agent, scanner, watchlist,
 // themes, limits, portfolio, orders) and checks the access it needs. id "" means the
 // caller's current account. An account the caller cannot see is "not found"; an account on a
@@ -63,7 +66,9 @@ func (s *Service) anyAccount(ctx context.Context, p Principal, id string, need d
 	if id == "" {
 		id = s.currentAccountID(ctx, p, vs)
 		if id == "" {
-			return domain.AccountView{}, domain.ErrNoAccount
+			return domain.AccountView{}, &domain.MissingError{
+				What: domain.MissingAccount, Msg: MsgNoAccount, CanFix: s.canFix(p, domain.AccountView{}, domain.MissingAccount), Err: domain.ErrNoAccount,
+			}
 		}
 	}
 	i := slices.IndexFunc(vs, func(v domain.AccountView) bool { return v.ID == id })

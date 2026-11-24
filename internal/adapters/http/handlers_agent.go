@@ -26,11 +26,11 @@ func (s *Server) failAgent(w http.ResponseWriter, r *http.Request, err error) {
 	var ve *domain.ValidationError
 	switch {
 	case errors.As(err, &ve):
-		writeProblem(w, r, http.StatusUnprocessableEntity, "Cannot do that now", ve.Error(), ve.Field)
+		problemFor(w, r, err, http.StatusUnprocessableEntity, "Cannot do that now", ve.Error(), ve.Field)
 	case errors.Is(err, domain.ErrRealModeGated):
-		writeProblem(w, r, http.StatusForbidden, "Real trading needs the phase-7 gate", detail(err, domain.ErrForbidden), "")
+		problemFor(w, r, err, http.StatusForbidden, "Real trading needs the phase-7 gate", detail(err, domain.ErrForbidden), "")
 	case errors.Is(err, domain.ErrCredentialsMissing) && !errors.Is(err, domain.ErrUnavailable):
-		writeProblem(w, r, http.StatusServiceUnavailable, "Unavailable", detail(err, domain.ErrCredentialsMissing), "")
+		problemFor(w, r, err, http.StatusServiceUnavailable, "Unavailable", detail(err, domain.ErrCredentialsMissing), "")
 	default:
 		s.fail(w, r, err)
 	}
@@ -61,6 +61,10 @@ func toAgentPanel(v app.AgentView) AgentPanel {
 			Reset: v.Controls.Reset, Gated: v.Controls.Gated,
 		},
 		ResetPhrase: v.ResetPhrase, OpenPositions: v.OpenPositions, PendingOrders: v.Pending,
+		Missing: make([]MissingItem, 0, len(v.Missing)),
+	}
+	for _, m := range v.Missing {
+		out.Missing = append(out.Missing, MissingItem{What: Missing(m.What), CanFix: m.CanFix})
 	}
 	if v.Risk.KillReason != "" {
 		out.KillReason = ptr(v.Risk.KillReason)

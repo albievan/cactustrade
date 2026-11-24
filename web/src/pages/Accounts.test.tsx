@@ -153,3 +153,14 @@ describe("Accounts", () => {
     expect(window.location.search).toBe("");
   });
 });
+
+describe("Accounts ?keys= (R22)", () => {
+  it("opens the keys of the account a fix button points at", async () => {
+    mockApi([acct("e1", "Main demo", "etoro"), acct("e2", "Other", "etoro")], null);
+    window.history.replaceState(null, "", "/accounts?keys=e2");
+    page();
+    expect(await screen.findByRole("button", { name: "Keys of Other" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Keys of Main demo" })).toHaveAttribute("aria-pressed", "false");
+    expect(window.location.search).toBe("");
+  });
+});

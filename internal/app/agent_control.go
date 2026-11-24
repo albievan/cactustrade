@@ -59,7 +59,7 @@ func (s *Service) StartAgent(ctx context.Context, p Principal, accountID string)
 	locks.ctl.Lock()
 	defer locks.ctl.Unlock()
 	if err := s.startable(ctx, v.Account); err != nil {
-		return AgentStatus{}, fmt.Errorf("app.StartAgent: %w", err)
+		return AgentStatus{}, fmt.Errorf("app.StartAgent: %w", s.fixable(p, v, err))
 	}
 	cur := s.agentState(ctx, v.ID)
 	if cur == domain.AgentRunning {
@@ -75,6 +75,13 @@ func (s *Service) StartAgent(ctx context.Context, p Principal, accountID string)
 	return AgentStatus{AccountID: v.ID, State: domain.AgentRunning}, nil
 }
 
+// The messages of the "missing setup" refusals (R22), for people: no field names.
+const (
+	msgNoKeys   = "The account's eToro keys are not set"
+	msgKilled   = "The kill switch is on: an admin must reset it first"
+	msgNoBudget = "Set a trading budget before starting the agent"
+)
+
 // startable says why an account's agent may not run (nil = it may): the conditions of
 // StartAgent, also used by the OD5 resume.
 func (s *Service) startable(ctx context.Context, a domain.Account) error {
@@ -86,23 +93,23 @@ func (s *Service) startable(ctx context.Context, a domain.Account) error {
 	case s.d.Broker == nil || s.d.Market == nil:
 		return fmt.Errorf("the eToro client is not configured: %w", domain.ErrUnavailable)
 	case !s.hasKeys(ctx, a):
-		return fmt.Errorf("the account's eToro keys are not set: %w", domain.ErrCredentialsMissing)
+		return domain.MissingSetup(domain.MissingAccountKeys, msgNoKeys, domain.ErrCredentialsMissing)
 	}
 	switch killed, err := s.isKilled(ctx, a.ID); {
 	case err != nil:
 		return fmt.Errorf("reading the kill switch: %w: %w", err, domain.ErrUnavailable)
 	case killed:
-		return fmt.Errorf("the kill switch is on: an admin must reset it first: %w", domain.ErrConflict)
+		return domain.MissingSetup(domain.MissingKillReset, msgKilled, domain.ErrConflict)
 	}
 	l := s.riskLimits(ctx, a.ID)
 	if err := l.Validate(); err != nil {
 		return err
 	}
 	if l.TradingBudget <= 0 {
-		return domain.Invalid("tradingBudgetCents", "set a trading budget before starting the agent")
+		return domain.MissingSetup(domain.MissingTradingBudget, msgNoBudget, domain.Invalid("tradingBudgetCents", msgNoBudget))
 	}
 	if rc := s.Reconciled(a.ID); !rc.OK {
-		return fmt.Errorf("the account is not reconciled (%s): %w", rc.Reason, domain.ErrConflict)
+		return domain.MissingSetup(domain.MissingReconcile, fmt.Sprintf("The account is not reconciled (%s)", rc.Reason), domain.ErrConflict)
 	}
 	return nil
 }
@@ -138,7 +145,7 @@ func (s *Service) haltAgent(ctx context.Context, p Principal, accountID string, 
 	case cur == to:
 		return AgentStatus{AccountID: v.ID, State: cur}, nil
 	case cur == domain.AgentKilled:
-		return AgentStatus{}, fmt.Errorf("the kill switch is on: an admin must reset it: %w", domain.ErrConflict)
+		return AgentStatus{}, s.fixable(p, v, domain.MissingSetup(domain.MissingKillReset, msgKilled, domain.ErrConflict))
 	case to == domain.AgentPaused && cur != domain.AgentRunning:
 		return AgentStatus{}, fmt.Errorf("only a running agent can be paused (it is %s): %w", cur, domain.ErrConflict)
 	}

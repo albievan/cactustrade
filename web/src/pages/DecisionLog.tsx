@@ -3,6 +3,7 @@ import { api, errorText, usd, type Decision, type DecisionDetail } from "../lib/
 import { useMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
+import { ProblemAlert } from "../components/ProblemAlert";
 
 // The outcomes a decision can end with (domain.DecisionOutcomes), for the filter.
 export const outcomes: { value: string; label: string; badge: string }[] = [
@@ -35,11 +36,11 @@ export function DecisionLog() {
   const [outcome, setOutcome] = useState("");
   const [more, setMore] = useState(false);
   const [open, setOpen] = useState<Record<string, DecisionDetail | "loading" | string>>({});
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const accountId = status?.account?.id;
   const load = useCallback(() => {
     api.decisions({ limit: pageSize, outcome }).then((d) => { setRows(d); setMore(d.length === pageSize); setError(""); })
-      .catch((e) => setError(errorText(e)));
+      .catch(setError);
   }, [outcome]);
   useEffect(() => {
     if (!accountId) return;
@@ -49,7 +50,7 @@ export function DecisionLog() {
   const older = () => {
     if (!rows || rows.length === 0) return;
     api.decisions({ limit: pageSize, outcome, before: rows[rows.length - 1].at })
-      .then((d) => { setRows([...rows, ...d]); setMore(d.length === pageSize); }).catch((e) => setError(errorText(e)));
+      .then((d) => { setRows([...rows, ...d]); setMore(d.length === pageSize); }).catch(setError);
   };
   const toggle = (d: Decision) => {
     if (open[d.id] !== undefined) {
@@ -88,7 +89,7 @@ export function DecisionLog() {
             tokens, cost and time it took. Kept 400 days.</li>
         </ul>
       </InfoCard>
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      <ProblemAlert error={error} />
       {rows && rows.length === 0 && <p className="text-secondary">No decisions yet.</p>}
       {rows && rows.length > 0 && (
         <div className="card"><div className="table-responsive">

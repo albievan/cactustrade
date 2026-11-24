@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, usd, type Order } from "../lib/api";
+import { api, usd, type Order } from "../lib/api";
 import { useMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
+import { ProblemAlert } from "../components/ProblemAlert";
 
 const stateBadge: Record<string, string> = {
   created: "text-bg-light", sent: "text-bg-info", pending: "text-bg-info", filled: "text-bg-success",
@@ -14,9 +15,9 @@ const stateBadge: Record<string, string> = {
 export function Orders() {
   const status = useMode();
   const [orders, setOrders] = useState<Order[] | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const load = useCallback(() => {
-    api.orders(200).then((o) => { setOrders(o); setError(""); }).catch((e) => setError(errorText(e)));
+    api.orders(200).then((o) => { setOrders(o); setError(""); }).catch(setError);
   }, []);
   const accountId = status?.account?.id;
   useEffect(() => {
@@ -43,7 +44,7 @@ export function Orders() {
           <li><strong>abandoned</strong>: eToro never saw it, or it was not sent (stale prices, a kill).</li>
         </ul>
       </InfoCard>
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      <ProblemAlert error={error} />
       {orders && orders.length === 0 && <p className="text-secondary">No orders yet.</p>}
       {orders && orders.length > 0 && (
         <div className="card"><div className="table-responsive">

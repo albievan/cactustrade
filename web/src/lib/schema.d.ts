@@ -1253,6 +1253,19 @@ export interface components {
             detail?: string;
             /** @description The invalid field */
             field?: string;
+            missing?: components["schemas"]["Missing"];
+            /** @description with missing: the caller may fix it (the web UI then shows a button to the fix) */
+            canFix?: boolean;
+        };
+        /**
+         * @description Setup an action needs and does not have yet (R22). trading_budget: Risk limits; account_keys: the account's keys (Platform accounts); account: no eToro account (Platform accounts); watchlist: the watchlist is empty; reconcile: run a reconciliation; kill_reset: an admin resets the kill switch; llm_profile: the LLM reviewer has no usable default profile or key; email_server: no mail server (E-mail); public_url: the deployment setting CACTUSTRADE_PUBLIC_URL is not set.
+         * @enum {string}
+         */
+        Missing: "trading_budget" | "account_keys" | "account" | "watchlist" | "reconcile" | "kill_reset" | "llm_profile" | "email_server" | "public_url";
+        MissingItem: {
+            what: components["schemas"]["Missing"];
+            /** @description the caller may fix it */
+            canFix: boolean;
         };
         Health: {
             /** @enum {string} */
@@ -2005,6 +2018,8 @@ export interface components {
             openPositions: number;
             /** @description orders of ours that are not final */
             pendingOrders: number;
+            /** @description what must be set up before the agent can start (empty while it runs and on a real-money account) */
+            missing: components["schemas"]["MissingItem"][];
         };
         Order: {
             /** @description our x-request-id, stored before the order is sent */

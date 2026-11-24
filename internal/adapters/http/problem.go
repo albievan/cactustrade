@@ -33,38 +33,57 @@ func writeProblem(w http.ResponseWriter, _ *http.Request, status int, title, det
 	_ = json.NewEncoder(w).Encode(p)
 }
 
+// problemFor writes a problem for err like writeProblem. When err carries a
+// *domain.MissingError (R22), the detail is its message for people (no field names) and the
+// problem names what is missing and whether the caller may fix it; status, title and field
+// stay as the caller chose them.
+func problemFor(w http.ResponseWriter, r *http.Request, err error, status int, title, detail, field string) {
+	me, ok := errors.AsType[*domain.MissingError](err)
+	if !ok {
+		writeProblem(w, r, status, title, detail, field)
+		return
+	}
+	p := Problem{Status: status, Title: title, Detail: ptr(me.Msg), Missing: ptr(Missing(me.What)), CanFix: ptr(me.CanFix)}
+	if field != "" {
+		p.Field = &field
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(p)
+}
+
 // fail maps an error to problem+json. Unexpected errors are logged with their detail and
 // answered with a generic 500 (no internals leak to the client).
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var ve *domain.ValidationError
 	switch {
 	case errors.As(err, &ve):
-		writeProblem(w, r, http.StatusBadRequest, "Invalid input", ve.Error(), ve.Field)
+		problemFor(w, r, err, http.StatusBadRequest, "Invalid input", ve.Error(), ve.Field)
 	case errors.Is(err, domain.ErrUnauthenticated):
-		writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "sign in or send a valid API key", "")
+		problemFor(w, r, err, http.StatusUnauthorized, "Unauthorized", "sign in or send a valid API key", "")
 	case errors.Is(err, domain.ErrViewOnly):
-		writeProblem(w, r, http.StatusForbidden, "View-only account",
+		problemFor(w, r, err, http.StatusForbidden, "View-only account",
 			"Trading 212, Saxo and Tiger Brokers accounts are view-only: cactusTrade shows them in the overview but does not trade them", "")
 	case errors.Is(err, domain.ErrForbidden):
-		writeProblem(w, r, http.StatusForbidden, "Forbidden", detail(err, domain.ErrForbidden), "")
+		problemFor(w, r, err, http.StatusForbidden, "Forbidden", detail(err, domain.ErrForbidden), "")
 	case errors.As(err, new(*app.MailError)):
 		s.log.WarnContext(r.Context(), "mail server refused", "path", r.URL.Path, "err", err)
-		writeProblem(w, r, http.StatusBadGateway, "The mail server refused", err.Error(), "")
+		problemFor(w, r, err, http.StatusBadGateway, "The mail server refused", err.Error(), "")
 	case errors.Is(err, domain.ErrNoAccount):
-		writeProblem(w, r, http.StatusNotFound, "No eToro account",
+		problemFor(w, r, err, http.StatusNotFound, "No eToro account",
 			"you have no eToro account yet: add one under eToro accounts, or ask an account owner to share theirs", "")
 	case errors.Is(err, domain.ErrNotFound):
-		writeProblem(w, r, http.StatusNotFound, "Not found", detail(err, domain.ErrNotFound), "")
+		problemFor(w, r, err, http.StatusNotFound, "Not found", detail(err, domain.ErrNotFound), "")
 	case errors.Is(err, domain.ErrPasswordChangeRequired):
-		writeProblem(w, r, http.StatusForbidden, "Password change required", "change the default password first", "")
+		problemFor(w, r, err, http.StatusForbidden, "Password change required", "change the default password first", "")
 	case errors.Is(err, domain.ErrConflict):
-		writeProblem(w, r, http.StatusConflict, "Conflict", detail(err, domain.ErrConflict), "")
+		problemFor(w, r, err, http.StatusConflict, "Conflict", detail(err, domain.ErrConflict), "")
 	case errors.Is(err, domain.ErrUnavailable):
 		s.log.WarnContext(r.Context(), "unavailable", "path", r.URL.Path, "err", err)
-		writeProblem(w, r, http.StatusServiceUnavailable, "Unavailable", detail(err, domain.ErrUnavailable), "")
+		problemFor(w, r, err, http.StatusServiceUnavailable, "Unavailable", detail(err, domain.ErrUnavailable), "")
 	default:
 		s.log.ErrorContext(r.Context(), "request failed", "path", r.URL.Path, "err", err)
-		writeProblem(w, r, http.StatusInternalServerError, "Internal error", "", "")
+		problemFor(w, r, err, http.StatusInternalServerError, "Internal error", "", "")
 	}
 }
 

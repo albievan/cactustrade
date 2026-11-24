@@ -1,7 +1,7 @@
-import { Link } from "react-router-dom";
+import { FixButton } from "./FixButton";
 
 // NeedAccount explains why an account page is empty: the user has no eToro account yet
-// (none of their own, none shared with them).
+// (none of their own, none shared with them). The fix button (R22) opens Platform accounts.
 export function NeedAccount() {
   return (
     <div className="card border-warning"><div className="card-body">
@@ -10,7 +10,7 @@ export function NeedAccount() {
         The watchlist, themes, risk limits and reviews belong to an eToro account. You have none: add your own (demo keys
         are fine), or ask the owner of an account to share it with you.
       </p>
-      <Link className="btn btn-success" to="/accounts"><i className="bi bi-plus-lg me-1" />Add an eToro account</Link>
+      <FixButton what="account" />
     </div></div>
   );
 }

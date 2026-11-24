@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type Industry, type LlmSetup, type Theme, type ThemeInput, type ThemeShare } from "../lib/api";
 import { useMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
+import { ProblemAlert } from "../components/ProblemAlert";
 
 const EMPTY: ThemeInput = { name: "", keywords: [], industryId: 0, enabled: true, instruments: [], llmProfileId: "" };
 
@@ -24,10 +25,10 @@ export function Themes() {
   const [llm, setLlm] = useState<LlmSetup | null>(null);
   const [scanner, setScanner] = useState<boolean | null>(null);
   const [msg, setMsg] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => {
-    api.themes().then(setThemes).catch((e) => setError(errorText(e)));
+    api.themes().then(setThemes).catch(setError);
     api.reviews(1).then((b) => setScanner(b.scannerEnabled)).catch(() => undefined);
   }, []);
   const accountId = status?.account?.id;
@@ -40,7 +41,7 @@ export function Themes() {
   if (status && !status.account) return <><h1 className="h3">Themes</h1><NeedAccount /></>;
   async function run(f: () => Promise<void>) {
     setBusy(true); setError(""); setMsg("");
-    try { await f(); } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+    try { await f(); } catch (e) { setError(e); } finally { setBusy(false); }
   }
   return (
     <>
@@ -52,7 +53,7 @@ export function Themes() {
         eToro lets you trade that way — is added to the watchlist. See every review on the Dashboard.
       </p>
       {msg && <div className="alert alert-success" role="status">{msg}</div>}
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      <ProblemAlert error={error} />
       {canEdit && (
         <div className="card mb-4"><div className="card-body d-flex flex-wrap align-items-center gap-3">
           <div className="form-check form-switch me-auto">

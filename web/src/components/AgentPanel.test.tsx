@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentPanel } from "./AgentPanel";
 import type { AgentPanel as Panel } from "../lib/api";
@@ -14,7 +15,7 @@ function panel(over: Partial<Panel> = {}): Panel {
     killed: false, dayStopped: false, riskDay: "2026-11-24", today: "2026-11-24", startOfDayEquityCents: 1000000, highWaterMarkCents: 1000000,
     equityKnown: true, equityCents: 990000, dailyFloorCents: 980000, toDailyFloorCents: 10000, drawdownFloorCents: 900000, toDrawdownFloorCents: 90000,
     blocked: [], flatten: [{ market: "NYSE", trading: true, closes: "2026-11-24T21:00:00Z", flattenAt: "2026-11-24T20:50:00Z" }],
-    lease: { mine: true, other: false }, controls: all, resetPhrase: "RESET Main demo", openPositions: 1, pendingOrders: 0,
+    lease: { mine: true, other: false }, controls: all, resetPhrase: "RESET Main demo", openPositions: 1, pendingOrders: 0, missing: [],
     ...over,
   };
 }
@@ -34,8 +35,22 @@ function serve(p: Panel, answers: Record<string, unknown> = {}) {
     if (key in answers) return json(answers[key]);
     return new Response("{}", { status: 404 });
   });
-  render(<AgentPanel />);
+  mount();
   return calls;
+}
+
+// Where shows the router's current path, so a test can follow a fix button's link.
+function Where() {
+  const l = useLocation();
+  return <div data-testid="where">{l.pathname + l.search}</div>;
+}
+
+function mount() {
+  render(
+    <MemoryRouter>
+      <Routes><Route path="*" element={<><AgentPanel /><Where /></>} /></Routes>
+    </MemoryRouter>,
+  );
 }
 
 const posts = (calls: Call[]) => calls.filter((c) => c.method === "POST");
@@ -129,7 +144,7 @@ describe("AgentPanel", () => {
       }
       return new Response(JSON.stringify(panel({ state: "stopped" })), { status: 200 });
     });
-    render(<AgentPanel />);
+    mount();
     fireEvent.click(await screen.findByLabelText("Start the agent"));
     expect(await screen.findByText("the account is not reconciled")).toBeInTheDocument();
     expect(calls.some((c) => c.method === "POST" && c.url === "/api/v1/agent/start")).toBe(true);
@@ -143,9 +158,68 @@ describe("AgentPanel kill switch", () => {
       if (url.endsWith("/api/v1/agent/reconcile")) return new Promise<Response>(() => undefined); // never answers
       return new Response(JSON.stringify(panel({ state: "running" })), { status: 200 });
     });
-    render(<AgentPanel />);
+    mount();
     fireEvent.click(await screen.findByLabelText("Reconcile with eToro"));
     await waitFor(() => expect(screen.getByLabelText("Start the agent")).toBeDisabled());
     expect(screen.getByLabelText("Kill switch")).toBeEnabled();
+  });
+});
+
+describe("AgentPanel missing setup (R22)", () => {
+  it("lists what must be set up before the agent can start, with a Set budget button to Risk limits", async () => {
+    serve(panel({
+      state: "stopped",
+      missing: [{ what: "trading_budget", canFix: true }, { what: "watchlist", canFix: true }, { what: "kill_reset", canFix: false }],
+    }));
+    const row = await screen.findByLabelText("Before the agent can start");
+    expect(row).toHaveTextContent("No trading budget");
+    expect(row).toHaveTextContent("The watchlist is empty");
+    expect(row).toHaveTextContent("The kill switch is on");
+    const budget = screen.getByRole("link", { name: /^Set budget/ });
+    expect(budget).toHaveAttribute("href", "/risk");
+    expect(budget).toHaveAttribute("title");
+    expect(screen.getByRole("link", { name: /^Add shares/ })).toHaveAttribute("href", "/watchlist");
+    // the server says this caller may not reset: no button, only the text
+    expect(screen.queryByRole("button", { name: /^Reset kill switch/ })).not.toBeInTheDocument();
+    fireEvent.click(budget);
+    expect(screen.getByTestId("where")).toHaveTextContent("/risk");
+  });
+
+  it("shows nothing to set up when nothing is missing", async () => {
+    serve(panel({ state: "stopped" }));
+    await screen.findByText("stopped");
+    expect(screen.queryByLabelText("Before the agent can start")).not.toBeInTheDocument();
+  });
+
+  it("links the keys of this account and runs reconcile and the reset dialog in the panel", async () => {
+    const calls = serve(panel({
+      state: "stopped",
+      missing: [{ what: "account_keys", canFix: true }, { what: "reconcile", canFix: true }, { what: "kill_reset", canFix: true }],
+    }), { "agent/reconcile": { accountId: "a1", ok: true, reason: "" } });
+    expect(await screen.findByRole("link", { name: /^Add keys/ })).toHaveAttribute("href", "/accounts?keys=a1");
+    fireEvent.click(screen.getByRole("button", { name: /^Reconcile:/ }));
+    await waitFor(() => expect(posts(calls)).toEqual([{ method: "POST", url: "/api/v1/agent/reconcile", body: undefined }]));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Reset kill switch/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /^Reset kill switch/ }));
+    expect(screen.getByRole("dialog", { name: "Reset the kill switch?" })).toBeInTheDocument();
+  });
+
+  it("puts the fix next to a refused start: no budget (422)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/agent/start") && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          title: "Cannot do that now", status: 422, field: "tradingBudgetCents",
+          detail: "Set a trading budget before starting the agent", missing: "trading_budget", canFix: true,
+        }), { status: 422 });
+      }
+      return new Response(JSON.stringify(panel({ state: "stopped" })), { status: 200 });
+    });
+    mount();
+    fireEvent.click(await screen.findByLabelText("Start the agent"));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Set a trading budget before starting the agent");
+    expect(alert).not.toHaveTextContent("tradingBudgetCents");
+    expect(screen.getByRole("link", { name: /^Set budget/ })).toHaveAttribute("href", "/risk");
   });
 });

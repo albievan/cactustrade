@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, errorText, usd, type AgentPanel as Panel } from "../lib/api";
+import { api, errorText, usd, type AgentPanel as Panel, type Missing } from "../lib/api";
 import { useRefreshMode } from "../lib/mode";
+import { FixButton, fixes } from "./FixButton";
+import { ProblemAlert } from "./ProblemAlert";
 
 const stateBadge: Record<Panel["state"], string> = {
   running: "text-bg-success", paused: "text-bg-warning", stopped: "text-bg-secondary", killed: "text-bg-danger",
@@ -14,7 +16,7 @@ const marketName: Record<string, string> = { LSE: "London", NYSE: "New York", AS
 export function AgentPanel() {
   const refreshMode = useRefreshMode();
   const [p, setP] = useState<Panel | null>(null);
-  const [error, setError] = useState(""); // the last action's refusal
+  const [error, setError] = useState<unknown>(null); // the last action's refusal (its problem may name what is missing)
   const [loadError, setLoadError] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState("");
@@ -37,12 +39,12 @@ export function AgentPanel() {
   }, [load]);
 
   async function act(name: string, f: () => Promise<unknown>, done: string) {
-    setBusy(name); setError(""); setNote("");
+    setBusy(name); setError(null); setNote("");
     try {
       await f();
       setNote(done);
     } catch (e) {
-      setError(errorText(e));
+      setError(e);
     } finally {
       setDialog("");
       setBusy("");
@@ -58,6 +60,12 @@ export function AgentPanel() {
   const gated = c.gated;
   const killed = p.state === "killed" || p.killed;
   const off = !!busy || gated;
+  const missing = p.missing ?? []; // a server older than R22 sends none
+  // The fixes this panel runs itself; every other one opens its page.
+  const actions: Partial<Record<Missing, () => void>> = {
+    reconcile: () => void act("reconcile", api.reconcileAgent, "Reconciliation ran."),
+    kill_reset: () => setDialog("reset"),
+  };
   return (
     <div className="card mb-4 agent-panel">
       <div className="card-body">
@@ -121,7 +129,18 @@ export function AgentPanel() {
                 Another cactusTrade process holds this account: this server sends no orders for it.
               </div>
             )}
-            {error && <div className="alert alert-danger py-2 small mb-2" role="alert">{error}</div>}
+            {missing.length > 0 && (
+              <div className="small mb-2 d-flex flex-wrap align-items-center gap-2" aria-label="Before the agent can start">
+                <span className="fw-semibold">Before the agent can start:</span>
+                {missing.map((m) => (
+                  <span key={m.what} className="d-inline-flex align-items-center gap-1 me-2">
+                    <span className="text-secondary">{fixes[m.what]?.missing ?? m.what}</span>
+                    {m.canFix && <FixButton what={m.what} accountId={p.account.id} onFix={actions[m.what]} disabled={!!busy} />}
+                  </span>
+                ))}
+              </div>
+            )}
+            <ProblemAlert error={error} accountId={p.account.id} fixes={actions} className="py-2 small mb-2" />
             {loadError && <div className="alert alert-warning py-2 small mb-2">Not refreshed: {loadError}</div>}
             {note && <div className="alert alert-success py-2 small mb-2" role="status">{note}</div>}
             <div className="row g-2 small">

@@ -254,6 +254,10 @@ container deployment). One SQL dialect subset serves both:
 - **Headers:** strict CSP (`default-src 'self'`), `X-Frame-Options: DENY`, `nosniff`,
   `no-referrer`, HSTS over TLS, and `Cache-Control: no-store` on the API.
 - **Errors:** problem+json. Internal errors are logged, and the client gets a generic 500.
+  A refusal because setup is missing (R22) wraps its sentinel in a `domain.MissingError`
+  (same status), and the problem adds `missing` (a `domain.Missing` code) and `canFix`
+  (decided by the use case, which knows the caller). The web app's `ProblemAlert` shows the
+  `FixButton` for the code; React decides nothing.
 - **Containers:** distroless, non-root (65532), read-only root filesystem, all capabilities
   dropped, `no-new-privileges`, and secrets as files.
 

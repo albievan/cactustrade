@@ -18,7 +18,7 @@ const agent = {
   killed: false, dayStopped: false, riskDay: "", today: "2026-11-24", startOfDayEquityCents: 0, highWaterMarkCents: 0,
   equityKnown: false, equityError: "the account's eToro keys are not set", blocked: [], flatten: [],
   lease: { mine: false, other: false }, controls: { start: true, pause: true, stop: true, kill: true, reset: true, gated: false },
-  resetPhrase: "RESET Main demo", openPositions: 0, pendingOrders: 0,
+  resetPhrase: "RESET Main demo", openPositions: 0, pendingOrders: 0, missing: [],
 };
 
 afterEach(() => vi.restoreAllMocks());

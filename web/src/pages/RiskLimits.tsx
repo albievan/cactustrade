@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, errorText, usd, type RiskLimits as Limits } from "../lib/api";
+import { api, usd, type RiskLimits as Limits } from "../lib/api";
 import { useSession } from "../lib/session";
 import { useMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
+import { ProblemAlert } from "../components/ProblemAlert";
 
 // The owner's limits. The risk engine enforces them on every entry; they can be changed only
 // while the agent is stopped, and every change is audited.
@@ -12,17 +13,17 @@ export function RiskLimits() {
   const status = useMode();
   const [l, setL] = useState<Limits | null>(null);
   const [budget, setBudget] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
   const accountId = status?.account?.id;
   useEffect(() => {
     if (!accountId) return;
-    api.riskLimits().then((x) => { setL(x); setBudget((x.tradingBudgetCents / 100).toFixed(2)); }).catch((e) => setError(errorText(e)));
+    api.riskLimits().then((x) => { setL(x); setBudget((x.tradingBudgetCents / 100).toFixed(2)); }).catch(setError);
   }, [accountId]);
   const owner = status?.account?.access === "owner";
   const editable = owner && me?.via === "session" && status?.agentState === "stopped";
   if (status && !status.account) return <><h1 className="h3">Risk limits</h1><NeedAccount /></>;
-  if (!l) return <><h1 className="h3">Risk limits</h1>{error && <div className="alert alert-danger">{error}</div>}</>;
+  if (!l) return <><h1 className="h3">Risk limits</h1><ProblemAlert error={error} /></>;
   const num = (k: keyof Limits) => (e: React.ChangeEvent<HTMLInputElement>) => setL({ ...l, [k]: Number(e.target.value) });
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -32,7 +33,7 @@ export function RiskLimits() {
       const next = await api.setRiskLimits({ ...l, tradingBudgetCents: Math.round(Number(budget) * 100) });
       setL(next); setSaved(true);
     } catch (err) {
-      setError(errorText(err));
+      setError(err);
     }
   }
   const field = (k: keyof Limits & string, label: string, help: string, unit: string) => (
@@ -72,7 +73,7 @@ export function RiskLimits() {
         <div className="alert alert-info">Stop the agent to change the limits (it is <strong>{status?.agentState}</strong>).</div>
       )}
       {!owner && <div className="alert alert-secondary">Only the account's owner can change its limits.</div>}
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      <ProblemAlert error={error} />
       {saved && <div className="alert alert-success" role="status">Saved and audited.</div>}
       <form onSubmit={save} className="card"><div className="card-body row g-4">
         <div className="col-md-6 col-xl-4">
