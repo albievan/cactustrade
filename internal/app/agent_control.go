@@ -269,6 +269,7 @@ func (s *Service) ResetKill(ctx context.Context, p Principal, accountID, confirm
 	if err := s.setAgentState(ctx, v.ID, domain.AgentStopped); err != nil {
 		return AgentStatus{}, fmt.Errorf("app.ResetKill: %w", err)
 	}
+	s.rt.clearKillLatch(v.ID)
 	s.audit(ctx, p, "agent.kill_reset", v.ID, fmt.Sprintf("kill reason %q; high-water mark $%s -> $%s", old.KillReason, old.State.HighWaterMark, eq))
 	s.emitFor(ctx, v.ID, p.Username, "agent.kill_reset", domain.SeverityWarning, "Kill switch reset on "+v.Name,
 		fmt.Sprintf("high-water mark set to the current equity $%s; the agent is stopped until someone starts it", eq))

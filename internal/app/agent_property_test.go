@@ -42,13 +42,19 @@ var propInstruments = []struct {
 
 // propStats counts what the scenarios exercised.
 type propStats struct {
-	entries, shorts, resends, manualKills, trips, resets, latches, stopOuts, faults, limitChanges int
+	entries, shorts, rateLimits, manualKills, trips, resets, latches, stopOuts, faults, limitChanges int
+	// The eToro risks of the simulator (review M4): lookups answered 404 by the lookup lag,
+	// opens sent while a fill of ours was missing from the portfolio (B1), fills reported
+	// without executions, 429s that were processed, partial closes, and scenarios armed with
+	// a broker that fills a repeated request id again (never triggered: opens are never
+	// resent).
+	laggedLookups, hiddenAtOpen, emptyFills, processed429s, partialCloses, duplicateArmed int
 }
 
 func (p *propStats) add(o propStats) {
 	p.entries += o.entries
 	p.shorts += o.shorts
-	p.resends += o.resends
+	p.rateLimits += o.rateLimits
 	p.manualKills += o.manualKills
 	p.trips += o.trips
 	p.resets += o.resets
@@ -56,6 +62,30 @@ func (p *propStats) add(o propStats) {
 	p.stopOuts += o.stopOuts
 	p.faults += o.faults
 	p.limitChanges += o.limitChanges
+	p.laggedLookups += o.laggedLookups
+	p.hiddenAtOpen += o.hiddenAtOpen
+	p.emptyFills += o.emptyFills
+	p.processed429s += o.processed429s
+	p.partialCloses += o.partialCloses
+	p.duplicateArmed += o.duplicateArmed
+}
+
+// unexercised names the behaviours no scenario exercised.
+func (p propStats) unexercised() []string {
+	var out []string
+	for name, n := range map[string]int{
+		"shorts": p.shorts, "429s": p.rateLimits, "manual kills": p.manualKills, "drawdown trips": p.trips,
+		"resets": p.resets, "daily latches": p.latches, "stop-outs": p.stopOuts, "unreadable portfolios": p.faults,
+		"limit changes": p.limitChanges, "lookup lag": p.laggedLookups, "portfolio lag at an open": p.hiddenAtOpen,
+		"fills without executions": p.emptyFills, "processed 429s": p.processed429s, "partial closes": p.partialCloses,
+		"duplicate-filling broker": p.duplicateArmed,
+	} {
+		if n == 0 {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 func TestAgentSequenceProperties(t *testing.T) {
@@ -75,12 +105,11 @@ func TestAgentSequenceProperties(t *testing.T) {
 		}
 	})
 	t.Logf("exercised: %+v", total)
-	switch {
+	switch missing := total.unexercised(); {
 	case total.entries < propMinEntries:
 		t.Fatalf("only %d entries exercised, want at least %d", total.entries, propMinEntries)
-	case total.shorts == 0 || total.resends == 0 || total.manualKills == 0 || total.trips == 0 ||
-		total.resets == 0 || total.latches == 0 || total.stopOuts == 0 || total.faults == 0 || total.limitChanges == 0:
-		t.Fatalf("a behaviour was never exercised: %+v", total)
+	case len(missing) > 0:
+		t.Fatalf("never exercised: %s (%+v)", strings.Join(missing, ", "), total)
 	}
 }
 
@@ -167,6 +196,19 @@ func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 	if s.r.IntN(2) == 0 {
 		ae.reviewing(t, s.verdict)
 	}
+	// eToro's unverified behaviours (review M4): a new order unknown to lookups for a while
+	// (U2, shorter than lookupGiveUp), fills missing from the portfolio for a while (U11),
+	// fills listed without executions, and a broker that fills a repeated request id again
+	// (U1) — which must never happen, as opens are never resent.
+	if s.r.IntN(2) == 0 {
+		ae.b.LookupLag = time.Duration(1+s.r.IntN(20)) * time.Second
+	}
+	if s.r.IntN(3) != 0 {
+		ae.b.PortfolioLag = time.Duration(1+s.r.IntN(30)) * time.Second
+	}
+	ae.b.NoExecLookups = 1 + s.r.IntN(2)
+	ae.b.DuplicateFills = true
+	s.stats.duplicateArmed++
 	s.setLimits()
 	if _, err := ae.svc.StartAgent(ae.ctx, ae.admin, ae.a.ID); err != nil {
 		t.Fatal(err)
@@ -179,6 +221,13 @@ func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 			s.stats.latches++
 		}
 	}
+	if ae.b.Duplicates != 0 {
+		s.fail("an open was sent twice with one request id (%d times)", ae.b.Duplicates)
+	}
+	s.stats.laggedLookups = ae.b.LaggedLookups
+	s.stats.emptyFills = ae.b.Outcomes[fakes.SimFilledNoExecutions]
+	s.stats.processed429s = ae.b.Outcomes[fakes.SimRateLimitedProcessed]
+	s.stats.partialCloses = ae.b.Outcomes[fakes.SimPartialClose]
 	return s.stats
 }
 
@@ -238,12 +287,21 @@ func (s *propScenario) step() {
 	s.movePrices()
 	s.scriptFaults()
 	s.propose()
-	rep, err := ae.svc.Supervise(ae.ctx, ae.a.ID)
-	if err != nil {
-		s.fail("supervise: %v", err)
-	}
-	if rep.Tripped {
-		s.stats.trips++
+	// The supervisor runs every 10 s: a close eToro ended partly filled is followed by more
+	// passes (review M2), as in production, before the flatten invariant is checked.
+	for pass := 0; ; pass++ {
+		partials := ae.b.Outcomes[fakes.SimPartialClose]
+		rep, err := ae.svc.Supervise(ae.ctx, ae.a.ID)
+		if err != nil {
+			s.fail("supervise: %v", err)
+		}
+		if rep.Tripped {
+			s.stats.trips++
+		}
+		if ae.b.Outcomes[fakes.SimPartialClose] == partials || pass == 5 {
+			break
+		}
+		ae.clock.Advance(SupervisorInterval)
 	}
 	s.checkAfterSupervisor()
 	tr, err := ae.svc.AgentTick(ae.ctx, ae.a.ID)
@@ -390,10 +448,12 @@ var (
 		fakes.SimPendingThenFill, fakes.SimPendingThenFill, fakes.SimPending, fakes.SimReject, fakes.SimPartial,
 		fakes.SimLostAnswer, fakes.SimRateLimited, fakes.SimRateLimited, fakes.SimServerError, fakes.SimRefused,
 		fakes.SimLeverage2, fakes.SimWrongSettlement, fakes.SimNoStop,
+		fakes.SimFilledNoExecutions, fakes.SimRateLimitedProcessed,
 	}
 	// Closes eToro accepts sooner or later (a close stuck pending or refused is a case for the
-	// executor tests, not for the flatten invariant).
-	propCloseFailures = []fakes.SimOutcome{fakes.SimLostAnswer, fakes.SimRateLimited, fakes.SimServerError}
+	// executor tests, not for the flatten invariant). A partial close leaves the rest open for
+	// the supervisor's next pass.
+	propCloseFailures = []fakes.SimOutcome{fakes.SimLostAnswer, fakes.SimRateLimited, fakes.SimServerError, fakes.SimPartialClose}
 )
 
 // scriptFaults scripts the broker's answers for this tick and, now and then, an unreadable
@@ -467,15 +527,19 @@ func (b *propBroker) Open(ctx context.Context, in domain.OrderIntent) (domain.Or
 	b.s.checkOpen(ctx, in)
 	st, err := b.SimBroker.Open(ctx, in)
 	b.s.sent[in.RequestID] = append(b.s.sent[in.RequestID], err)
+	if na, ok := errors.AsType[*domain.NotAcceptedError](err); ok && na.RateLimited {
+		b.s.stats.rateLimits++
+	}
 	return st, err
 }
 
 // checkOpen asserts, for an order about to be sent: one of the two shapes; persisted first as
-// a sent open order with this send counted; a resend only after a 429; the agent running and
+// a sent open order with this send counted; never a resend (review M3); the agent running and
 // not killed, latched or past the drawdown; inside the entry window of a market that takes
-// entries; never larger than the candidate; and, with the account as it is now (prices do
-// not move within a tick, so this is the account the decision saw), within fresh cash minus
-// the other reservations, the budget and the short limit.
+// entries; never larger than the candidate; and, with the account as it really is now (prices
+// do not move within a tick, so this is the account the decision saw, except for fills
+// eToro's portfolio does not show yet, review B1), within the actual cash minus the other
+// reservations, the budget and the short limit.
 func (s *propScenario) checkOpen(ctx context.Context, in domain.OrderIntent) {
 	s.t.Helper()
 	ae := s.ae
@@ -487,23 +551,16 @@ func (s *propScenario) checkOpen(ctx context.Context, in domain.OrderIntent) {
 	switch {
 	case err != nil:
 		s.fail("open %s sent without a stored order: %v", in.RequestID, err)
-	case o.Kind != domain.OrderOpen || o.State != domain.OrderSent || o.Sends != len(s.sent[in.RequestID])+1:
-		s.fail("open %s: stored as %s/%s with %d sends before send %d", in.RequestID, o.Kind, o.State, o.Sends, len(s.sent[in.RequestID])+1)
+	case len(s.sent[in.RequestID]) > 0:
+		s.fail("open %s resent after %v: opens are never resent", in.RequestID, s.sent[in.RequestID])
+	case o.Kind != domain.OrderOpen || o.State != domain.OrderSent || o.Sends != 1:
+		s.fail("open %s: stored as %s/%s with %d sends before it was sent", in.RequestID, o.Kind, o.State, o.Sends)
 	case o.Direction != in.Direction || o.Instrument != in.Instrument || o.Amount != in.Amount || o.StopLoss != in.StopLossRate || o.TakeProfit != in.TakeProfitRate:
 		s.fail("open %s differs from its stored order", in.RequestID)
 	}
-	for i, prev := range s.sent[in.RequestID] {
-		if na, ok := errors.AsType[*domain.NotAcceptedError](prev); !ok || !na.RateLimited {
-			s.fail("open %s resent after send %d answered %v (only a 429 allows a resend)", in.RequestID, i+1, prev)
-		}
-	}
-	if len(s.sent[in.RequestID]) > 0 {
-		s.stats.resends++
-	} else {
-		s.stats.entries++
-		if in.Direction == domain.Short {
-			s.stats.shorts++
-		}
+	s.stats.entries++
+	if in.Direction == domain.Short {
+		s.stats.shorts++
 	}
 	// Shape: long stop < entry < short stop, the entry being the ask (long) or bid (short).
 	q, _ := s.Quotes(ctx, []domain.InstrumentID{in.Instrument})
@@ -532,12 +589,13 @@ func (s *propScenario) checkOpen(ctx context.Context, in domain.OrderIntent) {
 	if err != nil {
 		s.fail("open %s without a risk state: %v", in.RequestID, err)
 	}
-	pfErr := ae.b.PortfolioErr
-	ae.b.PortfolioErr = nil
-	pf, err := ae.b.Portfolio(ports.WithAccount(ae.ctx, ae.a))
-	ae.b.PortfolioErr = pfErr
-	if err != nil {
-		s.fail("portfolio: %v", err)
+	// The account as it really is, fills eToro does not show yet included (B1).
+	pf := ae.b.Actual()
+	for _, p := range pf.Positions {
+		if !p.OpenedAt.IsZero() && now.Sub(p.OpenedAt) < ae.b.PortfolioLag {
+			s.stats.hiddenAtOpen++
+			break
+		}
 	}
 	equity := pf.Equity()
 	switch {

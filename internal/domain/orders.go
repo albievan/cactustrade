@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"time"
@@ -79,10 +80,16 @@ var orderMoves = map[OrderState][]OrderState{
 // CanMove reports whether an order may go from one state to another.
 func CanMove(from, to OrderState) bool { return slices.Contains(orderMoves[from], to) }
 
-// MaxSends bounds how often one request id is sent: an open only after a 429 (OD2), a close
-// when a lost answer left the position open.
+// MaxSends bounds how often one request id is sent. An open is sent once and never again,
+// not even after a 429 (review M3, stricter than OD2's default): until 4.17 verifies whether
+// eToro answers a 429 before processing (U7) and dedupes a repeated x-request-id (U1), a
+// resend could double the order. A close may be resent when a lost answer left the position
+// open, a cancel after a 429.
 func MaxSends(k OrderKind) int {
-	if k == OrderClose {
+	switch k {
+	case OrderOpen:
+		return 1
+	case OrderClose:
 		return 5
 	}
 	return 3
@@ -247,6 +254,125 @@ func Reservations(orders []Order) Reservation {
 	}
 	slices.Sort(r.Instruments)
 	return r
+}
+
+// FillVisibleAfter is how long a fill of ours may take to show in eToro's portfolio (U11,
+// unverified until 4.17). Until a portfolio read shows it, the cash figure may not have
+// paid for it yet.
+const FillVisibleAfter = 2 * time.Minute
+
+// filledOpen reports whether o is a final open order that opened positions: filled, or
+// cancelled after a partial fill.
+func filledOpen(o Order) bool {
+	return o.Kind == OrderOpen && (o.State == OrderFilled || (o.State == OrderCancelled && o.PositionID > 0))
+}
+
+// WithUnseenFills adds to r the final open orders whose fills pf may not show yet (review
+// B1): a filled order keeps its full amount reserved (and its instrument in flight, and a
+// place under the position cap) until a portfolio read from no earlier than the fill (its
+// UpdatedAt) shows every position it opened, or until FillVisibleAfter has passed since the
+// fill. Without this a second order in the same tick would be sized from a cash figure that
+// has not paid for the first one. Counting a fill twice (reserved and in the portfolio) is
+// the accepted direction. orders are the account's recent orders (non-final ones are
+// ignored: Reservations counts them); ours are its agent positions (to find every position
+// an order opened; the order itself stores only the first).
+func (r Reservation) WithUnseenFills(orders []Order, ours []AgentPosition, pf Portfolio, now time.Time) Reservation {
+	inPF := map[int64]bool{}
+	for _, p := range pf.Positions {
+		inPF[p.ID] = true
+	}
+	r.Instruments = slices.Clone(r.Instruments)
+	for _, o := range orders {
+		if !filledOpen(o) || now.Sub(o.UpdatedAt) >= FillVisibleAfter {
+			continue
+		}
+		var ids []int64
+		if o.PositionID > 0 {
+			ids = append(ids, o.PositionID)
+		}
+		for _, ap := range ours {
+			if ap.OpenRequestID == o.RequestID {
+				ids = append(ids, ap.PositionID)
+			}
+		}
+		seen := len(ids) > 0 && !pf.AsOf.Before(o.UpdatedAt)
+		for _, id := range ids {
+			seen = seen && inPF[id]
+		}
+		if seen {
+			continue
+		}
+		r.Amount += o.Amount
+		r.Count++
+		if o.Direction == Short {
+			r.Short += o.Amount
+		}
+		if o.Instrument != 0 && !slices.Contains(r.Instruments, o.Instrument) {
+			r.Instruments = append(r.Instruments, o.Instrument)
+		}
+	}
+	slices.Sort(r.Instruments)
+	return r
+}
+
+// AdoptionWindow is how long after its send an order of ours can still explain a position
+// nobody recorded (review B2).
+const AdoptionWindow = 24 * time.Hour
+
+// adoptionToleranceBp: the positions adopted for one order may exceed its amount by at most
+// 1 % (eToro's rounding of units).
+const adoptionToleranceBp = 100
+
+// Adoption is a position in eToro's portfolio that one of our orders opened but that was never
+// recorded as ours.
+type Adoption struct {
+	Position Position
+	Order    Order
+}
+
+// AdoptUnrecorded matches positions that are not recorded as ours (unrecorded) with our open
+// orders that ended without their fills being recorded (review B2): a fill whose recording
+// failed, or an order abandoned after lookups kept answering 404 although eToro holds it (U2).
+// An order can explain a position when it is an open order that is filled, cancelled or
+// abandoned, was sent (SentAt set) within AdoptionWindow before now, has the position's
+// instrument and direction, was sent no later than the position opened, has stored that
+// position's id when it stores one, and the positions it explains add up to at most its amount
+// (+1 %). Each position goes to the latest such order. Anything else is left alone (OD1).
+func AdoptUnrecorded(orders []Order, unrecorded []Position, now time.Time) []Adoption {
+	var cands []Order
+	for _, o := range orders {
+		switch {
+		case o.Kind != OrderOpen, o.State != OrderFilled && o.State != OrderCancelled && o.State != OrderAbandoned,
+			o.SentAt.IsZero(), o.SentAt.After(now), now.Sub(o.SentAt) > AdoptionWindow:
+			continue
+		}
+		cands = append(cands, o)
+	}
+	// Latest send first, so a position goes to the order sent just before it opened.
+	slices.SortStableFunc(cands, func(a, b Order) int { return b.SentAt.Compare(a.SentAt) })
+	ps := slices.Clone(unrecorded)
+	slices.SortStableFunc(ps, func(a, b Position) int {
+		if c := a.OpenedAt.Compare(b.OpenedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	used := map[string]Cents{}
+	var out []Adoption
+	for _, p := range ps {
+		for _, o := range cands {
+			switch {
+			case p.Instrument != o.Instrument, p.Direction() != o.Direction, p.OpenedAt.IsZero(), p.OpenedAt.Before(o.SentAt),
+				o.PositionID > 0 && p.ID != o.PositionID,
+				used[o.RequestID]+p.Amount > o.Amount+adoptionToleranceBp*o.Amount/10_000:
+				continue
+			}
+			used[o.RequestID] += p.Amount
+			out = append(out, Adoption{Position: p, Order: o})
+			break
+		}
+	}
+	return out
 }
 
 // Apply puts the reservation into an entry decision's input.

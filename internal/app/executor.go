@@ -35,7 +35,8 @@ const (
 	// lookupGiveUp: an order eToro still does not know this long after its send is
 	// abandoned (OD2); it is never resent.
 	lookupGiveUp = 2 * time.Minute
-	// minRetryAfter is the shortest wait before resending after a 429.
+	// minRetryAfter is the shortest wait after a 429 (before a close or cancel is resent, or
+	// an open is looked up).
 	minRetryAfter = time.Second
 	// lostAnswerWait is how long a lost close answer is given before the portfolio is read
 	// again; lostAnswerReads is how often it is read before the outcome stays unknown.
@@ -63,6 +64,9 @@ type runtimeState struct {
 	entryCancel map[string]context.CancelFunc
 	// ticking marks accounts whose agent tick was started by AgentLoop and still runs.
 	ticking map[string]bool
+	// killed latches every kill in this process (review m3): even when neither kill write
+	// reached the database, entries stay refused after it recovers, until ResetKill.
+	killed map[string]bool
 }
 
 // agentLocks are one account's agent locks. Lock order: ctl before entry, never the other
@@ -80,7 +84,29 @@ func newRuntimeState() *runtimeState {
 	return &runtimeState{
 		reconciled: map[string]Reconciliation{}, supervising: map[string]bool{},
 		agents: map[string]*agentLocks{}, entryCancel: map[string]context.CancelFunc{}, ticking: map[string]bool{},
+		killed: map[string]bool{},
 	}
+}
+
+// latchKill records in memory that the account's kill switch was turned on (review m3).
+func (r *runtimeState) latchKill(accountID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.killed[accountID] = true
+}
+
+// killLatched reports whether a kill was latched in this process and not reset since.
+func (r *runtimeState) killLatched(accountID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.killed[accountID]
+}
+
+// clearKillLatch forgets the latched kill (ResetKill only).
+func (r *runtimeState) clearKillLatch(accountID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.killed, accountID)
 }
 
 // agent returns the account's agent locks, created on first use.
@@ -168,10 +194,10 @@ func (s *Service) leaseHolder() string {
 	return s.rt.holder
 }
 
-// isKilled reports whether the account's kill switch is on. A read error counts as killed
-// for entries (fail closed) and is returned.
+// isKilled reports whether the account's kill switch is on: latched in this process, or
+// stored. A read error counts as killed for entries (fail closed) and is returned.
 func (s *Service) isKilled(ctx context.Context, accountID string) (bool, error) {
-	if s.agentState(ctx, accountID) == domain.AgentKilled {
+	if s.rt.killLatched(accountID) || s.agentState(ctx, accountID) == domain.AgentKilled {
 		return true, nil
 	}
 	st, err := s.d.Store.RiskStates().Get(ctx, accountID)
@@ -287,73 +313,84 @@ func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryReque
 	return s.sendOpen(ctx, a, o, intent)
 }
 
-// sendOpen sends a stored open order and follows it. The only resend is after a 429 that a
-// lookup confirms eToro does not know (OD2), with the same request id, at most MaxSends.
+// sendOpen sends a stored open order once and follows it. An open is never resent (review
+// M3, stricter than OD2: U1/U7 are unverified): after a 429 it waits out Retry-After and looks
+// the order up; found → followed, not found → polled and abandoned after lookupGiveUp. Its
+// cash stays reserved until it is final. Once the request has left, its outcome is stored
+// even if ctx was cancelled meanwhile (a kill, review m4).
 func (s *Service) sendOpen(ctx context.Context, a domain.Account, o domain.Order, in domain.OrderIntent) (domain.Order, error) {
 	bctx := ports.WithAccount(ctx, a)
+	wctx := context.WithoutCancel(ctx)
 	label := s.instrumentLabel(ctx, o.Instrument)
-	for {
-		if cerr := ctx.Err(); cerr != nil {
-			// Cancelled (a kill, a shutdown) before the request left: eToro never saw it.
-			o, _ = s.move(context.WithoutCancel(ctx), o, domain.OrderAbandoned, "cancelled before it was sent", nil)
-			return o, fmt.Errorf("executor.sendOpen: not sent: %w", cerr)
+	if cerr := ctx.Err(); cerr != nil {
+		// Cancelled (a kill, a shutdown) before the request left: eToro never saw it.
+		o, _ = s.move(wctx, o, domain.OrderAbandoned, "cancelled before it was sent", nil)
+		return o, fmt.Errorf("executor.sendOpen: not sent: %w", cerr)
+	}
+	st, err := s.d.Broker.Open(bctx, in)
+	na, isNA := errors.AsType[*domain.NotAcceptedError](err)
+	switch {
+	case err == nil:
+		o, err = s.move(wctx, o, domain.OrderPending, "accepted by eToro", func(n *domain.Order) { n.EtoroOrderID = st.OrderID })
+		if err != nil {
+			return o, fmt.Errorf("executor.sendOpen: %w", err)
 		}
-		st, err := s.d.Broker.Open(bctx, in)
-		na, isNA := errors.AsType[*domain.NotAcceptedError](err)
+		s.orderEvent(wctx, a, "order.sent", domain.SeverityInfo, fmt.Sprintf("%s $%s of %s sent", verb(o.Direction), o.Amount, label), "stop "+o.StopLoss.String()+", request "+o.RequestID)
+		return s.resolveOpen(ctx, a, o)
+	case isNA && na.RateLimited:
+		// eToro may have processed it despite the 429 (U7) and may not dedupe the id (U1):
+		// never resent. It stays sent (reserved, its instrument in flight) until a lookup
+		// resolves it.
+		s.d.Log.WarnContext(ctx, "open order rate limited: not resent, following it by lookup", "account", a.ID, "request", o.RequestID, "retry_after", na.RetryAfter)
+		if err := s.d.Sleep(ctx, max(na.RetryAfter, minRetryAfter)); err != nil {
+			return o, fmt.Errorf("executor.sendOpen: waiting after a 429 (reconciliation resolves it): %w", err)
+		}
+		lk, lerr := s.d.Broker.Lookup(bctx, o.RequestID)
 		switch {
-		case err == nil:
-			o, err = s.move(ctx, o, domain.OrderPending, "accepted by eToro", func(n *domain.Order) { n.EtoroOrderID = st.OrderID })
-			if err != nil {
-				return o, fmt.Errorf("executor.sendOpen: %w", err)
+		case lerr == nil:
+			if o, err = s.applyOpenStatus(wctx, a, o, lk); err != nil && !errors.Is(err, errFillsNotRecorded) {
+				return o, err
 			}
-			s.orderEvent(ctx, a, "order.sent", domain.SeverityInfo, fmt.Sprintf("%s $%s of %s sent", verb(o.Direction), o.Amount, label), "stop "+o.StopLoss.String()+", request "+o.RequestID)
-			return s.resolveOpen(ctx, a, o)
-		case isNA && na.RateLimited:
-			lk, lerr := s.d.Broker.Lookup(bctx, o.RequestID)
-			switch {
-			case lerr == nil:
-				if o, err = s.applyOpenStatus(ctx, a, o, lk); err != nil || o.State.Final() {
-					return o, err
-				}
-				return s.resolveOpen(ctx, a, o)
-			case !errors.Is(lerr, domain.ErrNotFound):
-				o, _ = s.move(ctx, o, domain.OrderUnknown, "rate limited, and the lookup failed: "+lerr.Error(), nil)
-				return s.resolveOpen(ctx, a, o)
-			case o.Sends >= domain.MaxSends(domain.OrderOpen):
-				o, _ = s.move(ctx, o, domain.OrderRejected, fmt.Sprintf("rate limited %d times: not sent again", o.Sends), nil)
-				s.orderEvent(ctx, a, "order.rejected", domain.SeverityWarning, verb(o.Direction)+" "+label+" not placed", o.Reason)
-				return o, fmt.Errorf("executor.sendOpen: %w", err)
+			if o.State.Final() {
+				return o, nil
 			}
-			if err := s.waitToResend(ctx, a, na.RetryAfter); err != nil {
-				return o, fmt.Errorf("executor.sendOpen: %w", err)
-			}
-			if o, err = s.move(ctx, o, domain.OrderSent, "resent after a 429", nil); err != nil {
-				return o, fmt.Errorf("executor.sendOpen: marking the resend (not sent): %w", err)
-			}
-		case isNA:
-			o, _ = s.move(ctx, o, domain.OrderRejected, "eToro refused the order: "+na.Reason, nil)
-			s.orderEvent(ctx, a, "order.rejected", domain.SeverityWarning, verb(o.Direction)+" "+label+" refused by eToro", na.Reason)
-			return o, fmt.Errorf("executor.sendOpen: %w", err)
-		case errors.Is(err, domain.ErrRealModeGated):
-			o, _ = s.move(ctx, o, domain.OrderAbandoned, "refused before sending: real mode is gated", nil)
-			return o, fmt.Errorf("executor.sendOpen: %w", err)
+		case errors.Is(lerr, domain.ErrNotFound):
+			// Not processed, or not visible yet (U2): polled, abandoned after lookupGiveUp.
 		default:
-			// Outcome unknown (or an error we cannot classify): it may exist at eToro. Only a
-			// lookup can tell; it is never resent (OD2).
-			o, _ = s.move(ctx, o, domain.OrderUnknown, "the answer was lost: "+err.Error(), nil)
-			s.orderEvent(ctx, a, "order.unknown", domain.SeverityWarning, verb(o.Direction)+" "+label+": outcome unknown", "resolving by lookup; entries wait. Request "+o.RequestID)
-			return s.resolveOpen(ctx, a, o)
+			o, _ = s.move(wctx, o, domain.OrderUnknown, "rate limited, and the lookup failed: "+lerr.Error(), nil)
 		}
+		return s.resolveOpen(ctx, a, o)
+	case isNA:
+		o, _ = s.move(wctx, o, domain.OrderRejected, "eToro refused the order: "+na.Reason, nil)
+		s.orderEvent(wctx, a, "order.rejected", domain.SeverityWarning, verb(o.Direction)+" "+label+" refused by eToro", na.Reason)
+		return o, fmt.Errorf("executor.sendOpen: %w", err)
+	case errors.Is(err, domain.ErrRealModeGated):
+		o, _ = s.move(wctx, o, domain.OrderAbandoned, "refused before sending: real mode is gated", nil)
+		return o, fmt.Errorf("executor.sendOpen: %w", err)
+	default:
+		// Outcome unknown (or an error we cannot classify): it may exist at eToro. Only a
+		// lookup can tell; it is never resent (OD2).
+		o, _ = s.move(wctx, o, domain.OrderUnknown, "the answer was lost: "+err.Error(), nil)
+		s.orderEvent(wctx, a, "order.unknown", domain.SeverityWarning, verb(o.Direction)+" "+label+": outcome unknown", "resolving by lookup; entries wait. Request "+o.RequestID)
+		return s.resolveOpen(ctx, a, o)
 	}
 }
 
+// errFillsNotRecorded: eToro reported fills that could not all be stored as agent positions;
+// the order is not moved on, so the next lookup records them (review B2).
+var errFillsNotRecorded = errors.New("fills not recorded")
+
 // resolveOpen polls the lookup of an open order on the openPolls schedule until it is
-// final. Still pending at pendingMax → cancelled; unknown to eToro at lookupGiveUp →
+// final; offsets already past are skipped (after a 429's wait), but the last one always
+// runs. Still pending at pendingMax → cancelled; unknown to eToro at lookupGiveUp →
 // abandoned. An order left unresolved is picked up by the supervisor and reconciliation.
 func (s *Service) resolveOpen(ctx context.Context, a domain.Account, o domain.Order) (domain.Order, error) {
 	bctx := ports.WithAccount(ctx, a)
 	cancelSent := false
-	for _, off := range openPolls {
+	for i, off := range openPolls {
+		if i < len(openPolls)-1 && o.SentAt.Add(off).Before(s.d.Clock.Now()) {
+			continue
+		}
 		if err := s.sleepUntil(ctx, o.SentAt.Add(off)); err != nil {
 			return o, fmt.Errorf("executor.resolveOpen: %w", err)
 		}
@@ -362,6 +399,10 @@ func (s *Service) resolveOpen(ctx context.Context, a domain.Account, o domain.Or
 		switch {
 		case err == nil:
 			if o, err = s.applyOpenStatus(ctx, a, o, st); err != nil {
+				if errors.Is(err, errFillsNotRecorded) {
+					s.d.Log.WarnContext(ctx, "recording the fills failed; trying again on the next lookup", "account", a.ID, "request", o.RequestID, "err", err)
+					continue
+				}
 				// Another writer (the supervisor, reconciliation) moved it first: follow the
 				// stored version.
 				cur, gerr := s.d.Store.Orders().Get(ctx, o.RequestID)
@@ -373,7 +414,10 @@ func (s *Service) resolveOpen(ctx context.Context, a domain.Account, o domain.Or
 			if o.State.Final() {
 				return o, nil
 			}
-			if !cancelSent && age >= pendingMax && o.EtoroOrderID > 0 {
+			// Cancel only what eToro itself reports as still pending (never a fill whose
+			// executions are not listed yet).
+			stillPending := !st.Final && (st.State == domain.OrderPending || st.State == domain.OrderPartial)
+			if !cancelSent && stillPending && age >= pendingMax && o.EtoroOrderID > 0 {
 				cancelSent = true
 				if _, err := s.cancelOrder(ctx, a, o, fmt.Sprintf("still pending after %s", pendingMax)); err != nil {
 					s.d.Log.WarnContext(ctx, "cancelling a pending order failed", "account", a.ID, "request", o.RequestID, "err", err)
@@ -402,10 +446,18 @@ func (s *Service) abandon(ctx context.Context, a domain.Account, o domain.Order,
 
 // applyOpenStatus folds eToro's answer about an open order into it: fills are recorded as
 // agent positions and checked, and the state follows eToro's. A partial fill that eToro
-// reports final (rest cancelled or rejected) becomes cancelled.
+// reports final (rest cancelled or rejected) becomes cancelled. A fill reported without any
+// positionExecutions counts as still pending, and an order whose fills could not all be
+// recorded is not moved at all (errFillsNotRecorded): an order is never final while a
+// position it opened is not recorded as ours (review B2).
 func (s *Service) applyOpenStatus(ctx context.Context, a domain.Account, o domain.Order, st domain.OrderStatus) (domain.Order, error) {
+	if (st.State == domain.OrderFilled || st.State == domain.OrderPartial) && len(st.Executions) == 0 {
+		st.State, st.Final = domain.OrderPending, false
+	}
 	if len(st.Executions) > 0 {
-		s.recordFills(ctx, a, o, st)
+		if err := s.recordFills(ctx, a, o, st); err != nil {
+			return o, fmt.Errorf("executor.applyOpenStatus: order %s: %w", o.RequestID, err)
+		}
 	}
 	target := st.State
 	reason := st.Reason
@@ -462,8 +514,9 @@ func stopClose(got, want domain.Micros) bool {
 // recordFills records the positions an open order produced as agent positions (only new
 // ones) and checks them: the shape must be the one sent (real/long/x1 or cfd/short/x1), with
 // a stop on the losing side, close to the stop we sent. A fill that does not conform is
-// closed at once, its instrument blocked and an alert raised.
-func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Order, st domain.OrderStatus) {
+// closed at once, its instrument blocked and an alert raised. It returns errFillsNotRecorded
+// when any position could not be stored: the caller must not move the order on.
+func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Order, st domain.OrderStatus) error {
 	ok, why := st.Conforms(o.Direction)
 	if ok && st.Instrument != 0 && st.Instrument != o.Instrument {
 		ok, why = false, fmt.Sprintf("eToro filled instrument %d, not %d", st.Instrument, o.Instrument)
@@ -475,7 +528,10 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 	}
 	label := s.instrumentLabel(ctx, o.Instrument)
 	now := s.d.Clock.Now().UTC()
-	var fresh []domain.AgentPosition
+	var (
+		fresh  []domain.AgentPosition
+		failed error
+	)
 	for _, e := range st.Executions {
 		ap := domain.AgentPosition{
 			AccountID: a.ID, PositionID: e.PositionID, OpenRequestID: o.RequestID,
@@ -486,17 +542,22 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 		case errors.Is(err, domain.ErrConflict):
 			continue // seen before
 		case err != nil:
-			// Not recorded as ours: it shows as a foreign position (entries stay blocked if
-			// it does not conform). Still closed below when it does not conform.
+			// Not recorded as ours yet: the order stays open and the next lookup tries again
+			// (a non-conforming one is checked and closed then).
 			s.d.Log.ErrorContext(ctx, "recording an agent position failed", "account", a.ID, "position", e.PositionID, "err", err)
+			failed = errors.Join(failed, fmt.Errorf("position %d: %w", e.PositionID, err))
+			continue
 		}
 		fresh = append(fresh, ap)
 		s.orderEvent(ctx, a, "order.filled", domain.SeverityInfo,
 			fmt.Sprintf("%s $%s of %s filled", verb(o.Direction), e.Amount, label),
 			fmt.Sprintf("position %d at %s, stop %s", e.PositionID, e.OpenRate, e.StopLossRate))
 	}
+	if failed != nil {
+		failed = fmt.Errorf("%w: %w", errFillsNotRecorded, failed)
+	}
 	if ok || len(fresh) == 0 {
-		return
+		return failed
 	}
 	if err := s.d.Store.InstrumentBlocks().Block(ctx, domain.InstrumentBlock{AccountID: a.ID, Instrument: o.Instrument, Reason: "non-conforming fill: " + why, At: now}); err != nil {
 		s.d.Log.ErrorContext(ctx, "blocking an instrument failed", "account", a.ID, "instrument", o.Instrument, "err", err)
@@ -507,6 +568,7 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 			s.d.Log.ErrorContext(ctx, "closing a non-conforming position failed", "account", a.ID, "position", ap.PositionID, "err", err)
 		}
 	}
+	return failed
 }
 
 // closePosition closes one of cactusTrade's positions (OD1: never anyone else's): the close
@@ -523,12 +585,18 @@ func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain
 		if err == nil && !prev.State.Final() {
 			switch {
 			case prev.EtoroOrderID > 0:
-				return s.pollClose(ctx, a, ap, prev, []time.Duration{0})
+				// Read it once. Ended without closing the position (partly filled, rejected,
+				// cancelled; review M2): a new close follows at once.
+				done, err := s.pollClose(ctx, a, ap, prev, []time.Duration{0})
+				if err != nil || !done.State.Final() || done.State == domain.OrderFilled {
+					return done, err
+				}
 			case s.d.Clock.Now().Sub(prev.UpdatedAt) < lookupGiveUp:
 				return prev, nil // in flight
-			}
-			if _, err := s.abandon(ctx, a, prev, "close not confirmed: a new close is sent"); err != nil {
-				return prev, fmt.Errorf("executor.closePosition: %w", err)
+			default:
+				if _, err := s.abandon(ctx, a, prev, "close not confirmed: a new close is sent"); err != nil {
+					return prev, fmt.Errorf("executor.closePosition: %w", err)
+				}
 			}
 		}
 	}
@@ -574,7 +642,7 @@ func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain
 			}
 		case isNA:
 			if errors.Is(err, domain.ErrNotFound) {
-				if open, known := s.positionOpen(ctx, a, ap.PositionID); known && !open {
+				if open, known := s.positionOpen(ctx, a, ap); known && !open {
 					o, _ = s.move(ctx, o, domain.OrderRejected, "the position was already closed at eToro", nil)
 					s.markClosed(ctx, a, ap, "closed at eToro before our close")
 					return o, nil
@@ -587,7 +655,7 @@ func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain
 			o, _ = s.move(ctx, o, domain.OrderAbandoned, "refused before sending: real mode is gated", nil)
 			return o, fmt.Errorf("executor.closePosition: %w", err)
 		default:
-			open, known := s.positionOpenAfterLoss(ctx, a, ap.PositionID)
+			open, known := s.positionOpenAfterLoss(ctx, a, ap)
 			switch {
 			case known && !open:
 				if o, err = s.move(ctx, o, domain.OrderFilled, "the answer was lost; the position is gone from the portfolio", nil); err != nil {
@@ -611,29 +679,31 @@ func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain
 	}
 }
 
-// positionOpen reads the portfolio once: whether the position is open, and whether that is
-// known (false on a read error).
-func (s *Service) positionOpen(ctx context.Context, a domain.Account, positionID int64) (open, known bool) {
+// positionOpen reads the portfolio once: whether the agent position is open, and whether that
+// is known. A read error is not known, and neither is the absence of a position recorded less
+// than fillVisibleAfter before the read: its fill may not show in the portfolio yet (U11), so
+// absence does not prove it closed (found by the review-M4 simulator).
+func (s *Service) positionOpen(ctx context.Context, a domain.Account, ap domain.AgentPosition) (open, known bool) {
 	pf, err := s.d.Broker.Portfolio(ports.WithAccount(ctx, a))
 	if err != nil {
 		return false, false
 	}
 	for _, p := range pf.Positions {
-		if p.ID == positionID {
+		if p.ID == ap.PositionID {
 			return true, true
 		}
 	}
-	return false, true
+	return false, pf.AsOf.Sub(ap.OpenedAt) >= fillVisibleAfter
 }
 
 // positionOpenAfterLoss gives a close whose answer was lost a moment, then reads the
-// portfolio (up to lostAnswerReads times while reads fail).
-func (s *Service) positionOpenAfterLoss(ctx context.Context, a domain.Account, positionID int64) (open, known bool) {
+// portfolio (up to lostAnswerReads times while the answer is not known).
+func (s *Service) positionOpenAfterLoss(ctx context.Context, a domain.Account, ap domain.AgentPosition) (open, known bool) {
 	for range lostAnswerReads {
 		if s.d.Sleep(ctx, lostAnswerWait) != nil {
 			return false, false
 		}
-		if open, known = s.positionOpen(ctx, a, positionID); known {
+		if open, known = s.positionOpen(ctx, a, ap); known {
 			return open, known
 		}
 	}
@@ -658,12 +728,19 @@ func (s *Service) pollClose(ctx context.Context, a domain.Account, ap domain.Age
 	return o, nil
 }
 
-// applyCloseStatus folds eToro's answer about a close order into it.
+// applyCloseStatus folds eToro's answer about a close order into it. A close that eToro ends
+// partly filled (status 9/10) closes the position only when a fresh portfolio no longer has
+// it; otherwise the close order is cancelled ("the rest is still open"), the position stays
+// ours and open, and the supervisor closes it again (review M2).
 func (s *Service) applyCloseStatus(ctx context.Context, a domain.Account, ap domain.AgentPosition, o domain.Order, st domain.OrderStatus) (domain.Order, error) {
-	target := st.State
+	target, reason, partLeft := st.State, st.Reason, false
 	switch {
-	case st.State == domain.OrderPartial && st.Final, st.State == domain.OrderFilled:
+	case st.State == domain.OrderFilled:
+	case st.State == domain.OrderPartial && st.Final:
 		target = domain.OrderFilled
+		if open, known := s.positionOpen(ctx, a, ap); open || !known {
+			target, reason, partLeft = domain.OrderCancelled, "partly closed by eToro; the rest of the position is still open (or unconfirmed) and is closed again", true
+		}
 	case st.State == domain.OrderRejected, st.State == domain.OrderCancelled:
 	default:
 		return o, nil // still pending
@@ -671,11 +748,15 @@ func (s *Service) applyCloseStatus(ctx context.Context, a domain.Account, ap dom
 	if !domain.CanMove(o.State, target) {
 		return o, nil
 	}
-	o, err := s.move(ctx, o, target, st.Reason, nil)
+	o, err := s.move(ctx, o, target, reason, nil)
 	if err != nil {
 		return o, fmt.Errorf("executor.applyCloseStatus: %w", err)
 	}
 	label := s.instrumentLabel(ctx, ap.Instrument)
+	if partLeft {
+		s.orderEvent(ctx, a, "order.partial_close", domain.SeverityWarning, "Close of "+label+" only partly filled", fmt.Sprintf("position %d stays open and is closed again. Request %s", ap.PositionID, o.RequestID))
+		return o, nil
+	}
 	if o.State == domain.OrderFilled {
 		detail := fmt.Sprintf("position %d", ap.PositionID)
 		for _, e := range st.Executions {

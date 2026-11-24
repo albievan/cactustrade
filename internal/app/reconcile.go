@@ -15,8 +15,9 @@ import (
 const ReconcileEvery = 5 * time.Minute
 
 // fillVisibleAfter is how long a recorded fill may be missing from eToro's portfolio before
-// reconciliation takes it for closed (U11, unverified until 4.17).
-const fillVisibleAfter = 2 * time.Minute
+// reconciliation takes it for closed (U11, unverified until 4.17). The agent keeps a fill's
+// cash reserved as long (domain.Reservation.WithUnseenFills, review B1).
+const fillVisibleAfter = domain.FillVisibleAfter
 
 // Reconciliation is the outcome of an account's latest reconciliation with eToro. Entries
 // need OK; after a restart an agent that was running resumes by itself only when it is OK
@@ -207,15 +208,19 @@ func (s *Service) settleClose(ctx context.Context, a domain.Account, o domain.Or
 		}
 		return ""
 	}
+	// A position recorded within fillVisibleAfter of the read may just not show yet (U11): its
+	// absence does not prove the close.
+	open := getErr == nil && pf.AsOf.Sub(ap.OpenedAt) < fillVisibleAfter
 	for _, p := range pf.Positions {
-		if p.ID == o.PositionID {
-			if stale {
-				if _, err := s.abandon(ctx, a, o, "close not confirmed and the position is still open: the supervisor closes it again"); err != nil {
-					return fmt.Sprintf("order %s: %v", o.RequestID, err)
-				}
+		open = open || p.ID == o.PositionID
+	}
+	if open {
+		if stale {
+			if _, err := s.abandon(ctx, a, o, "close not confirmed and the position is still open: the supervisor closes it again"); err != nil {
+				return fmt.Sprintf("order %s: %v", o.RequestID, err)
 			}
-			return ""
 		}
+		return ""
 	}
 	if _, err := s.move(ctx, o, domain.OrderFilled, "the position is gone from the portfolio", nil); err != nil {
 		return fmt.Sprintf("order %s: %v", o.RequestID, err)
@@ -236,7 +241,10 @@ func (s *Service) matchPositions(ctx context.Context, a domain.Account, pf domai
 	for _, p := range pf.Positions {
 		inPF[p.ID] = true
 	}
-	var problems []string
+	var (
+		problems   []string
+		unrecorded []domain.Position
+	)
 	for _, ap := range ours {
 		// A fill may take a moment to show in the portfolio (U11): a position recorded
 		// within fillVisibleAfter of the read is not taken for closed.
@@ -256,13 +264,56 @@ func (s *Service) matchPositions(ctx context.Context, a domain.Account, pf domai
 			}
 		case err == nil:
 		case errors.Is(err, domain.ErrNotFound):
-			if !p.Conforms() {
-				// OD1: never closed by cactusTrade; blocks entries until the owner acts.
-				problems = append(problems, fmt.Sprintf("position %d (not opened by cactusTrade) is not a real share long or a CFD short at leverage 1: close it on eToro", p.ID))
-			}
+			unrecorded = append(unrecorded, p)
 		default:
 			problems = append(problems, fmt.Sprintf("reading position %d failed: %v", p.ID, err))
 		}
 	}
+	// Positions no one recorded: ours when one of our recent orders explains them (review
+	// B2), otherwise the owner's (OD1).
+	adopted, aerr := s.adopt(ctx, a, unrecorded)
+	if aerr != "" {
+		problems = append(problems, aerr)
+	}
+	for _, p := range unrecorded {
+		if !adopted[p.ID] && !p.Conforms() {
+			// OD1: never closed by cactusTrade; blocks entries until the owner acts.
+			problems = append(problems, fmt.Sprintf("position %d (not opened by cactusTrade) is not a real share long or a CFD short at leverage 1: close it on eToro", p.ID))
+		}
+	}
 	return problems
+}
+
+// adopt records as ours the unrecorded positions one of our recent open orders explains
+// (domain.AdoptUnrecorded): a fill whose recording failed, or an order abandoned after its
+// lookups kept answering 404 although eToro holds it (U2). Each adoption raises a warning
+// event; from then on the supervisor closes the position like any of ours. It returns the
+// adopted position ids and a problem ("" = none).
+func (s *Service) adopt(ctx context.Context, a domain.Account, unrecorded []domain.Position) (map[int64]bool, string) {
+	adopted := map[int64]bool{}
+	if len(unrecorded) == 0 {
+		return adopted, ""
+	}
+	recent, err := s.d.Store.Orders().List(ctx, a.ID, recentOrders)
+	if err != nil {
+		return adopted, "reading our recent orders failed: " + err.Error()
+	}
+	now := s.d.Clock.Now().UTC()
+	var problems []string
+	for _, ad := range domain.AdoptUnrecorded(recent, unrecorded, now) {
+		p, o := ad.Position, ad.Order
+		ap := domain.AgentPosition{
+			AccountID: a.ID, PositionID: p.ID, OpenRequestID: o.RequestID,
+			Instrument: p.Instrument, Direction: o.Direction, OpenedAt: now,
+		}
+		if err := s.d.Store.AgentPositions().Add(ctx, ap); err != nil && !errors.Is(err, domain.ErrConflict) {
+			problems = append(problems, fmt.Sprintf("adopting position %d failed: %v", p.ID, err))
+			continue
+		}
+		adopted[p.ID] = true
+		s.orderEvent(ctx, a, "position.adopted", domain.SeverityWarning,
+			"Position in "+s.instrumentLabel(ctx, p.Instrument)+" adopted as cactusTrade's",
+			fmt.Sprintf("eToro holds position %d ($%s) that order %s (%s) opened but that was never recorded; it is now closed like any position of cactusTrade", p.ID, p.Amount, o.RequestID, o.State))
+	}
+	return adopted, strings.Join(problems, "; ")
 }

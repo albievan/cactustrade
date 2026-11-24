@@ -16,8 +16,8 @@ import (
 // SimOutcome scripts what the simulated eToro account does with one request.
 type SimOutcome string
 
-// Scripted outcomes. Open uses all of them; Close uses SimFill, SimPending, SimLostAnswer,
-// SimRateLimited, SimServerError and SimRefused.
+// Scripted outcomes. Open uses all of them but SimPartialClose; Close uses SimFill,
+// SimPending, SimLostAnswer, SimRateLimited, SimServerError, SimRefused and SimPartialClose.
 const (
 	// SimFill: accepted, and the lookup reports it filled (real/long/x1 or cfd/short/x1 with
 	// the stop sent).
@@ -45,6 +45,15 @@ const (
 	SimWrongSettlement SimOutcome = "wrong_settlement"
 	// SimNoStop: filled without the stop-loss that was sent.
 	SimNoStop SimOutcome = "no_stop"
+	// SimFilledNoExecutions: filled, but the first NoExecLookups lookups report it filled
+	// (final) without any positionExecutions.
+	SimFilledNoExecutions SimOutcome = "filled_no_executions"
+	// SimRateLimitedProcessed: answered with a 429, but eToro processed it anyway (U7): the
+	// order exists and fills.
+	SimRateLimitedProcessed SimOutcome = "rate_limited_processed"
+	// SimPartialClose (Close only): the close order ends partly filled and final (status
+	// 9/10): half the position is closed, the rest stays open.
+	SimPartialClose SimOutcome = "partial_close"
 )
 
 // SimRetryAfter is the Retry-After the simulated 429 asks for.
@@ -70,6 +79,17 @@ type SimBroker struct {
 	CloseScript []SimOutcome
 	// PendingLookups is how many lookups a SimPendingThenFill order stays pending (default 1).
 	PendingLookups int
+	// NoExecLookups is how many lookups a SimFilledNoExecutions order reports no executions
+	// (default 1).
+	NoExecLookups int
+	// LookupLag: an accepted order is unknown to Lookup (ErrNotFound) for this long (U2).
+	LookupLag time.Duration
+	// PortfolioLag: a position opened less than this long ago is missing from Portfolio, and
+	// the cash it took is still shown as available (U11). Actual shows the account as it is.
+	PortfolioLag time.Duration
+	// DuplicateFills: an Open with a request id the broker already has is processed again and
+	// fills a second time (eToro not deduplicating, U1). It is still recorded as a Violation.
+	DuplicateFills bool
 	// OnOpen runs at the start of every Open, e.g. RequireOrderRow: an error is recorded in
 	// Violations (the order is still processed, so the test sees the whole flow).
 	OnOpen func(ctx context.Context, in domain.OrderIntent) error
@@ -86,6 +106,14 @@ type SimBroker struct {
 	Lookups        int
 	CloseRequests  []string // request ids of Close calls, in order
 	CancelRequests []string
+	// Outcomes counts every scripted outcome used (Open and Close).
+	Outcomes map[SimOutcome]int
+	// LaggedLookups counts lookups answered 404 because of LookupLag; HiddenFills the
+	// positions left out of a Portfolio answer because of PortfolioLag; Duplicates the opens
+	// with a request id the broker already had.
+	LaggedLookups int
+	HiddenFills   int
+	Duplicates    int
 	// Violations lists broken rules: OnOpen failures, an Open that reused a request id the
 	// broker already had, a call without a demo eToro account.
 	Violations []string
@@ -97,10 +125,11 @@ type SimBroker struct {
 }
 
 type simOrder struct {
-	intent  domain.OrderIntent
-	outcome SimOutcome
-	status  domain.OrderStatus
-	lookups int
+	intent   domain.OrderIntent
+	outcome  SimOutcome
+	status   domain.OrderStatus
+	lookups  int
+	accepted time.Time
 }
 
 var _ ports.Broker = (*SimBroker)(nil)
@@ -121,6 +150,9 @@ func (b *SimBroker) init() {
 	if b.orders == nil {
 		b.orders, b.byID, b.closes = map[string]*simOrder{}, map[int64]*simOrder{}, map[int64]domain.OrderStatus{}
 	}
+	if b.Outcomes == nil {
+		b.Outcomes = map[SimOutcome]int{}
+	}
 }
 
 // gate refuses like the eToro client: no account, not eToro, or not demo.
@@ -137,12 +169,13 @@ func (b *SimBroker) gate(ctx context.Context, op string) error {
 	return nil
 }
 
-func nextOutcome(script *[]SimOutcome) SimOutcome {
-	if len(*script) == 0 {
-		return SimFill
+func (b *SimBroker) nextOutcome(script *[]SimOutcome) SimOutcome {
+	o := SimFill
+	if len(*script) > 0 {
+		o = (*script)[0]
+		*script = (*script)[1:]
 	}
-	o := (*script)[0]
-	*script = (*script)[1:]
+	b.Outcomes[o]++
 	return o
 }
 
@@ -164,13 +197,23 @@ func (b *SimBroker) Open(ctx context.Context, in domain.OrderIntent) (domain.Ord
 		return domain.OrderStatus{}, err
 	}
 	if _, dup := b.orders[in.RequestID]; dup {
+		b.Duplicates++
 		b.Violations = append(b.Violations, "open resent request id "+in.RequestID+" that the broker already has")
-		return domain.OrderStatus{}, &domain.NotAcceptedError{Reason: "duplicate request id (simulated)"}
+		if !b.DuplicateFills {
+			return domain.OrderStatus{}, &domain.NotAcceptedError{Reason: "duplicate request id (simulated)"}
+		}
+		// eToro does not deduplicate (U1): a second order under the same id, and it fills.
+		o := &simOrder{intent: in, outcome: SimFill, accepted: b.now(), status: domain.OrderStatus{
+			RequestID: in.RequestID, OrderID: b.id(), State: domain.OrderPending, Instrument: in.Instrument,
+		}}
+		b.byID[o.status.OrderID] = o
+		b.fill(o, in.Amount, true)
+		return domain.OrderStatus{RequestID: in.RequestID, OrderID: o.status.OrderID, State: domain.OrderPending}, nil
 	}
 	if !in.Direction.Valid() || in.StopLossRate <= 0 || in.Amount <= 0 || in.Instrument <= 0 {
 		return domain.OrderStatus{}, &domain.NotAcceptedError{Reason: "invalid order (simulated)"}
 	}
-	out := nextOutcome(&b.OpenScript)
+	out := b.nextOutcome(&b.OpenScript)
 	switch out {
 	case SimRateLimited:
 		return domain.OrderStatus{}, &domain.NotAcceptedError{RateLimited: true, RetryAfter: SimRetryAfter, Reason: "too many requests (simulated)"}
@@ -179,20 +222,23 @@ func (b *SimBroker) Open(ctx context.Context, in domain.OrderIntent) (domain.Ord
 	case SimServerError:
 		return domain.OrderStatus{}, fmt.Errorf("simulated 500: %w", domain.ErrOutcomeUnknown)
 	}
-	o := &simOrder{intent: in, outcome: out, status: domain.OrderStatus{
+	o := &simOrder{intent: in, outcome: out, accepted: b.now(), status: domain.OrderStatus{
 		RequestID: in.RequestID, OrderID: b.id(), State: domain.OrderPending, Instrument: in.Instrument,
 	}}
 	b.orders[in.RequestID], b.byID[o.status.OrderID] = o, o
 	switch out {
-	case SimFill, SimLostAnswer, SimLeverage2, SimWrongSettlement, SimNoStop:
+	case SimFill, SimLostAnswer, SimLeverage2, SimWrongSettlement, SimNoStop, SimFilledNoExecutions, SimRateLimitedProcessed:
 		b.fill(o, in.Amount, true)
 	case SimPartial:
 		b.fill(o, in.Amount/2, false)
 	case SimReject:
 		o.status.State, o.status.Final, o.status.Reason = domain.OrderRejected, true, "rejected (simulated)"
 	}
-	if out == SimLostAnswer {
+	switch out {
+	case SimLostAnswer:
 		return domain.OrderStatus{}, fmt.Errorf("simulated lost answer: %w", domain.ErrOutcomeUnknown)
+	case SimRateLimitedProcessed:
+		return domain.OrderStatus{}, &domain.NotAcceptedError{RateLimited: true, RetryAfter: SimRetryAfter, Reason: "too many requests (simulated, but processed)"}
 	}
 	return domain.OrderStatus{RequestID: in.RequestID, OrderID: o.status.OrderID, State: domain.OrderPending}, nil
 }
@@ -253,6 +299,10 @@ func (b *SimBroker) Lookup(ctx context.Context, requestID string) (domain.OrderS
 		return domain.OrderStatus{}, b.ReadErr
 	}
 	o, ok := b.orders[requestID]
+	if ok && b.now().Sub(o.accepted) < b.LookupLag {
+		b.LaggedLookups++
+		ok = false
+	}
 	if !ok {
 		return domain.OrderStatus{RequestID: requestID, State: domain.OrderUnknown}, fmt.Errorf("lookup %s: %w", requestID, domain.ErrNotFound)
 	}
@@ -260,7 +310,11 @@ func (b *SimBroker) Lookup(ctx context.Context, requestID string) (domain.OrderS
 	if o.outcome == SimPendingThenFill && o.status.State == domain.OrderPending && o.lookups > max(b.PendingLookups, 1) {
 		b.fill(o, o.intent.Amount, true)
 	}
-	return clone(o.status), nil
+	st := clone(o.status)
+	if o.outcome == SimFilledNoExecutions && o.lookups <= max(b.NoExecLookups, 1) {
+		st.Executions = nil
+	}
+	return st, nil
 }
 
 func clone(s domain.OrderStatus) domain.OrderStatus {
@@ -303,7 +357,7 @@ func (b *SimBroker) Close(ctx context.Context, positionID int64, instrument doma
 	if err := b.gate(ctx, "close"); err != nil {
 		return domain.OrderStatus{}, err
 	}
-	out := nextOutcome(&b.CloseScript)
+	out := b.nextOutcome(&b.CloseScript)
 	switch out {
 	case SimRateLimited:
 		return domain.OrderStatus{}, &domain.NotAcceptedError{RateLimited: true, RetryAfter: SimRetryAfter, Reason: "too many requests (simulated)"}
@@ -318,7 +372,19 @@ func (b *SimBroker) Close(ctx context.Context, positionID int64, instrument doma
 	}
 	p := b.Positions[i]
 	st := domain.OrderStatus{OrderID: b.id(), State: domain.OrderPending, Instrument: instrument}
-	if out != SimPending {
+	switch out {
+	case SimPending:
+	case SimPartialClose:
+		// Half closed, the rest stays open; eToro reports the close order partly filled and
+		// final (status 9/10).
+		half := domain.Position{Amount: p.Amount / 2, Units: p.Units / 2, UnrealisedPnL: p.UnrealisedPnL / 2}
+		b.Positions[i].Amount -= half.Amount
+		b.Positions[i].Units -= half.Units
+		b.Positions[i].UnrealisedPnL -= half.UnrealisedPnL
+		b.Cash += half.Amount + half.UnrealisedPnL
+		st.State, st.Final = domain.OrderPartial, true
+		st.Executions = []domain.PositionExecution{{PositionID: p.ID, Units: half.Units, Amount: half.Amount + half.UnrealisedPnL, CloseRate: p.OpenRate}}
+	default:
 		b.Positions = slices.Delete(b.Positions, i, i+1)
 		b.Cash += p.Amount + p.UnrealisedPnL
 		st.State, st.Final = domain.OrderFilled, true
@@ -349,7 +415,9 @@ func (b *SimBroker) CloseOrder(ctx context.Context, orderID int64) (domain.Order
 	return clone(st), nil
 }
 
-// Portfolio returns the cash, the positions and the money held by pending open orders.
+// Portfolio returns the cash, the positions and the money held by pending open orders, as
+// eToro would show them: with PortfolioLag, a fill younger than the lag is missing and the
+// cash it took is still shown as available.
 func (b *SimBroker) Portfolio(ctx context.Context) (domain.Portfolio, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -360,6 +428,30 @@ func (b *SimBroker) Portfolio(ctx context.Context) (domain.Portfolio, error) {
 	if err := firstErr(b.ReadErr, b.PortfolioErr); err != nil {
 		return domain.Portfolio{}, err
 	}
+	p := b.actual()
+	if b.PortfolioLag > 0 {
+		now := b.now()
+		p.Positions = slices.DeleteFunc(p.Positions, func(pos domain.Position) bool {
+			hidden := !pos.OpenedAt.IsZero() && now.Sub(pos.OpenedAt) < b.PortfolioLag
+			if hidden {
+				b.HiddenFills++
+				p.AvailableCash += pos.Amount
+			}
+			return hidden
+		})
+	}
+	return p, nil
+}
+
+// Actual returns the account as it really is (no PortfolioLag), for a test's invariants.
+func (b *SimBroker) Actual() domain.Portfolio {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.init()
+	return b.actual()
+}
+
+func (b *SimBroker) actual() domain.Portfolio {
 	p := domain.Portfolio{AvailableCash: b.Cash, Positions: slices.Clone(b.Positions), AsOf: b.now()}
 	for _, o := range b.orders {
 		if !o.status.Final {
@@ -370,7 +462,7 @@ func (b *SimBroker) Portfolio(ctx context.Context) (domain.Portfolio, error) {
 			p.PendingOpen += o.intent.Amount - filled
 		}
 	}
-	return p, nil
+	return p
 }
 
 func firstErr(errs ...error) error {

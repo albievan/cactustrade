@@ -320,13 +320,19 @@ func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskL
 	if !ok {
 		return ""
 	}
-	// (7) Our unfinished orders hold cash and block their instruments (D24).
-	orders, err := s.d.Store.Orders().ListOpen(ctx, a.ID)
+	// The steps before (bars, costs, the reviewer) may have taken a while: the decision is
+	// made at the time of the fresh figures (review M1), and the session is looked up again.
+	now = s.d.Clock.Now()
+	if sess, ok = s.sessionNow(in, now, it); !ok {
+		return ""
+	}
+	// (7) Our unfinished orders hold cash and block their instruments (D24), and so do fills
+	// the portfolio does not show yet (review B1).
+	res, err := s.reservations(ctx, a.ID, fresh, now)
 	if err != nil {
 		it.fail(StepReservations, "reading our orders failed: %v", err)
 		return ""
 	}
-	res := domain.Reservations(orders)
 	it.pass(StepReservations, fmt.Sprintf("$%s reserved by %d order(s)", res.Amount, res.Count))
 	// (8) The risk engine, on the fresh equity folded into today's risk state.
 	rs, err := s.observe(ctx, a, fresh, l, now)
@@ -395,6 +401,39 @@ func (s *Service) entrySession(in domain.Instrument, now time.Time, l domain.Ris
 	}
 	it.pass(StepSession, fmt.Sprintf("%s in session until %s", in.Market, closeAt.Format(time.RFC3339)))
 	return domain.MarketSession{Known: true, Trading: trading, Open: open, Close: closeAt}, true
+}
+
+// sessionNow looks the instrument's session up again at now (the entry window itself is
+// checked by domain.AssessEntry).
+func (s *Service) sessionNow(in domain.Instrument, now time.Time, it *InstrumentTrace) (domain.MarketSession, bool) {
+	open, closeAt, trading, err := s.d.Calendar.Session(in.Market, now)
+	if err != nil {
+		return domain.MarketSession{}, it.fail(StepRisk, "calendar: %v", err)
+	}
+	return domain.MarketSession{Known: true, Trading: trading, Open: open, Close: closeAt}, true
+}
+
+// recentOrders is how many of an account's latest orders are searched for fills the
+// portfolio may not show yet (far more than eToro's execution quota allows in
+// FillVisibleAfter).
+const recentOrders = 200
+
+// reservations is what the account's own orders hold back at now against the portfolio pf:
+// every unfinished open order, plus every fill pf does not show yet (review B1).
+func (s *Service) reservations(ctx context.Context, accountID string, pf domain.Portfolio, now time.Time) (domain.Reservation, error) {
+	open, err := s.d.Store.Orders().ListOpen(ctx, accountID)
+	if err != nil {
+		return domain.Reservation{}, err
+	}
+	recent, err := s.d.Store.Orders().List(ctx, accountID, recentOrders)
+	if err != nil {
+		return domain.Reservation{}, err
+	}
+	ours, err := s.d.Store.AgentPositions().ListOpen(ctx, accountID)
+	if err != nil {
+		return domain.Reservation{}, err
+	}
+	return domain.Reservations(open).WithUnseenFills(recent, ours, pf, now), nil
 }
 
 // signal runs step (3): the strategy's candidate, checked for shape.

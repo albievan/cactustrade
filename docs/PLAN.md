@@ -592,6 +592,57 @@ Guardrails touched (CLAUDE.md §2): §2.1 no new path (allowlist test unchanged)
 
 ## Phase 5 — LLM reviewer and decision log — `in_progress`
 
+### Phase 4 review fixes (2026-11-24) — `done`
+
+An independent review of the phase-4 money path found 2 blockers, 4 majors and 5 minors. Each
+fix has a test that failed before it (`internal/domain/review_test.go`,
+`internal/app/review_test.go`, `internal/ports/fakes/simbroker_risks_test.go`). Only
+domain/app/fakes code changed; no contract, migration, handler, web or dependency change.
+
+| ID | Finding | Fix | Test |
+|---|---|---|---|
+| B1 | A filled open order stopped reserving cash at once, though eToro's portfolio may not show the fill yet (U11): a second entry in the same tick was sized from cash that had not paid for the first. | `domain.Reservation.WithUnseenFills`: a filled open order (or one cancelled after a partial fill) keeps its full amount reserved, its instrument in flight and a place under the position cap until a portfolio read from no earlier than the fill shows every position it opened, or `domain.FillVisibleAfter` (2 min, the reconcile window) has passed. The agent uses it at step 7 (`app.reservations`: open orders + the 200 latest orders + agent positions). Double counting is the accepted direction. | `TestUnseenFills`, `TestAgentTickReservesUnseenFills`; 4.12 now checks every open against the *actual* account (`SimBroker.Actual`) with a random `PortfolioLag` (a planted removal of the fix fails the budget, short and position-cap invariants). |
+| B2 | When recording an agent position failed, the order still became `filled` (final): our position was treated as foreign for ever and never flattened. | `recordFills` returns `errFillsNotRecorded`; the order is not moved on and the next lookup (executor poll, supervisor, reconcile) retries. A lookup reporting filled/partial without `positionExecutions` counts as pending. Reconciliation adopts an unrecorded position (`domain.AdoptUnrecorded`, event `position.adopted`) when one of our open orders that is filled, cancelled or abandoned explains it: same instrument and direction, sent within 24 h, sent no later than the position opened, the order's stored position id when it has one, and the adopted positions add up to at most the order's amount + 1 %. Each position goes to the latest such order. This also covers an order abandoned after two minutes of 404s that eToro holds (U2). | `TestAdoptUnrecorded`, `TestExecutorRecordFailureKeepsTheOrderOpen`, `TestExecutorFilledWithoutExecutions`, `TestReconcileAdoptsUnrecordedFills` (the owner's own positions — opened before the send, or the other direction — are not adopted). |
+| M1 | `consider` read the clock once; after a slow reviewer (> 1 s) `AssessEntry` refused every entry as stale. | The clock is read again right after the fresh portfolio and quote; that time is used for the session (looked up again), the observed risk state, the reservations and `RiskInput.Now`. | `TestAgentTickSlowReviewer` (+3 s review still enters), `TestAgentTickSlowReviewerStaleQuote` (a quote older than `MaxQuoteAge` after the slow call is refused). |
+| M2 | A close that eToro ends partly filled and final (status 9/10) was recorded as fully closed. | `applyCloseStatus` re-reads the portfolio: position gone → `filled` and closed; still there (or unknown) → the close order becomes `cancelled` ("partly closed; the rest … is closed again", event `order.partial_close`) and the position stays ours and open. `closePosition` sends a new close at once when a close in flight turns out final without closing the position. | `TestExecutorPartialCloseKeepsThePositionOpen`, `TestSupervisePartialCloseClosesTheRest`. |
+| M3 | After a 429 the open was resent; if eToro processed it anyway (U7) and does not dedupe the id (U1), the order doubles. | **Decision review-M3: open resend disabled until U1/U7 are verified (stricter than the OD2 default).** `MaxSends(open) = 1` (close 5, cancel 3 unchanged). After a 429 the executor waits Retry-After, then looks the order up: found → followed/adopted; 404 → the normal poll schedule (offsets already past are skipped, the 120 s one always runs) and `abandoned` after 2 min. The order stays `sent` and reserved until final (and B1 applies after a fill). | `TestOpenSendLimit`, `TestExecutorNeverResendsAnOpen` (lookup only after Retry-After, reservation held while in flight), executor table rows updated; 4.12 invariant "opens are never resent". |
+| M4 | The simulator could not play eToro's unverified behaviours. | `fakes.SimBroker`: `LookupLag` (404 for a while after acceptance, U2), `PortfolioLag` (young fills missing from `Portfolio`, their cash still shown, U11; `Actual()` gives the real account), `SimFilledNoExecutions` (+`NoExecLookups`), `SimRateLimitedProcessed` (a 429 that was processed, U7), `SimPartialClose` (status 9/10, half closed), `DuplicateFills` (a repeated request id fills again silently, U1; still a violation). Counters: `Outcomes`, `LaggedLookups`, `HiddenFills`, `Duplicates`. | `TestSimBroker{LookupLag,PortfolioLag,FilledWithoutExecutions,RateLimitedButProcessed,PartialClose,DuplicateFills}`; 4.12 arms all of them and fails if any was never exercised (`propStats.unexercised`). |
+| m1 | `allowance × entry / stop distance` could overflow int64. | `AssessEntry` uses the existing saturating `mulDiv` (`math/bits`). | `TestAssessEntryHugeValues` (5 000 random huge inputs checked with `math/big`), `TestMulDivSaturates`. |
+| m2 | `SetRiskLimits` read an unreadable agent state as "stopped". | `limitsChangeable` reads the setting directly: only "never stored" counts as stopped; any other error refuses (`ErrUnavailable`); a latched kill refuses too. | `TestSetRiskLimitsUnreadableAgentState`. |
+| m3 | If both kill writes failed, the agent could re-enter after the database recovered. | In-memory kill latch per account in `runtimeState`, set by `tripLocked` before it persists; `isKilled` (and so `agentGate`, `startable`, `placeEntry`, the supervisor) checks it; only `ResetKill` clears it. | `TestKillLatchWhenTheWritesFail`. |
+| m4 | State writes after a Kill cancelled the context ran on a cancelled context, losing eToro's answer. | `sendOpen` stores every outcome after the request left with `context.WithoutCancel(ctx)`. | `TestSendOpenStoresTheAnswerAfterACancel` (pending and lost-answer cases, with a store that fails on a cancelled context like a driver). |
+| m5 | `SetRiskLimits` read eToro's portfolio while holding the control lock, delaying a Kill. | Equity is read before the lock; the state is checked again inside it (a Kill in between makes the change fail with 409). PLAN 4.11-a's note that a Kill may wait for that read no longer applies. | `TestSetRiskLimitsDoesNotDelayAKill`. |
+
+Decisions made while fixing (recorded here):
+
+- **review-a Absence proves a close only for a position old enough** (found by the M4 simulator,
+  seed 240): after a lost close answer the executor re-reads the portfolio, and a fill younger
+  than `FillVisibleAfter` may simply not show yet (U11). `positionOpen` now reports "unknown"
+  for a missing position recorded less than 2 min before the read, and reconciliation's
+  `settleClose` treats such a close as still in flight. The close is then resolved by the
+  existing path (unknown → abandoned after 2 min → a new close). Cost: a lost close answer on a
+  position younger than 2 min is resolved up to 2 min later. Test:
+  `TestExecutorLostCloseAnswerWhileTheFillIsHidden`, plus a young-position row in
+  `TestExecutorCloseEdges`; two older tests now age their positions past the window first.
+- **review-b A pending open is cancelled only when eToro itself reports it pending or partly
+  filled** (never when it reports a fill whose executions are not listed yet).
+- **review-c An accepted (pending) order whose lookups answer 404 is not abandoned** (pending →
+  abandoned is illegal, unchanged): it stays reserved and the supervisor follows it. The U2
+  adoption case is therefore an order whose answer was lost (unknown → abandoned).
+- **review-d Adoption is not part of the 4.12 scenarios**: their lookup lag stays below
+  `lookupGiveUp` (1–20 s), because an adopted position would legitimately be "not recorded as
+  ours" until the next reconciliation. Adoption is covered by the unit tests above.
+- **review-e 4.12 runs extra supervisor passes** (10 s apart, at most 5) when a pass met a
+  partial close, as the 10-second supervisor loop does in production, before the flatten
+  invariant is checked. The 4.12 list of invariants now reads "opens are never resent"
+  instead of "resent only after a 429, with the same id".
+
+Verification: `make check` green in the worktree (gofumpt, golangci-lint 0 issues, vet,
+`go test -race` with coverage domain 100.0 % / app 87.7 %, MariaDB `test-int`, govulncheck, contract drift,
+`pnpm -C web check`).
+
+## Phase 5 — LLM reviewer and decision log — `todo`
+
 | ID | Step | Files | Acceptance | Status |
 |---|---|---|---|---|
 | 5.1 | Reviewer port and providers: no tools, strict JSON, timeout = reject, invalid JSON = reject, multiplier clamped (R6, R15, R16; bp conversion in 4.2) | `internal/adapters/llm`, `internal/domain/llm.go` | `TestParseVerdict`, `TestOpenAIEmptyAndTimeout`, `TestAnthropic`, `TestClampVerdict` | done |
