@@ -1,0 +1,24 @@
+{
+  "code": 0,
+  "message": "success",
+  "timestamp": 1795467000000,
+  "data": {
+    "accountId": "21234567",
+    "updateTimestamp": 1795466990000,
+    "segments": [
+      {
+        "capability": "MARGIN",
+        "category": "S",
+        "currency": "USD",
+        "cashBalance": 5234.5,
+        "cashAvailableForTrade": 5234.5,
+        "grossPositionValue": 10197.6,
+        "netLiquidation": 15432.1,
+        "unrealizedPL": 312.4,
+        "realizedPL": -12.25,
+        "currencyAssets": [{ "currency": "USD", "cashBalance": 5234.5, "cashAvailableForTrade": 5234.5, "forexRate": 1 }]
+      },
+      { "category": "C", "currency": "USD", "cashBalance": 0, "netLiquidation": 0 }
+    ]
+  }
+}

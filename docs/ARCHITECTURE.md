@@ -40,7 +40,8 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `MarketData` | `etoro.Feed` (WebSocket stream, REST fallback) |
 | `Broker` | `etoro.Client`: reads, plus open / close / cancel for **demo accounts only** (phase 4.6); `fakes.SimBroker` simulates a demo account for executor tests |
 | `Orders`, `AgentPositions`, `RiskStates`, `InstrumentBlocks`, `AgentLeases` (repository) | `sqlstore` (migration 00009): our orders keyed by `x-request-id`, the positions cactusTrade opened, the risk state per account (versioned), blocked instruments, the single-writer lease (D22) |
-| `Holdings` | read-only holdings of platforms cactusTrade shows but does not trade: `trading212.Client` (GET account summary and positions only; own allowlist and allowlist test). eToro holdings are built in the app from `Broker.Portfolio` + instrument names |
+| `Holdings` | read-only holdings of platforms cactusTrade shows but does not trade: `trading212.Client` (GET account summary and positions only), `saxo.Client` (GET `/port/v1/balances/me`, `/port/v1/positions/me`), `tiger.Client` (signed POST of `prime_assets` / `assets` / `positions` only) — each with its own allowlist and allowlist test. eToro holdings are built in the app from `Broker.Portfolio` + instrument names |
+| `OAuthConnector` | browser sign-in of a view-only platform: `saxo.Client` (authorize URL; code exchange and refresh token rotation at the sign-in host's `/token`, the client's only POST) |
 | `EquitySnapshots` (repository) | `sqlstore` (`equity_snapshots`, migration 00008): equity every 15 minutes per account, kept 400 days |
 | `SignalModel` | phase 3 |
 | `Reviewer` | `adapters/llm` (Anthropic SDK; OpenAI-compatible for the others); profiles in settings, keys `llm.<id>.api_key` |
@@ -82,14 +83,30 @@ keys (market data is the same for all).
 
 ## Platforms
 
-An account has a `platform`: `etoro` (default) or `trading212`. Only eToro accounts are traded.
-`app.account(...)` — the one resolver every trading, agent, scanner, watchlist, themes and risk
-use case goes through — refuses any other platform with `domain.ErrViewOnly` (403 "View-only
-account"), and a Trading 212 account can never be the "current" account. Managing an account
-(keys, sharing, rename, delete) and the *Overview* (`app.Overview`, `app.EquityHistory`) work on
-every platform. As defence in depth the eToro client and price stream refuse a non-eToro account
-before any I/O, so a Trading 212 key can never reach eToro. Trading 212 keys are named
-`t212.<id>.api_key` / `t212.<id>.api_secret` (HTTP Basic user and password).
+An account has a `platform`: `etoro` (default), `trading212`, `saxo` or `tiger`. Only eToro
+accounts are traded (`Account.Tradable()`). `app.account(...)` — the one resolver every
+trading, agent, scanner, watchlist, themes and risk use case goes through — refuses any other
+platform with `domain.ErrViewOnly` (403 "View-only account"), and a view-only account can never
+be the "current" account. Managing an account (keys, sharing, rename, delete) and the
+*Overview* (`app.Overview`, `app.EquityHistory`) work on every platform. As defence in depth the
+eToro client and price stream refuse a non-eToro account before any I/O, and each view-only
+client refuses an account of any other platform, so no key ever reaches another broker.
+
+Credentials are per platform (`domain.PlatformCredentials`: key, label, help, multi-line,
+optional, set-by-sign-in) and stored write-only under `<prefix>.<account id>.<key>`:
+`etoro.*.api_key|user_key` (or `ETORO_DEMO_PUB` / `_PK` for the environment account),
+`t212.*.api_key|api_secret`, `saxo.*.app_key|app_secret|refresh_token|dev_token`,
+`tiger.*.tiger_id|account|private_key|license`. `GET /api/v1/platforms` gives the UI the specs;
+`PUT /accounts/{id}/keys` takes `values` by key (the older `apiKey`/`userKey` set the first two).
+Saxo's refresh token is set only by its sign-in: `GET /accounts/{id}/saxo/connect` issues a
+random state (hashed, in memory, single-use, 10 minutes, bound to user and account) and the
+public callback `/api/v1/oauth/saxo/callback` exchanges the code, then redirects to
+`/accounts`. Saxo rotates the refresh token on every refresh: the client stores the new one
+before it uses the new access token, refreshes early (5 min before the access token, 20 min
+before the refresh token expires), serialises refreshes per account, and remembers a refused
+token (no retries) until the owner connects again (`domain.ErrReconnect` → "Reconnect to
+Saxo"). Amounts are minor units of the account currency per `domain.CurrencyDecimals` (JPY,
+KRW: 0 decimals; others 2); a position without an account-currency value is `Unknown`.
 
 ## Two databases
 

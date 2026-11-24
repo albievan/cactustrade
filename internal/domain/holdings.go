@@ -9,8 +9,9 @@ import (
 
 // Holdings is an account's cash and open positions as its platform reports them. It is
 // read-only: nothing here is ever used to size or place an order. Every Cents field holds
-// minor units (hundredths) of Currency, which is the account's own currency: USD for eToro,
-// often GBP or EUR for Trading 212. Amounts in different currencies are never added up.
+// minor units of Currency (CurrencyDecimals: hundredths, or whole yen for JPY), which is the
+// account's own currency: USD for eToro, often GBP, EUR, AUD or another for the view-only
+// platforms. Amounts in different currencies are never added up.
 type Holdings struct {
 	Platform      Platform
 	Currency      string // ISO 4217 code of the account currency
@@ -38,6 +39,11 @@ type Holding struct {
 	OpenedAt     time.Time
 	Long         bool
 	CFD          bool
+	// Unknown: the platform did not report this position's value and P&L in the account
+	// currency (or not in a field cactusTrade could verify), so Value, Cost and PnL are 0 and
+	// shown as unknown — never a guessed number. Such a position is left out of Invested and
+	// UnrealisedPnL.
+	Unknown bool
 }
 
 // EquitySnapshot is an account's cash and equity at one moment, recorded every 15 minutes

@@ -21,6 +21,10 @@ type SystemStatus struct {
 	Account    *domain.AccountView // the caller's current account; nil when there is none
 }
 
+// Now is the service's clock, for adapters that must measure against the same time the use
+// cases do (the session cookie's lifetime).
+func (s *Service) Now() time.Time { return s.d.Clock.Now() }
+
 // accountMode is the mode an account trades in: real only when the account says so (an
 // unknown value is demo: never real by accident).
 func accountMode(a domain.Account) domain.TradingMode {

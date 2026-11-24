@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, request, setCsrf } from "./api";
+import { api, ApiError, currencyDecimals, money, request, setCsrf, viewOnly } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -26,6 +26,25 @@ describe("api client", () => {
     await request("GET", "/api/v1/users");
     const getHeaders = vi.mocked(globalThis.fetch).mock.calls.at(-1)![1]!.headers as Record<string, string>;
     expect(getHeaders["X-CSRF-Token"]).toBeUndefined();
+  });
+
+  it("formats minor units per currency (JPY and KRW have no decimals)", () => {
+    expect(money(123456, "GBP")).toBe("£1,234.56");
+    expect(money(150000, "JPY")).toBe("JP¥150,000");
+    expect(money(5000, "KRW")).toBe("₩5,000");
+    expect(money(-12, "AUD")).toBe("-A$0.12");
+    expect(money(undefined, "USD")).toBe("—");
+    expect(money(150, "XX")).toBe("1.50 XX");
+    expect(currencyDecimals(" jpy ")).toBe(0);
+    expect(viewOnly("etoro")).toBe(false);
+    expect(viewOnly("saxo") && viewOnly("tiger") && viewOnly("trading212")).toBe(true);
+  });
+
+  it("sends credentials by key", async () => {
+    const f = mockFetch(204);
+    await api.setAccountCredentials("a1", { tiger_id: "x" });
+    expect(f.mock.calls[0][0]).toBe("/api/v1/accounts/a1/keys");
+    expect(JSON.parse(String(f.mock.calls[0][1]!.body))).toEqual({ values: { tiger_id: "x" } });
   });
 
   it("turns problem+json into ApiError", async () => {

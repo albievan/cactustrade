@@ -9,22 +9,43 @@ import (
 // Platform is the broker an account lives on.
 type Platform string
 
-// Platforms. eToro is the default and the only one cactusTrade trades; Trading 212 accounts
-// are view-only (owner's decision 2026-11-23: read-only now, trading later).
+// Platforms. eToro is the default and the only one cactusTrade trades. Trading 212, Saxo and
+// Tiger Brokers accounts are view-only (owner's decisions 2026-11-23: Trading 212 read-only
+// now, trading later; "Saxo and Tiger, view-only").
 const (
 	PlatformEtoro      Platform = "etoro"
 	PlatformTrading212 Platform = "trading212"
+	PlatformSaxo       Platform = "saxo"
+	PlatformTiger      Platform = "tiger"
 )
+
+// Platforms lists every platform, eToro first. Do not modify.
+var Platforms = []Platform{PlatformEtoro, PlatformTrading212, PlatformSaxo, PlatformTiger}
 
 // ParsePlatform validates a platform name; "" is eToro.
 func ParsePlatform(s string) (Platform, error) {
-	switch Platform(s) {
-	case "", PlatformEtoro:
+	if s == "" {
 		return PlatformEtoro, nil
-	case PlatformTrading212:
-		return PlatformTrading212, nil
 	}
-	return "", Invalid("platform", "etoro or trading212")
+	for _, p := range Platforms {
+		if string(p) == s {
+			return p, nil
+		}
+	}
+	return "", Invalid("platform", "etoro, trading212, saxo or tiger")
+}
+
+// Label names the platform for people.
+func (p Platform) Label() string {
+	switch p {
+	case PlatformTrading212:
+		return "Trading 212"
+	case PlatformSaxo:
+		return "Saxo"
+	case PlatformTiger:
+		return "Tiger Brokers"
+	}
+	return "eToro"
 }
 
 // Account is one broker account (one key pair, demo or real) that a user owns and may share
@@ -102,17 +123,15 @@ type AccountShare struct {
 	CreatedAt time.Time
 }
 
-// AccountKeyNames are the credential names of an account's key pair: for eToro the API key
-// (x-api-key) and the user key (x-user-key); for Trading 212 the API key and the API secret
-// (HTTP Basic user and password).
+// AccountKeyNames are the credential names of an account's first two credentials: for eToro
+// the API key (x-api-key) and the user key (x-user-key); for Trading 212 the API key and the
+// API secret (HTTP Basic user and password). Saxo and Tiger accounts have more credentials:
+// see PlatformCredentials and AccountCredentialName.
 func AccountKeyNames(a Account) (apiKey, userKey CredentialName) {
-	if a.OnPlatform() == PlatformTrading212 {
-		return CredentialName("t212." + a.ID + ".api_key"), CredentialName("t212." + a.ID + ".api_secret")
-	}
-	if a.EnvKeys {
-		return CredEtoroDemoAPIKey, CredEtoroDemoUserKey
-	}
-	return CredentialName("etoro." + a.ID + ".api_key"), CredentialName("etoro." + a.ID + ".user_key")
+	specs := PlatformCredentials(a.OnPlatform())
+	k, _ := AccountCredentialName(a, specs[0].Key)
+	u, _ := AccountCredentialName(a, specs[1].Key)
+	return k, u
 }
 
 // ValidateAccountName checks a display name: 1–60 characters, no control characters.

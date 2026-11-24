@@ -114,6 +114,38 @@ To create a read-only key:
 The overview reads every account when you open it; equity snapshots are recorded every 15
 minutes and kept 400 days. See `docs/trading212-api.md` for the verified API facts.
 
+## Saxo and Tiger Brokers accounts (view-only)
+
+Like Trading 212, Saxo and Tiger Brokers accounts are **shown, never traded**: they appear on
+the *Overview* page (cash, total value, open positions, equity chart) and every trading,
+agent, scanner, watchlist and theme path refuses them. Each client has its own allowlist and
+a test that fails the build on anything else: Saxo may only GET `/port/v1/balances/me` and
+`/port/v1/positions/me` (plus the sign-in host's `/token`); Tiger may only call the
+`prime_assets`, `assets` and `positions` methods. Amounts stay in the account's own currency
+(JPY and KRW in whole units). A position whose value the platform does not report in the
+account currency is shown as *unknown*, never converted or guessed.
+
+**Saxo** (`docs/saxo-api.md`):
+
+1. On developer.saxo create a **Code Flow** app: a SIM app for a demo account, a Live app for a
+   real one (Live apps need Saxo's approval).
+2. Set `CACTUSTRADE_PUBLIC_URL` and register the redirect address shown on the account card:
+   `<CACTUSTRADE_PUBLIC_URL>/api/v1/oauth/saxo/callback`.
+3. **Trading Platform Accounts → New account**, platform *Saxo*: paste the **app key** and
+   **app secret**, then press **Connect to Saxo** and sign in at Saxo. The refresh token is
+   stored encrypted and renewed automatically (every 15-minute snapshot keeps it alive); if it
+   lapses, the account says *Reconnect to Saxo*.
+4. Alternatively, for a SIM account only: paste a **24-hour developer token** (it stops working
+   after 24 hours; the card shows its age).
+
+**Tiger Brokers** (`docs/tiger-api.md`):
+
+1. In the Tiger developer console (Open API) note your **tiger_id** and **account number**.
+2. Generate an RSA key pair, upload the **public** key in the console.
+3. **Trading Platform Accounts → New account**, platform *Tiger Brokers*: paste the Tiger ID,
+   the account number and the **private key** (PEM, multi-line; write-only). A paper account
+   number for a demo account. Tiger paper accounts have no Australian market.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -131,7 +163,7 @@ minutes and kept 400 days. See `docs/trading212-api.md` for the verified API fac
 | `CACTUSTRADE_TRUSTED_PROXIES` | — | CIDRs allowed to set `X-Forwarded-For` |
 | `CACTUSTRADE_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (JSON logs) |
 | `ETORO_DEMO_PUB` / `ETORO_DEMO_PK` (`_FILE`) | — | eToro demo key pair |
-| `CACTUSTRADE_PUBLIC_URL` | Docker: `https://<LAN address>:${HTTPS_PORT}` | The address in e-mailed links; empty = no password reset by e-mail |
+| `CACTUSTRADE_PUBLIC_URL` | Docker: `https://<LAN address>:${HTTPS_PORT}` | The address in e-mailed links and Saxo's sign-in redirect; empty = no password reset by e-mail and no "Connect to Saxo" |
 | `CACTUSTRADE_SMTP_HOST`, `_PORT`, `_TLS`, `_USER`, `_FROM` | Docker: `mailpit`, `1025`, `none` | The fallback mail server, used while none is switched on under *Setup → E-mail*; empty host = none |
 | `CACTUSTRADE_SMTP_PASSWORD` / `_FILE` | `${SECRETS_DIR}/smtp_password` | Its password (never in `.env`) |
 | `COMPOSE_PROFILES`, `MAILPIT_PORT` | `mailpit`, `8035` | Docker: the Mailpit test mailbox at `http://localhost:8035` (this machine only, no sign-in) |

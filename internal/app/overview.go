@@ -13,12 +13,14 @@ import (
 )
 
 // AccountHoldings is one account in the overview: its holdings, or why they could not be
-// read (Error; NoKeys when its key pair is not set yet).
+// read (Error; NoKeys when its keys are not set yet; Reconnect when the platform's sign-in
+// has lapsed and the owner must connect again).
 type AccountHoldings struct {
-	Account  domain.AccountView
-	Holdings *domain.Holdings
-	Error    string
-	NoKeys   bool
+	Account   domain.AccountView
+	Holdings  *domain.Holdings
+	Error     string
+	NoKeys    bool
+	Reconnect bool
 }
 
 // Overview is every account the caller can view, across platforms, with totals per
@@ -110,7 +112,8 @@ func readableError(err error) string {
 	var keep []string
 	for _, seg := range strings.Split(err.Error(), ": ") {
 		switch {
-		case seg == domain.ErrUnavailable.Error(), seg == domain.ErrNotFound.Error(), seg == domain.ErrCredentialsMissing.Error():
+		case seg == domain.ErrUnavailable.Error(), seg == domain.ErrNotFound.Error(), seg == domain.ErrCredentialsMissing.Error(),
+			seg == domain.ErrReconnect.Error():
 		case strings.Contains(seg, ".") && !strings.Contains(seg, " "):
 		default:
 			keep = append(keep, seg)
@@ -142,6 +145,8 @@ func (s *Service) Overview(ctx context.Context, p Principal) (Overview, error) {
 				ah.Holdings = &h
 			case errors.Is(err, domain.ErrCredentialsMissing):
 				ah.NoKeys, ah.Error = true, "no keys yet"
+			case errors.Is(err, domain.ErrReconnect):
+				ah.Reconnect, ah.Error = true, "Reconnect to "+platformLabel(v.OnPlatform())+": "+readableError(err)
 			default:
 				s.d.Log.WarnContext(ctx, "overview: reading an account failed", "account", v.ID, "platform", string(v.OnPlatform()), "err", err)
 				ah.Error = readableError(err)

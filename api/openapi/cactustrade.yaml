@@ -515,10 +515,14 @@ paths:
     put:
       tags: [accounts]
       operationId: setAccountKeys
-      summary: Store the account's key pair, write-only (owner, web UI); an empty value keeps the stored one
+      summary: Store the account's credentials, write-only (owner, web UI); an empty value keeps the stored one
       description: |
-        eToro: `apiKey` is the Public API Key (x-api-key), `userKey` the User Key (x-user-key).
-        Trading 212: `apiKey` is the API key, `userKey` the API secret.
+        `values` sets any credential by its key (see `GET /api/v1/platforms` for each platform's
+        keys); a key the platform does not have, or one only its sign-in sets (Saxo's
+        `refresh_token`), is refused and nothing is stored.
+        The older fields set the platform's first two credentials. eToro: `apiKey` is the Public
+        API Key (x-api-key), `userKey` the User Key (x-user-key). Trading 212: API key and API
+        secret. Saxo: app key and app secret. Tiger: Tiger ID and account number.
       requestBody:
         required: true
         content:
@@ -594,14 +598,73 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/saxo/connect:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    get:
+      tags: [accounts]
+      operationId: connectSaxoAccount
+      summary: Start connecting a Saxo account — returns Saxo's sign-in address (owner, web UI)
+      description: |
+        Issues a random, single-use `state` (kept only as a hash, valid 10 minutes, bound to you
+        and the account) and returns Saxo's authorize address (SIM for a demo account, LIVE for
+        a real one) with the account's app key. Needs `CACTUSTRADE_PUBLIC_URL`: the redirect
+        address to register in the Saxo developer portal is that URL followed by
+        `/api/v1/oauth/saxo/callback`. Nothing is sent to Saxo until the browser goes there.
+      responses:
+        "200":
+          description: Where to send the browser
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectStart" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/oauth/saxo/callback:
+    get:
+      tags: [accounts]
+      operationId: saxoCallback
+      summary: Saxo sends the browser back here after sign-in (public; redirects to /accounts)
+      description: |
+        Checks the `state` (ours, unused, under 10 minutes old, for an account its user still
+        owns; it is used up whatever happens), exchanges the `code` for tokens and stores the
+        refresh token encrypted. Always answers with a redirect to `/accounts`: with
+        `?connected=<accountId>` on success, else `?connect_error=expired|refused|failed`.
+      security: []
+      parameters:
+        - { name: code, in: query, required: false, schema: { type: string, maxLength: 2048 } }
+        - { name: state, in: query, required: false, schema: { type: string, maxLength: 512 } }
+        - { name: error, in: query, required: false, schema: { type: string, maxLength: 256 } }
+      responses:
+        "303":
+          description: Back to the accounts page
+          headers:
+            Location: { schema: { type: string } }
+  /api/v1/platforms:
+    get:
+      tags: [accounts]
+      operationId: listPlatforms
+      summary: The platforms an account can be on and the credentials each needs (never values)
+      responses:
+        "200":
+          description: Platforms, eToro first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PlatformInfo" }
+        "401": { $ref: "#/components/responses/Problem" }
   /api/v1/overview:
     get:
       tags: [overview]
       operationId: getOverview
       summary: Every account you can view, on every platform — cash, equity, positions (viewer)
       description: |
-        Reads each account now (eToro and Trading 212). An account that cannot be read carries
-        its `error` (and `noKeys` when its keys are not set yet) instead of failing the call.
+        Reads each account now (eToro, and the view-only Trading 212, Saxo and Tiger Brokers).
+        An account that cannot be read carries its `error` (`noKeys` when its keys are not set
+        yet, `reconnect` when its platform sign-in has lapsed) instead of failing the call.
         Totals are per currency: amounts in different currencies are never added up.
       responses:
         "200":
@@ -1536,8 +1599,44 @@ components:
         latencyMs: { type: integer, format: int64 }
     Platform:
       type: string
-      enum: [etoro, trading212]
-      description: eToro (traded) or Trading 212 (view-only for now)
+      enum: [etoro, trading212, saxo, tiger]
+      description: eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+    CredentialSpec:
+      type: object
+      required: [key, label, help, multiline, optional, setByFlow]
+      description: One credential of a platform account (never its value)
+      properties:
+        key: { type: string, description: "the name used in SetAccountKeysRequest.values" }
+        label: { type: string }
+        help: { type: string }
+        multiline: { type: boolean, description: a PEM key; line breaks are kept }
+        optional: { type: boolean }
+        setByFlow: { type: boolean, description: "set by the platform's sign-in (Saxo's Connect), not typed in" }
+    PlatformInfo:
+      type: object
+      required: [platform, label, viewOnly, connectable, credentials]
+      properties:
+        platform: { $ref: "#/components/schemas/Platform" }
+        label: { type: string }
+        viewOnly: { type: boolean, description: cactusTrade shows the platform's accounts but never trades them }
+        connectable: { type: boolean, description: the platform signs in through the browser (Saxo) }
+        credentials:
+          type: array
+          items: { $ref: "#/components/schemas/CredentialSpec" }
+    AccountCredential:
+      allOf:
+        - $ref: "#/components/schemas/CredentialSpec"
+        - type: object
+          required: [set]
+          properties:
+            set: { type: boolean }
+            updatedAt: { type: string, format: date-time, description: when it was last stored (absent when unknown) }
+    ConnectStart:
+      type: object
+      required: [authorizeUrl, redirectUri]
+      properties:
+        authorizeUrl: { type: string, description: "Saxo's sign-in page; open it in this browser" }
+        redirectUri: { type: string, description: the address registered for the app in the Saxo developer portal }
     Account:
       type: object
       required: [id, name, ownerId, ownerName, mode, platform, envKeys, access, createdAt]
@@ -1570,25 +1669,38 @@ components:
         accountId: { type: string, maxLength: 64 }
     AccountKeys:
       type: object
-      required: [apiKeySet, userKeySet, fromEnvironment]
+      required: [apiKeySet, userKeySet, fromEnvironment, complete, credentials, connectable]
       properties:
-        apiKeySet: { type: boolean }
-        userKeySet: { type: boolean }
+        apiKeySet: { type: boolean, description: the platform's first credential is set }
+        userKeySet: { type: boolean, description: the platform's second credential is set }
         fromEnvironment: { type: boolean }
+        complete: { type: boolean, description: enough is set to read the account }
+        credentials:
+          type: array
+          items: { $ref: "#/components/schemas/AccountCredential" }
+        connectable: { type: boolean, description: the platform signs in through the browser (Saxo) }
+        connectRedirectUri: { type: string, description: "the redirect address to register with the platform (absent without CACTUSTRADE_PUBLIC_URL)" }
     SetAccountKeysRequest:
       type: object
-      required: [apiKey, userKey]
       properties:
-        apiKey: { type: string, maxLength: 4096, description: "eToro Public API Key (x-api-key) or Trading 212 API key; empty = keep" }
-        userKey: { type: string, maxLength: 4096, description: "eToro User Key (x-user-key) or Trading 212 API secret; empty = keep" }
+        apiKey: { type: string, maxLength: 4096, description: "the platform's first credential (eToro Public API Key…); empty = keep" }
+        userKey: { type: string, maxLength: 4096, description: "the platform's second credential (eToro User Key…); empty = keep" }
+        values:
+          type: object
+          maxProperties: 8
+          additionalProperties: { type: string, maxLength: 4096 }
+          description: "credentials by key (CredentialSpec.key); empty = keep"
     MinorUnits:
       type: integer
       format: int64
-      description: An amount in hundredths of the currency given next to it (USD cents, GBP pence…)
+      description: |
+        An amount in minor units of the currency given next to it: hundredths for most (USD
+        cents, GBP pence…), whole units for JPY and KRW.
     Holding:
       type: object
-      required: [symbol, name, currency, quantity, avgPrice, currentPrice, value, cost, pnl, long, cfd]
+      required: [symbol, name, currency, quantity, avgPrice, currentPrice, value, cost, pnl, long, cfd, unknown]
       properties:
+        unknown: { type: boolean, description: "the platform did not report value and P&L in the account currency: value, cost and pnl are 0 and mean unknown" }
         symbol: { type: string }
         name: { type: string }
         currency: { type: string, description: "the instrument's price currency (\"\" when unknown)" }
@@ -1625,6 +1737,7 @@ components:
         holdings: { $ref: "#/components/schemas/Holdings" }
         error: { type: string, description: why the account could not be read }
         noKeys: { type: boolean, description: the account's keys are not set yet }
+        reconnect: { type: boolean, description: "the platform's sign-in has lapsed (Saxo): the owner connects again" }
     CurrencyTotal:
       type: object
       required: [currency, accounts, cash, equity, unrealisedPnl]

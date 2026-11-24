@@ -1,0 +1,13 @@
+{
+  "code": 0,
+  "message": "success",
+  "timestamp": 1795467000000,
+  "data": {
+    "items": [
+      { "account": "21234567", "symbol": "AAPL", "secType": "STK", "market": "US", "currency": "USD", "name": "Apple Inc", "positionQty": 20, "averageCost": 180.5, "latestPrice": 190.12, "marketValue": 3802.4, "unrealizedPnl": 192.4, "realizedPnl": 0 },
+      { "account": "21234567", "symbol": "00700", "secType": "STK", "market": "HK", "currency": "HKD", "name": "Tencent", "positionQty": 100, "averageCost": 300, "latestPrice": 310, "marketValue": 31000, "unrealizedPnl": 1000 },
+      { "account": "21234567", "symbol": "TSLA", "secType": "STK", "market": "US", "currency": "USD", "positionQty": -3, "averageCost": 250, "latestPrice": 240, "marketValue": -720, "unrealizedPnl": 30 },
+      { "account": "21234567", "symbol": "SPY", "secType": "STK", "market": "US", "currency": "USD", "position": 150, "positionScale": 1, "averageCost": 6.6, "latestPrice": 6.67, "marketValue": 100, "unrealizedPnl": 1 }
+    ]
+  }
+}

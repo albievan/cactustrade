@@ -206,3 +206,37 @@ func (h *Holdings) Holdings(ctx context.Context) (domain.Holdings, error) {
 	}
 	return x, nil
 }
+
+// OAuthConnector is a fake browser sign-in. AuthorizeURL answers
+// "https://auth.example/authorize?redirect_uri=…&state=…"; Exchange records the code and
+// fails with Err when set.
+type OAuthConnector struct {
+	mu        sync.Mutex
+	Err       error
+	Exchanged []string // "accountID:code:redirectURI"
+}
+
+var _ ports.OAuthConnector = (*OAuthConnector)(nil)
+
+// AuthorizeURL returns a fixed address carrying state.
+func (o *OAuthConnector) AuthorizeURL(ctx context.Context, redirectURI, state string) (string, error) {
+	if _, ok := ports.AccountFrom(ctx); !ok {
+		return "", domain.ErrUnavailable
+	}
+	return "https://auth.example/authorize?redirect_uri=" + redirectURI + "&state=" + state, nil
+}
+
+// Exchange records the code for the account in ctx.
+func (o *OAuthConnector) Exchange(ctx context.Context, code, redirectURI string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	a, ok := ports.AccountFrom(ctx)
+	if !ok {
+		return domain.ErrUnavailable
+	}
+	if o.Err != nil {
+		return o.Err
+	}
+	o.Exchanged = append(o.Exchanged, a.ID+":"+code+":"+redirectURI)
+	return nil
+}
