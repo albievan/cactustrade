@@ -138,6 +138,12 @@ linters:
       - path: internal/adapters/argon2/argon2\.go
         text: "G115"
         linters: [gosec]
+      # Reviewed, owner's written consent 2026-11-24 (PLAN R21): Tiger Brokers' protocol signs
+      # every request with SHA1withRSA. SHA-1 is used only here, only to sign, never to hash
+      # secrets or verify anything.
+      - path: internal/adapters/tiger/sign\.go
+        text: "G401|G505"
+        linters: [gosec]
 
 issues:
   max-issues-per-linter: 0
