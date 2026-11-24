@@ -42,6 +42,8 @@ export function Orders() {
           <li><strong>sent / pending</strong>: eToro has it and has not filled it yet; its cash stays reserved.</li>
           <li><strong>unknown</strong>: the answer was lost. It is never sent again blindly; new entries wait until a lookup settles it.</li>
           <li><strong>abandoned</strong>: eToro never saw it, or it was not sent (stale prices, a kill).</li>
+          <li><strong>accepted</strong> (a cancel request): eToro took the request; whether the order was cancelled or had already
+            filled shows on the order itself. <strong>done</strong> (a close request): the position was closed.</li>
         </ul>
       </InfoCard>
       <ProblemAlert error={error} />
@@ -60,14 +62,14 @@ export function Orders() {
               {orders.map((o) => (
                 <tr key={o.requestId}>
                   <td className="text-nowrap">{new Date(o.createdAt).toLocaleString()}</td>
-                  <td className="text-capitalize">{o.kind}</td>
+                  <td>{o.kindLabel}</td>
                   <td>{o.symbol || o.instrumentId}</td>
                   <td className="text-capitalize">{o.direction || "—"}</td>
                   <td className="text-end">{o.kind === "open" ? usd(o.amountCents) : "—"}</td>
                   <td className="text-end">{o.entry ?? "—"}</td>
                   <td className="text-end">{o.stopLoss ?? "—"}</td>
                   <td className="text-end">{o.takeProfit ?? "—"}</td>
-                  <td><span className={"badge " + (stateBadge[o.state] ?? "text-bg-secondary")}>{o.state.replace("_", " ")}</span></td>
+                  <td><span className={"badge " + (stateBadge[o.state] ?? "text-bg-secondary")}>{o.stateLabel}</span></td>
                   <td className="text-end">{o.sends}</td>
                   <td className="small">{o.reason}</td>
                   <td className="small text-secondary"><code>{o.requestId}</code></td>

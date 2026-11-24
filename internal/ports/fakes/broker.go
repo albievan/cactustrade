@@ -131,8 +131,8 @@ func (b *Broker) Open(context.Context, domain.OrderIntent) (domain.OrderStatus, 
 }
 
 // Lookup reports unknown.
-func (b *Broker) Lookup(_ context.Context, id string) (domain.OrderStatus, error) {
-	return domain.OrderStatus{RequestID: id, State: domain.OrderUnknown}, domain.ErrNotFound
+func (b *Broker) Lookup(_ context.Context, id string, orderID int64) (domain.OrderStatus, error) {
+	return domain.OrderStatus{RequestID: id, OrderID: orderID, State: domain.OrderUnknown}, domain.ErrNotFound
 }
 
 // Cancel is refused.

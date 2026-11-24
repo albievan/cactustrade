@@ -79,10 +79,14 @@ Response `{token, orderId, referenceId}` — **200 = accepted for processing, no
   PartiallyFilled → partial; 7 Canceled, 8 Expired → cancelled; 9 CanceledPartiallyFilled and
   10 RejectedPartiallyFilled → partial *and final*. Terminal: 3, 4, 7, 8, 9, 10. Anything else
   → unknown.
-- **Lookup** `asset.side` is `long|short` in the schema but `buy` in eToro's own example; both
-  spellings are read. `asset.settlementType`, `asset.leverage` and each
-  `positionExecutions[]` (`investedAmountCurrency`, `openingData.units` or `remainingUnits`,
-  `openingData.avgPrice`, `stopLossRate`) are returned for the fill check.
+- **Lookup** by `orderId=` when eToro's order id is known (from the open's answer), else by
+  `referenceId=` (see the live findings below). The answer's `orderId` must be the one asked
+  for. `asset.side` is `long|short` in the schema but `buy` in eToro's own example; both
+  spellings are read. `asset.settlementType` is read in any case (`REAL` live), `asset.leverage`
+  and each `positionExecutions[]`: the amount from `initialExposureAccountCurrency`, else
+  `marginAccountCurrency`, else `investedAmountCurrency`; `openingData.units` or
+  `remainingUnits`, `openingData.avgPrice`, `stopLossRate`, and `state` (`closed` = eToro
+  already closed the position).
 - No retries for account changes; 5xx/timeout/network error = outcome unknown; 4xx = not
   accepted; 429 pauses the execution group for `Retry-After` (default 5 s, at most 60 s). Reads
   keep their retries with a fresh `x-request-id` per attempt. Redirects are never followed.
@@ -92,14 +96,15 @@ Response `{token, orderId, referenceId}` — **200 = accepted for processing, no
 ### How the app uses execution (phase 4.7–4.14, demo only)
 
 - **Request ids.** Every open, close and cancel is a row in `orders` (state `created`) before
-  anything is sent; the row's UUID is the `x-request-id`, and `orders:lookup?referenceId=` finds
-  the open again after a lost answer. The row moves to `sent` (stored) before the HTTP call.
+  anything is sent; the row's UUID is the `x-request-id`. The open's answer gives eToro's
+  `orderId`, which every later lookup uses (`orders:lookup?orderId=`); `referenceId=` is tried
+  only after a lost or 429 answer (it answered 404 live, 2026-11-24). The row moves to `sent` (stored) before the HTTP call.
 - **Polling.** An open is looked up at 1, 2, 4, 8, 15 and 30 s after the send; still pending at
   60 s → a cancel (its own stored id); still unknown to eToro (404) 2 min after the send →
   `abandoned`, never resent. A close is read by eToro's `orderForClose.orderID` at 1–30 s.
 - **Resends.** **An open is never resent** (PLAN decision review-M3, stricter than OD2, until
   U1 and U7 are verified): one send per open. After a 429 the executor waits `Retry-After` and
-  looks the order up by its `referenceId`: found → followed like any open; 404 → the normal
+  looks the order up by its `referenceId` (no `orderId` yet): found → followed like any open; 404 → the normal
   poll schedule, `abandoned` 2 min after the send, its cash reserved until then. A close
   answered with 429 or lost (and the position still in the portfolio) is resent with the same
   id (≤ 5 sends); a cancel ≤ 3.
@@ -113,6 +118,36 @@ Response `{token, orderId, referenceId}` — **200 = accepted for processing, no
 - **Real accounts.** Refused before any I/O by the eToro client, the executor, `IntentFor`, the
   risk engine and agent Start. Reconciliation only reads them.
 
+### Live findings (demo, 2026-11-24, verified)
+
+The first two live demo opens (GOOG and AAPL, $100 each, market orders, eToro order ids
+396359836 and 396377388) showed, with the recorded answer in
+`internal/adapters/etoro/testdata/recorded/lookup_filled_by_order_id.json` (sanitised:
+`accountId` and `gcid` set to 0):
+
+- **Fill speed:** both were filled within 0.4 s of the request (`requestTime` →
+  `executionTime`).
+- **`orders:lookup?referenceId=<our x-request-id>` answered HTTP 404**, before and after the
+  fill, for both orders. **`orders:lookup?orderId=<eToro order id>` works** and returns the
+  whole order. cactusTrade therefore looks an order up by `orderId` whenever it has eToro's
+  order id (every accepted open); `referenceId` remains only for an open whose answer was
+  lost or rate limited (and then 404 is expected: it is abandoned after 2 min and a fill is
+  adopted by reconciliation, review B2).
+- **`investedAmountCurrency` is not the invested amount:** it was `1` for a $100 position.
+  `initialExposureAccountCurrency` (99.985) and `marginAccountCurrency` (99.99, the same at
+  leverage 1) are. cactusTrade reads them in that order.
+- **`asset.settlementType` is upper case** (`"REAL"`); the schema shows lower case. Read in
+  any case.
+- **`positionExecutions[].state`** can be `closed` in the order's own lookup: eToro's
+  take-profit closed the GOOG position (opened 275.99, TP 276.67) before cactusTrade looked.
+  Such a position is recorded as cactusTrade's and settled as closed at once.
+- `asset.side` was `long`; `status` `{id: 3, name: "Filled", errorCode: 0}`; the stop eToro
+  set was 275.18 for the 275.172243 sent (rounded to the instrument's precision).
+- A cancel (`DELETE …/demo/orders/{orderId}`) of an order that had already filled was answered
+  200 every time (151 times in 90 minutes before the fix): **200 on a cancel says nothing
+  about the order**. cactusTrade now sends at most one accepted cancel per order and waits
+  for the lookup.
+
 ### Unverified until the owner's live demo run (PLAN 4.17)
 
 Each is handled fail-closed today. 4.17 records fixtures and settles them.
@@ -120,16 +155,16 @@ Each is handled fail-closed today. 4.17 records fixtures and settles them.
 | # | Question | How cactusTrade behaves meanwhile |
 |---|---|---|
 | U1 | What eToro does with an open resent with the same `x-request-id` (deduplicate, refuse, or a second order) | An open is never resent (review-M3): one send; a lost or 429 answer is settled by lookup only |
-| U2 | How long until `orders:lookup` finds a new order | A 404 within 2 min of the send is "in flight": cash stays reserved and the instrument blocked; after 2 min → abandoned |
+| U2 | How long until `orders:lookup` finds a new order | **Partly settled 2026-11-24:** by `orderId` the filled demo orders were found; by `referenceId` they were never found (404). Lookups use `orderId` when known. A 404 within 2 min of the send is "in flight": cash stays reserved and the instrument blocked; after 2 min → abandoned, unless eToro accepted it (pending): then it is held, reserved, with one warning (review-c) |
 | U3 | No lookup by reference for closes; what a second close of a closed position returns | Closes are read by eToro's order id; a lost close answer is settled by re-reading the portfolio; "position not found" and absent from the portfolio → recorded closed |
 | U4 | LSE stop and rate units (GBX vs GBP, Q1) | No LSE entries (OD9); every fill's stop must be within 1 % of ours (a ×100 mix-up fails) |
 | U5 | Whether the newest candle is still forming | Every bar that has not closed at the decision time is dropped; the newest closed bar must be at most two intervals old |
 | U6 | What `isPotential` means in eligibility | Counted as "not offered" |
 | U7 | Whether a 429 is answered before the request is processed | An open answered 429 is not sent again; the lookup after `Retry-After` adopts it if eToro processed it anyway, else it is abandoned after 2 min |
-| U8 | Whether a status-11 (waiting for market) order can be cancelled | A cancel is sent at 60 s and confirmed by lookup; unconfirmed after 2 min → abandoned and retried by the supervisor at most once a minute; entries in that instrument stay blocked |
+| U8 | Whether a status-11 (waiting for market) order can be cancelled | A cancel is sent at 60 s (after a lookup) and confirmed by lookup. An accepted cancel is never repeated (eToro answers 200 even for a filled order, 2026-11-24); unconfirmed after a minute → one warning. A refused or abandoned cancel is retried at most 3 times in all, a minute apart. Entries in that instrument stay blocked while the order is open |
 | U9 | Partial fills of orders by amount | The filled part is recorded and checked like any fill; a partial that eToro reports final ends `cancelled` with its positions kept |
 | U10 | Whether `credit` already excludes cash held for pending orders | Our own non-final orders *and* eToro's `ordersForOpen` are both subtracted (double counting, conservative, D24) |
-| U11 | How quickly a fill shows in `pnl` | A recorded position missing from the portfolio is taken for closed only 2 min after it was recorded |
+| U11 | How quickly a fill shows in `pnl` | **Partly settled 2026-11-24:** fills took < 0.4 s; the order's own lookup lists each position with its `state` (a position already closed reads `closed`). How quickly `pnl` shows a fill is still unmeasured: a recorded position missing from the portfolio is taken for closed only 2 min after it was recorded |
 
 ### Trade history as implemented (phase 6.3, read-only)
 

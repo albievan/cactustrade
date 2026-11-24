@@ -47,9 +47,9 @@ func (c *mutationCounter) Close(ctx context.Context, pos int64, inst domain.Inst
 	return c.Broker.Close(ctx, pos, inst, id)
 }
 
-func (c *mutationCounter) Lookup(ctx context.Context, id string) (domain.OrderStatus, error) {
+func (c *mutationCounter) Lookup(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error) {
 	c.count()
-	return c.Broker.Lookup(ctx, id)
+	return c.Broker.Lookup(ctx, id, orderID)
 }
 
 // realRefusalEnv is the worst case PLAN 7.17 asks for: a real-money eToro account with keys,

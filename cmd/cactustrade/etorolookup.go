@@ -8,16 +8,20 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/adapters/etoro"
 	"github.com/albievan/cactustrade/internal/adapters/system"
+	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
 )
 
-// etoroLookupCmd prints eToro's raw orders:lookup answer for one of our orders (read only,
-// an allowlisted GET with the account's own keys): `cactustrade etoro-lookup --account ID
-// --request-id UUID`. For diagnosing how eToro reports an order (PLAN 4.17, U-list).
+// etoroLookupCmd prints how cactusTrade reads eToro's orders:lookup answer for one of our
+// orders, and the raw answer (read only, an allowlisted GET with the account's own keys):
+// `cactustrade etoro-lookup --account ID --order-id N` (or `--request-id UUID`; eToro's demo
+// answered 404 by request id on 2026-11-24). It goes through the same Lookup as the executor.
+// For diagnosing how eToro reports an order (PLAN 4.17, U-list).
 func etoroLookupCmd(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
 	fs := flag.NewFlagSet("etoro-lookup", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -52,10 +56,24 @@ func etoroLookupCmd(ctx context.Context, args []string, getenv func(string) stri
 	if err != nil {
 		return err
 	}
-	raw, err := c.LookupRaw(ports.WithAccount(ctx, a), *req, *oid)
+	st, raw, err := c.LookupWithRaw(ports.WithAccount(ctx, a), *req, *oid)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(out, string(raw))
+	return printLookup(out, st, raw)
+}
+
+// printLookup prints the order status as cactusTrade reads it (the same parsing the executor
+// uses), then eToro's answer exactly as received.
+func printLookup(out io.Writer, st domain.OrderStatus, raw []byte) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "parsed: order %d, state %s (final %v), reason %q\n", st.OrderID, st.State, st.Final, st.Reason)
+	fmt.Fprintf(&b, "        instrument %d, settlement %q, leverage %d, side %q\n", st.Instrument, st.Settlement, st.Leverage, st.Side)
+	for _, e := range st.Executions {
+		fmt.Fprintf(&b, "        position %d: units %s, amount $%s, open %s, stop %s, closed %v\n",
+			e.PositionID, e.Units, e.Amount, e.OpenRate, e.StopLossRate, e.Closed)
+	}
+	fmt.Fprintf(&b, "raw: %s\n", raw)
+	_, err := io.WriteString(out, b.String())
 	return err
 }

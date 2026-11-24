@@ -403,7 +403,7 @@ func (riskErrRepo) Get(context.Context, string) (domain.AccountRiskState, error)
 type hookBroker struct {
 	*fakes.SimBroker
 	open   func(ctx context.Context, in domain.OrderIntent) (domain.OrderStatus, error)
-	lookup func(ctx context.Context, id string) (domain.OrderStatus, error)
+	lookup func(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error)
 	cancel func(ctx context.Context, orderID int64, id string) error
 	close  func(ctx context.Context, pos int64, inst domain.InstrumentID, id string) (domain.OrderStatus, error)
 	pf     func(ctx context.Context) (domain.Portfolio, error)
@@ -417,11 +417,11 @@ func (h *hookBroker) Open(ctx context.Context, in domain.OrderIntent) (domain.Or
 	return h.SimBroker.Open(ctx, in)
 }
 
-func (h *hookBroker) Lookup(ctx context.Context, id string) (domain.OrderStatus, error) {
+func (h *hookBroker) Lookup(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error) {
 	if h.lookup != nil {
-		return h.lookup(ctx, id)
+		return h.lookup(ctx, id, orderID)
 	}
-	return h.SimBroker.Lookup(ctx, id)
+	return h.SimBroker.Lookup(ctx, id, orderID)
 }
 
 func (h *hookBroker) Cancel(ctx context.Context, orderID int64, id string) error {
@@ -479,12 +479,12 @@ func TestExecutor429Edges(t *testing.T) {
 			}
 			return domain.OrderStatus{}, rateLimited
 		}
-		h.lookup = func(ctx context.Context, id string) (domain.OrderStatus, error) {
+		h.lookup = func(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error) {
 			calls++
 			if calls == 1 {
 				return domain.OrderStatus{}, fmt.Errorf("read timeout: %w", domain.ErrUnavailable)
 			}
-			return x.b.Lookup(ctx, id)
+			return x.b.Lookup(ctx, id, orderID)
 		}
 		x.svc.d.Broker = h
 		o, err := x.svc.placeEntry(x.ctx, x.a, x.entry(domain.Long), domain.DefaultRiskLimits)
@@ -518,7 +518,7 @@ func TestExecutor429Edges(t *testing.T) {
 		x := newExecEnv(t)
 		x.b.OpenScript = []fakes.SimOutcome{fakes.SimLostAnswer}
 		h := &hookBroker{SimBroker: x.b}
-		h.lookup = func(context.Context, string) (domain.OrderStatus, error) {
+		h.lookup = func(context.Context, string, int64) (domain.OrderStatus, error) {
 			return domain.OrderStatus{}, fmt.Errorf("down: %w", domain.ErrUnavailable)
 		}
 		x.svc.d.Broker = h
@@ -547,8 +547,8 @@ func TestExecutor429Edges(t *testing.T) {
 		x := newExecEnv(t)
 		x.b.OpenScript, x.b.PendingLookups = []fakes.SimOutcome{fakes.SimPendingThenFill}, 2
 		h := &hookBroker{SimBroker: x.b}
-		h.lookup = func(ctx context.Context, id string) (domain.OrderStatus, error) {
-			st, err := x.b.Lookup(ctx, id)
+		h.lookup = func(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error) {
+			st, err := x.b.Lookup(ctx, id, orderID)
 			cur := x.order(t, id)
 			if err == nil && st.State == domain.OrderPending && cur.State == domain.OrderPending {
 				// the supervisor records eToro's answer between our read and our write
@@ -569,8 +569,8 @@ func TestExecutor429Edges(t *testing.T) {
 	t.Run("eToro reports another instrument: non-conforming", func(t *testing.T) {
 		x := newExecEnv(t)
 		h := &hookBroker{SimBroker: x.b}
-		h.lookup = func(ctx context.Context, id string) (domain.OrderStatus, error) {
-			st, err := x.b.Lookup(ctx, id)
+		h.lookup = func(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error) {
+			st, err := x.b.Lookup(ctx, id, orderID)
 			st.Instrument = 999
 			return st, err
 		}
@@ -585,8 +585,8 @@ func TestExecutor429Edges(t *testing.T) {
 	t.Run("stop far from the one sent: non-conforming", func(t *testing.T) {
 		x := newExecEnv(t)
 		h := &hookBroker{SimBroker: x.b}
-		h.lookup = func(ctx context.Context, id string) (domain.OrderStatus, error) {
-			st, err := x.b.Lookup(ctx, id)
+		h.lookup = func(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error) {
+			st, err := x.b.Lookup(ctx, id, orderID)
 			for i := range st.Executions {
 				st.Executions[i].StopLossRate /= 100 // GBX vs GBP (U4)
 			}
@@ -793,7 +793,7 @@ func TestExecutorCancelOrder(t *testing.T) {
 		t.Helper()
 		x.b.OpenScript = []fakes.SimOutcome{fakes.SimPending}
 		h := &hookBroker{SimBroker: x.b}
-		h.lookup = func(context.Context, string) (domain.OrderStatus, error) {
+		h.lookup = func(context.Context, string, int64) (domain.OrderStatus, error) {
 			return domain.OrderStatus{}, fmt.Errorf("down: %w", domain.ErrUnavailable)
 		}
 		x.svc.d.Broker = h

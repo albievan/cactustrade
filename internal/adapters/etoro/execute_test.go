@@ -271,7 +271,7 @@ func TestExecutionQuota(t *testing.T) {
 	if len(e.slept) != 0 {
 		t.Fatalf("slept within the quota: %v", e.slept)
 	}
-	if _, err := e.c.Lookup(ctx, testRequestID); err != nil || len(e.slept) != 0 { // reads have their own quota
+	if _, err := e.c.Lookup(ctx, testRequestID, 0); err != nil || len(e.slept) != 0 { // reads have their own quota
 		t.Fatalf("lookup waited: %v %v", err, e.slept)
 	}
 	if _, err := e.c.Open(ctx, longIntent()); err != nil {
@@ -423,7 +423,7 @@ func TestLookupFixtures(t *testing.T) {
 			e := newEnv(t)
 			fixtureFile := tt.fixture
 			e.fake.route = func(*http.Request, int) (int, string, http.Header) { return 200, readFixture(t, fixtureFile), nil }
-			st, err := e.c.Lookup(e.ctx(), testRequestID)
+			st, err := e.c.Lookup(e.ctx(), testRequestID, 0)
 			tt.want.RequestID = testRequestID
 			if err != nil || !reflect.DeepEqual(st, tt.want) {
 				t.Fatalf("Lookup = %+v %v\nwant %+v", st, err, tt.want)
@@ -442,7 +442,7 @@ func TestLookupFixtures(t *testing.T) {
 		return 200, `{"orderId":1,"status":{"id":3},"asset":{"settlementType":"CFD","leverage":2,"side":"buy"},
 			"positionExecutions":[{"positionId":9,"remainingUnits":1,"stopLossRate":null,"openingData":{"avgPrice":10}}]}`, nil
 	}
-	st, err := e.c.Lookup(e.ctx(), testRequestID)
+	st, err := e.c.Lookup(e.ctx(), testRequestID, 0)
 	if err != nil || st.Side != domain.Long || st.Settlement != domain.SettlementCFD || st.Leverage != 2 || st.Executions[0].StopLossRate != 0 || st.Executions[0].Units != 1_000_000 {
 		t.Fatalf("Lookup = %+v %v", st, err)
 	}

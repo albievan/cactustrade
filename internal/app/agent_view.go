@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -371,6 +373,53 @@ func (s *Service) flattenTimes(ctx context.Context, now time.Time, l domain.Risk
 type OrderView struct {
 	domain.Order
 	Symbol string
+}
+
+// subject names the order's instrument for people: its symbol, else its id.
+func (v OrderView) subject() string {
+	if v.Symbol != "" {
+		return v.Symbol
+	}
+	return "instrument " + strconv.FormatInt(int64(v.Instrument), 10)
+}
+
+// KindLabel words what the order is, e.g. "Buy GOOG", "Short AAPL", "Cancel request for GOOG
+// (buy order 396359836)" or "Close request for GOOG (position 3649965576)". The web shows it
+// as it is (no wording in React).
+func (v OrderView) KindLabel() string {
+	switch v.Kind {
+	case domain.OrderCancel:
+		target := "order"
+		if v.Direction.Valid() {
+			target = map[domain.Direction]string{domain.Long: "buy order", domain.Short: "short order"}[v.Direction]
+		}
+		return fmt.Sprintf("Cancel request for %s (%s %d)", v.subject(), target, v.TargetOrderID)
+	case domain.OrderClose:
+		return fmt.Sprintf("Close request for %s (position %d)", v.subject(), v.PositionID)
+	}
+	return verb(v.Direction) + " " + v.subject()
+}
+
+// StateLabel words the order's state for people. An open is "filled" or "partially filled";
+// a cancel or close that eToro took is stored as filled but means something else: a cancel
+// is "accepted" (whether the target was cancelled follows from its own lookup), a close is
+// "done" ("partly done" when eToro closed part of it). A refused cancel or close reads
+// "refused". Every other state is its name.
+func (v OrderView) StateLabel() string {
+	if v.Kind == domain.OrderCancel || v.Kind == domain.OrderClose {
+		switch v.State {
+		case domain.OrderFilled:
+			if v.Kind == domain.OrderCancel {
+				return "accepted"
+			}
+			return "done"
+		case domain.OrderPartial:
+			return "partly done"
+		case domain.OrderRejected:
+			return "refused"
+		}
+	}
+	return strings.ReplaceAll(string(v.State), "_", " ")
 }
 
 // Orders lists an account's orders, newest first (view access; accountID "" = the current

@@ -369,7 +369,7 @@ func TestExecutorNeverResendsAnOpen(t *testing.T) {
 			x.b.OpenScript, x.b.LookupLag = tt.script, tt.lag
 			h := &hookBroker{SimBroker: x.b}
 			var firstLookup time.Time
-			h.lookup = func(ctx context.Context, id string) (domain.OrderStatus, error) {
+			h.lookup = func(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error) {
 				if firstLookup.IsZero() {
 					firstLookup = x.clock.Now()
 				}
@@ -378,7 +378,7 @@ func TestExecutorNeverResendsAnOpen(t *testing.T) {
 						t.Errorf("order %s in flight without its reservation: %+v", o.State, r)
 					}
 				}
-				return x.b.Lookup(ctx, id)
+				return x.b.Lookup(ctx, id, orderID)
 			}
 			x.svc.d.Broker = h
 			start := x.clock.Now()

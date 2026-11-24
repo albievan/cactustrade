@@ -336,6 +336,10 @@ type PositionExecution struct {
 	StopLossRate Micros
 	// CloseRate is the execution price of a close; 0 for an open.
 	CloseRate Micros
+	// Closed: eToro reports the position this open produced as already closed (its
+	// take-profit or stop-loss hit before we looked; seen live on 2026-11-24). It is still
+	// ours: recorded as an agent position, then settled as closed.
+	Closed bool
 }
 
 // OrderStatus is the broker's answer about one order: the reply to an open, close or a

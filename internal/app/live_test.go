@@ -83,7 +83,7 @@ func TestPublishReconcileTransitions(t *testing.T) {
 	x := newExecEnv(t)
 	x.b.OpenScript = []fakes.SimOutcome{fakes.SimServerError}
 	h := &hookBroker{SimBroker: x.b}
-	h.lookup = func(context.Context, string) (domain.OrderStatus, error) {
+	h.lookup = func(context.Context, string, int64) (domain.OrderStatus, error) {
 		return domain.OrderStatus{}, fmt.Errorf("down: %w", domain.ErrUnavailable)
 	}
 	x.svc.d.Broker = h

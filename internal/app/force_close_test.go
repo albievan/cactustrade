@@ -68,9 +68,9 @@ func (c *callCounter) Open(ctx context.Context, o domain.OrderIntent) (domain.Or
 	return c.Broker.Open(ctx, o)
 }
 
-func (c *callCounter) Lookup(ctx context.Context, id string) (domain.OrderStatus, error) {
+func (c *callCounter) Lookup(ctx context.Context, id string, orderID int64) (domain.OrderStatus, error) {
 	c.count()
-	return c.Broker.Lookup(ctx, id)
+	return c.Broker.Lookup(ctx, id, orderID)
 }
 
 func (c *callCounter) Cancel(ctx context.Context, orderID int64, id string) error {

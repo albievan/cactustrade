@@ -73,6 +73,10 @@ type runtimeState struct {
 	views *viewCache
 	// sweeping is set while a sweep of the real gates runs (one at a time, review minor 4).
 	sweeping atomic.Bool
+	// warned holds the order warnings already raised in this process (kind + request id): a
+	// stuck order raises its warning once, not on every supervisor pass (live findings
+	// 2026-11-24).
+	warned map[string]bool
 }
 
 // agentLocks are one account's agent locks. Lock order: ctl before entry, never the other
@@ -90,8 +94,21 @@ func newRuntimeState() *runtimeState {
 	return &runtimeState{
 		reconciled: map[string]Reconciliation{}, supervising: map[string]bool{},
 		agents: map[string]*agentLocks{}, entryCancel: map[string]context.CancelFunc{}, ticking: map[string]bool{},
-		killed: map[string]bool{}, views: newViewCache(),
+		killed: map[string]bool{}, views: newViewCache(), warned: map[string]bool{},
 	}
+}
+
+// firstWarning reports whether the warning kind for an order is raised for the first time in
+// this process (and remembers it).
+func (r *runtimeState) firstWarning(kind, requestID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := kind + "|" + requestID
+	if r.warned[k] {
+		return false
+	}
+	r.warned[k] = true
+	return true
 }
 
 // latchKill records in memory that the account's kill switch was turned on (review m3).
@@ -286,6 +303,17 @@ func verb(d domain.Direction) string {
 	return "Buy"
 }
 
+// warnOnce raises a warning event about an order the first time only (per kind and order, in
+// this process); later calls only log at debug level. A stuck order thus raises one alert, not
+// one per supervisor pass.
+func (s *Service) warnOnce(ctx context.Context, a domain.Account, o domain.Order, kind, title, detail string) {
+	if !s.rt.firstWarning(kind, o.RequestID) {
+		s.d.Log.DebugContext(ctx, "order warning already raised", "kind", kind, "request", o.RequestID)
+		return
+	}
+	s.orderEvent(ctx, a, kind, domain.SeverityWarning, title, detail+". Request "+o.RequestID)
+}
+
 // orderEvent records an order.* / position.* event of an account (trade e-mails, R12).
 func (s *Service) orderEvent(ctx context.Context, a domain.Account, kind string, sev domain.EventSeverity, title, detail string) {
 	s.emitFor(ctx, a.ID, "agent", kind, sev, title+" ("+a.Name+")", detail)
@@ -375,7 +403,7 @@ func (s *Service) sendOpen(ctx context.Context, a domain.Account, o domain.Order
 		if err := s.d.Sleep(ctx, max(na.RetryAfter, minRetryAfter)); err != nil {
 			return o, fmt.Errorf("executor.sendOpen: waiting after a 429 (reconciliation resolves it): %w", err)
 		}
-		lk, lerr := s.d.Broker.Lookup(bctx, o.RequestID)
+		lk, lerr := s.d.Broker.Lookup(bctx, o.RequestID, o.EtoroOrderID)
 		switch {
 		case lerr == nil:
 			if o, err = s.applyOpenStatus(wctx, a, o, lk); err != nil && !errors.Is(err, errFillsNotRecorded) {
@@ -424,7 +452,7 @@ func (s *Service) resolveOpen(ctx context.Context, a domain.Account, o domain.Or
 		if err := s.sleepUntil(ctx, o.SentAt.Add(off)); err != nil {
 			return o, fmt.Errorf("executor.resolveOpen: %w", err)
 		}
-		st, err := s.d.Broker.Lookup(bctx, o.RequestID)
+		st, err := s.d.Broker.Lookup(bctx, o.RequestID, o.EtoroOrderID)
 		age := s.d.Clock.Now().Sub(o.SentAt)
 		switch {
 		case err == nil:
@@ -449,12 +477,23 @@ func (s *Service) resolveOpen(ctx context.Context, a domain.Account, o domain.Or
 			stillPending := !st.Final && (st.State == domain.OrderPending || st.State == domain.OrderPartial)
 			if !cancelSent && stillPending && age >= pendingMax && o.EtoroOrderID > 0 {
 				cancelSent = true
-				if _, err := s.cancelOrder(ctx, a, o, fmt.Sprintf("still pending after %s", pendingMax)); err != nil {
-					s.d.Log.WarnContext(ctx, "cancelling a pending order failed", "account", a.ID, "request", o.RequestID, "err", err)
+				// At most one cancel per order while one is in flight or was accepted (the
+				// supervisor may have sent one); an unreadable history leaves it to the
+				// supervisor.
+				hist, herr := s.cancelHistory(ctx, a.ID, []domain.Order{o})
+				switch {
+				case herr != nil:
+					s.d.Log.WarnContext(ctx, "reading our cancels failed; the supervisor cancels the order", "account", a.ID, "request", o.RequestID, "err", herr)
+				case !s.cancelBlocked(ctx, a, o, hist[o.EtoroOrderID], s.d.Clock.Now()):
+					if _, err := s.cancelOrder(ctx, a, o, fmt.Sprintf("still pending after %s", pendingMax)); err != nil {
+						s.d.Log.WarnContext(ctx, "cancelling a pending order failed", "account", a.ID, "request", o.RequestID, "err", err)
+					}
 				}
 			}
 		case errors.Is(err, domain.ErrNotFound):
-			if age >= lookupGiveUp {
+			// An order eToro accepted (pending) is never abandoned (review-c): it stays
+			// reserved and the supervisor follows it (one warning, live findings 2026-11-24).
+			if age >= lookupGiveUp && domain.CanMove(o.State, domain.OrderAbandoned) {
 				return s.abandon(ctx, a, o, fmt.Sprintf("eToro did not know the order %s after it was sent", lookupGiveUp))
 			}
 		default:
@@ -544,7 +583,9 @@ func stopClose(got, want domain.Micros) bool {
 // recordFills records the positions an open order produced as agent positions (only new
 // ones) and checks them: the shape must be the one sent (real/long/x1 or cfd/short/x1), with
 // a stop on the losing side, close to the stop we sent. A fill that does not conform is
-// closed at once, its instrument blocked and an alert raised. It returns errFillsNotRecorded
+// closed at once, its instrument blocked and an alert raised. A position eToro reports as
+// already closed (Executions[].Closed) is recorded as ours and settled as closed at once; it is
+// never sent a close. It returns errFillsNotRecorded
 // when any position could not be stored: the caller must not move the order on.
 func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Order, st domain.OrderStatus) error {
 	ok, why := st.Conforms(o.Direction)
@@ -559,7 +600,8 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 	label := s.instrumentLabel(ctx, o.Instrument)
 	now := s.d.Clock.Now().UTC()
 	var (
-		fresh  []domain.AgentPosition
+		fresh  []domain.AgentPosition // newly recorded and still open: closed if non-conforming
+		added  int                    // newly recorded, open or already closed by eToro
 		failed error
 	)
 	for _, e := range st.Executions {
@@ -578,21 +620,32 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 			failed = errors.Join(failed, fmt.Errorf("position %d: %w", e.PositionID, err))
 			continue
 		}
-		fresh = append(fresh, ap)
+		added++
 		s.orderEvent(ctx, a, "order.filled", domain.SeverityInfo,
 			fmt.Sprintf("%s $%s of %s filled", verb(o.Direction), e.Amount, label),
 			fmt.Sprintf("position %d at %s, stop %s", e.PositionID, e.OpenRate, e.StopLossRate))
+		if e.Closed {
+			// Ours, and already closed by eToro (its take-profit or stop-loss hit before we
+			// looked, seen live 2026-11-24): settled at once, never closed again.
+			s.markClosed(ctx, a, ap, fmt.Sprintf("position %d was already closed at eToro (take-profit or stop-loss) when its fill was first seen", e.PositionID))
+			continue
+		}
+		fresh = append(fresh, ap)
 	}
 	if failed != nil {
 		failed = fmt.Errorf("%w: %w", errFillsNotRecorded, failed)
 	}
-	if ok || len(fresh) == 0 {
+	if ok || added == 0 {
 		return failed
 	}
 	if err := s.d.Store.InstrumentBlocks().Block(ctx, domain.InstrumentBlock{AccountID: a.ID, Instrument: o.Instrument, Reason: "non-conforming fill: " + why, At: now}); err != nil {
 		s.d.Log.ErrorContext(ctx, "blocking an instrument failed", "account", a.ID, "instrument", o.Instrument, "err", err)
 	}
-	s.orderEvent(ctx, a, "order.nonconforming", domain.SeverityDanger, "Non-conforming fill of "+label+": closing it and blocking the instrument", why)
+	title := "Non-conforming fill of " + label + ": closing it and blocking the instrument"
+	if len(fresh) == 0 {
+		title = "Non-conforming fill of " + label + " (already closed by eToro): blocking the instrument"
+	}
+	s.orderEvent(ctx, a, "order.nonconforming", domain.SeverityDanger, title, why)
 	for _, ap := range fresh {
 		if _, err := s.closePosition(ctx, a, ap, "non-conforming fill: "+why, closePolls); err != nil {
 			s.d.Log.ErrorContext(ctx, "closing a non-conforming position failed", "account", a.ID, "position", ap.PositionID, "err", err)

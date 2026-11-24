@@ -49,6 +49,9 @@ type propStats struct {
 	// a broker that fills a repeated request id again (never triggered: opens are never
 	// resent).
 	laggedLookups, hiddenAtOpen, emptyFills, processed429s, partialCloses, duplicateArmed int
+	// refNotFound counts lookups by request id answered 404 in scenarios played with eToro's
+	// live lookup (live findings 2026-11-24: 404 by request id, found by order id).
+	refNotFound int
 }
 
 func (p *propStats) add(o propStats) {
@@ -68,6 +71,7 @@ func (p *propStats) add(o propStats) {
 	p.processed429s += o.processed429s
 	p.partialCloses += o.partialCloses
 	p.duplicateArmed += o.duplicateArmed
+	p.refNotFound += o.refNotFound
 }
 
 // unexercised names the behaviours no scenario exercised.
@@ -78,7 +82,7 @@ func (p propStats) unexercised() []string {
 		"resets": p.resets, "daily latches": p.latches, "stop-outs": p.stopOuts, "unreadable portfolios": p.faults,
 		"limit changes": p.limitChanges, "lookup lag": p.laggedLookups, "portfolio lag at an open": p.hiddenAtOpen,
 		"fills without executions": p.emptyFills, "processed 429s": p.processed429s, "partial closes": p.partialCloses,
-		"duplicate-filling broker": p.duplicateArmed,
+		"duplicate-filling broker": p.duplicateArmed, "lookups by request id answered 404": p.refNotFound,
 	} {
 		if n == 0 {
 			out = append(out, name)
@@ -130,7 +134,10 @@ type propScenario struct {
 	// sent are the results of every Open per request id, in order.
 	sent    map[string][]error
 	foreign bool
-	stats   propStats
+	// refNotFound: eToro's live lookup (2026-11-24): by request id always 404, by order id
+	// found. Lost answers and processed 429s are not played then (see runPropScenario).
+	refNotFound bool
+	stats       propStats
 	// orderViolations are open orders stored before their pending decision (PLAN 5.5).
 	orderViolations []string
 }
@@ -212,6 +219,14 @@ func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 	ae.b.NoExecLookups = 1 + s.r.IntN(2)
 	ae.b.DuplicateFills = true
 	s.stats.duplicateArmed++
+	// A third of the scenarios play eToro's live lookup of 2026-11-24 (by request id always
+	// 404). An open whose answer was lost or rate limited has no eToro order id then, so a
+	// fill of it is found by reconciliation's adoption only (review B2), after the tick that
+	// checks every position is ours: like review-d, those two outcomes are left out of these
+	// scenarios (the executor tests cover them, TestExecutorLooksUpByOrderID).
+	if s.r.IntN(3) == 0 {
+		ae.b.RefLookupNotFound, s.refNotFound = true, true
+	}
 	s.setLimits()
 	if _, err := ae.svc.StartAgent(ae.ctx, ae.admin, ae.a.ID); err != nil {
 		t.Fatal(err)
@@ -231,6 +246,7 @@ func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 	s.stats.emptyFills = ae.b.Outcomes[fakes.SimFilledNoExecutions]
 	s.stats.processed429s = ae.b.Outcomes[fakes.SimRateLimitedProcessed]
 	s.stats.partialCloses = ae.b.Outcomes[fakes.SimPartialClose]
+	s.stats.refNotFound = ae.b.RefNotFound
 	return s.stats
 }
 
@@ -466,8 +482,12 @@ var (
 func (s *propScenario) scriptFaults() {
 	b := s.ae.b
 	b.OpenScript = b.OpenScript[:0]
-	for range 6 {
-		b.OpenScript = append(b.OpenScript, propOpenOutcomes[s.r.IntN(len(propOpenOutcomes))])
+	for len(b.OpenScript) < 6 {
+		out := propOpenOutcomes[s.r.IntN(len(propOpenOutcomes))]
+		if s.refNotFound && (out == fakes.SimLostAnswer || out == fakes.SimRateLimitedProcessed) {
+			continue
+		}
+		b.OpenScript = append(b.OpenScript, out)
 	}
 	b.CloseScript = b.CloseScript[:0]
 	run := 0

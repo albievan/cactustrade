@@ -1935,7 +1935,10 @@ type Order struct {
 	InstrumentId int64    `json:"instrumentId"`
 
 	// Kind open, close or cancel
-	Kind       string      `json:"kind"`
+	Kind string `json:"kind"`
+
+	// KindLabel what the order is, worded by the server, e.g. "Buy GOOG", "Cancel request for GOOG (buy order 396359836)", "Close request for GOOG (position 3649965576)"
+	KindLabel  string      `json:"kindLabel"`
 	Mode       TradingMode `json:"mode"`
 	PositionId *int64      `json:"positionId,omitempty"`
 	Reason     string      `json:"reason"`
@@ -1947,6 +1950,9 @@ type Order struct {
 
 	// State created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned
 	State string `json:"state"`
+
+	// StateLabel the state worded by the server: an open reads filled / partially filled; a cancel eToro took reads accepted, a close done (partly done); a refused cancel or close reads refused; otherwise the state's name
+	StateLabel string `json:"stateLabel"`
 
 	// StopLoss An exact decimal (prices and units, up to 6 places)
 	StopLoss *Decimal `json:"stopLoss,omitempty"`

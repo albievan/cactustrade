@@ -87,6 +87,12 @@ type SimBroker struct {
 	// PortfolioLag: a position opened less than this long ago is missing from Portfolio, and
 	// the cash it took is still shown as available (U11). Actual shows the account as it is.
 	PortfolioLag time.Duration
+	// RefLookupNotFound: a lookup by request id (orderID 0) is always 404; only a lookup by
+	// eToro's order id finds an order. eToro's demo answered so on 2026-11-24.
+	RefLookupNotFound bool
+	// IgnoreCancels: a cancel is accepted (200) and the order is left as it is (eToro
+	// "accepted" cancels of orders that had already filled, 2026-11-24).
+	IgnoreCancels bool
 	// DuplicateFills: an Open with a request id the broker already has is processed again and
 	// fills a second time (eToro not deduplicating, U1). It is still recorded as a Violation.
 	DuplicateFills bool
@@ -117,6 +123,8 @@ type SimBroker struct {
 	LaggedLookups int
 	HiddenFills   int
 	Duplicates    int
+	// RefNotFound counts lookups by request id answered 404 because of RefLookupNotFound.
+	RefNotFound int
 	// Violations lists broken rules: OnOpen failures, an Open that reused a request id the
 	// broker already had, a call without a demo eToro account.
 	Violations []string
@@ -289,8 +297,10 @@ func (b *SimBroker) fill(o *simOrder, amount domain.Cents, complete bool) {
 	}
 }
 
-// Lookup reports a known order (ErrNotFound for one the broker never recorded).
-func (b *SimBroker) Lookup(ctx context.Context, requestID string) (domain.OrderStatus, error) {
+// Lookup reports a known order by eToro's order id (orderID > 0) or else by request id
+// (ErrNotFound for one the broker never recorded, and for every lookup by request id with
+// RefLookupNotFound).
+func (b *SimBroker) Lookup(ctx context.Context, requestID string, orderID int64) (domain.OrderStatus, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.init()
@@ -301,13 +311,24 @@ func (b *SimBroker) Lookup(ctx context.Context, requestID string) (domain.OrderS
 	if b.ReadErr != nil {
 		return domain.OrderStatus{}, b.ReadErr
 	}
-	o, ok := b.orders[requestID]
+	var (
+		o  *simOrder
+		ok bool
+	)
+	switch {
+	case orderID > 0:
+		o, ok = b.byID[orderID]
+	case b.RefLookupNotFound:
+		b.RefNotFound++
+	default:
+		o, ok = b.orders[requestID]
+	}
 	if ok && b.now().Sub(o.accepted) < b.LookupLag {
 		b.LaggedLookups++
 		ok = false
 	}
 	if !ok {
-		return domain.OrderStatus{RequestID: requestID, State: domain.OrderUnknown}, fmt.Errorf("lookup %s: %w", requestID, domain.ErrNotFound)
+		return domain.OrderStatus{RequestID: requestID, OrderID: orderID, State: domain.OrderUnknown}, fmt.Errorf("lookup %s/%d: %w", requestID, orderID, domain.ErrNotFound)
 	}
 	o.lookups++
 	if o.outcome == SimPendingThenFill && o.status.State == domain.OrderPending && o.lookups > max(b.PendingLookups, 1) {
@@ -341,7 +362,7 @@ func (b *SimBroker) Cancel(ctx context.Context, orderID int64, requestID string)
 		return &domain.NotAcceptedError{Reason: "order not found (simulated)", Err: domain.ErrNotFound}
 	}
 	switch {
-	case o.status.Final:
+	case o.status.Final, b.IgnoreCancels:
 	case o.status.State == domain.OrderPartial:
 		o.status.Final, o.status.Reason = true, "cancelled after a partial fill (simulated)"
 	default:

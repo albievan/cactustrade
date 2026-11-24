@@ -26,8 +26,8 @@ const agent = {
 
 function order(over: Partial<Order> = {}): Order {
   return {
-    requestId: "r1", mode: "demo", kind: "open", direction: "long", instrumentId: 1001, symbol: "AAPL", amountCents: 50000,
-    state: "sent", reason: "", sends: 1, createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:00Z", ...over,
+    requestId: "r1", mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", amountCents: 50000,
+    state: "sent", stateLabel: "sent", reason: "", sends: 1, createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:00Z", ...over,
   };
 }
 
@@ -71,7 +71,7 @@ function serve(answers: Record<string, unknown> = {}) {
     if (url.endsWith("/api/v1/system/status")) return json(status);
     if (url.endsWith("/api/v1/agent") && method === "GET") return json(agent);
     if (url.endsWith("/api/v1/market/status")) return json([]);
-    if (url.includes("/api/v1/orders")) return json([order({ requestId: "r9", symbol: "NVDA", state: "filled" })]);
+    if (url.includes("/api/v1/orders")) return json([order({ requestId: "r9", symbol: "NVDA", kindLabel: "Buy NVDA", state: "filled", stateLabel: "filled" })]);
     if (url.includes("/api/v1/reviews")) return json({ scanner: { enabled: false }, reviews: [] });
     if (url.includes("/api/v1/events")) {
       return json({ events: [{ id: "old", at: "2026-11-24T14:00:00Z", kind: "agent.started", severity: "info", title: "Agent started on Main demo", actor: "admin", accountId: "a1" }], unread: 0 });
@@ -152,11 +152,14 @@ describe("Dashboard", () => {
     act(() => es.send("snapshot", snapshot()));
     const feed = await screen.findByRole("list", { name: "Orders feed" });
     expect(within(feed).getByText("sent")).toBeInTheDocument();
-    act(() => es.send("order", { accountId: "a1", order: order({ state: "filled", updatedAt: "2026-11-24T15:00:09Z" }) }));
+    act(() => es.send("order", { accountId: "a1", order: order({ state: "filled", stateLabel: "filled", updatedAt: "2026-11-24T15:00:09Z" }) }));
     expect(within(feed).getByText("filled")).toBeInTheDocument();
     expect(within(feed).queryByText("sent")).not.toBeInTheDocument();
-    act(() => es.send("order", { accountId: "a1", order: order({ requestId: "r2", symbol: "TSLA", kind: "close", direction: "long" }) }));
-    expect(within(feed).getByText("TSLA")).toBeInTheDocument();
+    act(() => es.send("order", { accountId: "a1", order: order({ requestId: "r2", symbol: "TSLA", kind: "close", kindLabel: "Close request for TSLA (position 7)", direction: "long" }) }));
+    expect(within(feed).getByText("Close request for TSLA (position 7)")).toBeInTheDocument();
+    act(() => es.send("order", { accountId: "a1", order: order({ requestId: "r3", symbol: "GOOG", kind: "cancel", kindLabel: "Cancel request for GOOG (buy order 396359836)", state: "filled", stateLabel: "accepted" }) }));
+    expect(within(feed).getByText("Cancel request for GOOG (buy order 396359836)")).toBeInTheDocument();
+    expect(within(feed).getByText("accepted")).toBeInTheDocument();
     act(() => es.send("event", { accountId: "a1", event: { id: "e1", at: "2026-11-24T15:00:10Z", kind: "order", severity: "success", title: "Bought AAPL", actor: "agent" } }));
     expect(screen.getByText("Bought AAPL")).toBeInTheDocument();
   });

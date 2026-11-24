@@ -20,11 +20,11 @@ func TestSimBrokerLookupLag(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Second)
-	if _, err := b.Lookup(ctx, "r1"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := b.Lookup(ctx, "r1", 0); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("lookup within the lag = %v, want not found", err)
 	}
 	now = now.Add(time.Second)
-	if st, err := b.Lookup(ctx, "r1"); err != nil || st.State != domain.OrderFilled {
+	if st, err := b.Lookup(ctx, "r1", 0); err != nil || st.State != domain.OrderFilled {
 		t.Fatalf("lookup after the lag = %+v %v", st, err)
 	}
 	if b.LaggedLookups != 1 {
@@ -62,11 +62,11 @@ func TestSimBrokerFilledWithoutExecutions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 2 {
-		if st, err := b.Lookup(ctx, "r1"); err != nil || st.State != domain.OrderFilled || !st.Final || len(st.Executions) != 0 {
+		if st, err := b.Lookup(ctx, "r1", 0); err != nil || st.State != domain.OrderFilled || !st.Final || len(st.Executions) != 0 {
 			t.Fatalf("lookup %d = %+v %v", i, st, err)
 		}
 	}
-	if st, _ := b.Lookup(ctx, "r1"); len(st.Executions) != 1 {
+	if st, _ := b.Lookup(ctx, "r1", 0); len(st.Executions) != 1 {
 		t.Fatalf("executions must show in the end: %+v", st)
 	}
 	if b.Outcomes[SimFilledNoExecutions] != 1 {
@@ -81,7 +81,7 @@ func TestSimBrokerRateLimitedButProcessed(t *testing.T) {
 	if na, ok := errors.AsType[*domain.NotAcceptedError](err); !ok || !na.RateLimited {
 		t.Fatalf("open = %v, want a 429", err)
 	}
-	if st, err := b.Lookup(ctx, "r1"); err != nil || st.State != domain.OrderFilled || len(b.Actual().Positions) != 1 {
+	if st, err := b.Lookup(ctx, "r1", 0); err != nil || st.State != domain.OrderFilled || len(b.Actual().Positions) != 1 {
 		t.Fatalf("a processed 429 must exist: %+v %v", st, err)
 	}
 }
@@ -120,5 +120,49 @@ func TestSimBrokerDuplicateFills(t *testing.T) {
 	if len(b.Actual().Positions) != 2 || b.Duplicates != 1 || len(b.Violations) != 1 {
 		t.Fatalf("a repeated id must fill again silently and be recorded: positions %d duplicates %d violations %v",
 			len(b.Actual().Positions), b.Duplicates, b.Violations)
+	}
+}
+
+// TestSimBrokerRefLookupNotFound plays eToro's live answer of 2026-11-24: a lookup by our
+// request id is always 404, a lookup by eToro's order id finds the order.
+func TestSimBrokerRefLookupNotFound(t *testing.T) {
+	b := &SimBroker{Now: func() time.Time { return simT0 }, Cash: 1_000_00, RefLookupNotFound: true}
+	ctx := demoCtx()
+	st, err := b.Open(ctx, longIntent("r1"))
+	if err != nil || st.OrderID == 0 {
+		t.Fatalf("open = %+v %v", st, err)
+	}
+	if _, err := b.Lookup(ctx, "r1", 0); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("lookup by request id = %v, want not found", err)
+	}
+	got, err := b.Lookup(ctx, "r1", st.OrderID)
+	if err != nil || got.State != domain.OrderFilled || got.OrderID != st.OrderID || len(got.Executions) != 1 {
+		t.Fatalf("lookup by order id = %+v %v", got, err)
+	}
+	if _, err := b.Lookup(ctx, "r1", st.OrderID+1_000); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("lookup of an order id the broker never gave = %v", err)
+	}
+	if b.RefNotFound != 1 {
+		t.Fatalf("ref lookups answered 404 = %d", b.RefNotFound)
+	}
+}
+
+// TestSimBrokerIgnoredCancels: a cancel is accepted (200) but the order is left as it is,
+// as eToro did for orders that had already filled (2026-11-24).
+func TestSimBrokerIgnoredCancels(t *testing.T) {
+	b := &SimBroker{Now: func() time.Time { return simT0 }, Cash: 1_000_00, OpenScript: []SimOutcome{SimPending}, IgnoreCancels: true}
+	ctx := demoCtx()
+	st, err := b.Open(ctx, longIntent("r1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Cancel(ctx, st.OrderID, "c1"); err != nil {
+		t.Fatalf("cancel = %v", err)
+	}
+	if got, _ := b.Lookup(ctx, "r1", st.OrderID); got.State != domain.OrderPending || got.Final {
+		t.Fatalf("after an ignored cancel = %+v", got)
+	}
+	if b.Cancels != 1 {
+		t.Fatalf("cancels = %d", b.Cancels)
 	}
 }

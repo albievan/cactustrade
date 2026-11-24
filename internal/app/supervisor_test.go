@@ -298,7 +298,7 @@ func (x *execEnv) pendingEntry(t *testing.T) domain.Order {
 	t.Helper()
 	x.b.OpenScript = []fakes.SimOutcome{fakes.SimPending}
 	h := &hookBroker{SimBroker: x.b}
-	h.lookup = func(context.Context, string) (domain.OrderStatus, error) {
+	h.lookup = func(context.Context, string, int64) (domain.OrderStatus, error) {
 		return domain.OrderStatus{}, domain.ErrUnavailable
 	}
 	x.svc.d.Broker = h

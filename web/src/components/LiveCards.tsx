@@ -215,11 +215,9 @@ export function OrderFeed({ orders }: { orders: Order[] }) {
           {orders.map((o) => (
             <li key={o.requestId} className="d-flex flex-wrap align-items-center gap-2 py-1 border-bottom">
               <span className="text-secondary text-nowrap">{clock(o.updatedAt)}</span>
-              <span className="text-capitalize">{o.kind}</span>
-              <span className="fw-semibold">{o.symbol || o.instrumentId}</span>
-              {o.direction && <span className="text-capitalize">{o.direction}</span>}
+              <span className="fw-semibold">{o.kindLabel}</span>
               {o.kind === "open" && <span>{usd(o.amountCents)}</span>}
-              <span className={"badge " + (orderBadge[o.state] ?? "text-bg-secondary")}>{o.state.replace("_", " ")}</span>
+              <span className={"badge " + (orderBadge[o.state] ?? "text-bg-secondary")}>{o.stateLabel}</span>
             </li>
           ))}
         </ul>

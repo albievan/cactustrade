@@ -108,7 +108,7 @@ func (s *Service) hasKeys(ctx context.Context, a domain.Account) bool {
 }
 
 // Reconcile matches one eToro account with eToro (PLAN 4.8): every order of ours that is not
-// final is resolved by its request id (adopted when eToro has it; abandoned when eToro still
+// final is resolved by eToro's order id when known, else its request id (adopted when eToro has it; abandoned when eToro still
 // does not know it lookupGiveUp after it was sent), then the agent positions are matched with
 // a fresh portfolio: ours that are gone are closed locally. Positions cactusTrade did not
 // open are never touched (OD1); a non-conforming one keeps the account unreconciled (entries
@@ -165,12 +165,18 @@ func (s *Service) settleOrder(ctx context.Context, a domain.Account, o domain.Or
 	bctx := ports.WithAccount(ctx, a)
 	switch o.Kind {
 	case domain.OrderOpen:
-		st, err := s.d.Broker.Lookup(bctx, o.RequestID)
+		st, err := s.d.Broker.Lookup(bctx, o.RequestID, o.EtoroOrderID)
 		switch {
 		case err == nil:
 			if _, err := s.applyOpenStatus(ctx, a, o, st); err != nil {
 				return fmt.Sprintf("order %s: %v", o.RequestID, err)
 			}
+		case errors.Is(err, domain.ErrNotFound) && stale && !domain.CanMove(o.State, domain.OrderAbandoned):
+			// eToro accepted it (pending or partly filled), so it is never abandoned (review-c):
+			// it stays reserved, its instrument blocked, and is looked up again on every pass.
+			// One warning, not one per pass (live findings 2026-11-24).
+			s.warnOnce(ctx, a, o, "order.unresolved", fmt.Sprintf("%s order for %s accepted by eToro but not found by lookup", o.Kind, s.instrumentLabel(ctx, o.Instrument)),
+				fmt.Sprintf("eToro order %d is %s here and its lookups answer 404; its cash stays reserved and entries in it wait. Check it on eToro", o.EtoroOrderID, o.State))
 		case errors.Is(err, domain.ErrNotFound) && stale:
 			if _, err := s.abandon(ctx, a, o, fmt.Sprintf("eToro does not know it %s after it was sent", lookupGiveUp)); err != nil {
 				return fmt.Sprintf("order %s: %v", o.RequestID, err)

@@ -234,15 +234,16 @@ func (s *Service) leaseProblem(ctx context.Context, accountID string) string {
 }
 
 // superviseOrders follows up our orders that are not final: open orders pending longer than
-// pendingMax (any pending one when killed) are looked up once and cancelled if still
-// pending; close orders with an eToro id are read once.
+// pendingMax (any pending one when killed) are looked up once (by eToro's order id when known)
+// and cancelled if still pending, at most once per order while a cancel is in flight or was
+// accepted (cancelRecord.blocked); close orders with an eToro id are read once.
 func (s *Service) superviseOrders(ctx context.Context, a domain.Account, rep *SupervisorReport) {
 	orders, err := s.d.Store.Orders().ListOpen(ctx, a.ID)
 	if err != nil {
 		rep.fail("reading our orders: %v", err)
 		return
 	}
-	recent, err := s.recentCancels(ctx, a.ID)
+	hist, err := s.cancelHistory(ctx, a.ID, orders)
 	if err != nil {
 		rep.fail("reading our cancels: %v", err)
 		return
@@ -262,6 +263,7 @@ func (s *Service) superviseOrders(ctx context.Context, a domain.Account, rep *Su
 			if !rep.Killed && rep.flatten == "" && now.Sub(sent) < pendingMax {
 				continue // the executor is still following it
 			}
+			// Look up first: a cancel is only for what is still pending after the lookup.
 			if p := s.settleOrder(ctx, a, o, domain.Portfolio{}, orders); p != "" {
 				rep.fail("%s", p)
 			}
@@ -270,39 +272,111 @@ func (s *Service) superviseOrders(ctx context.Context, a domain.Account, rep *Su
 				rep.fail("reading order %s: %v", o.RequestID, err)
 				continue
 			}
-			if (cur.State == domain.OrderPending || cur.State == domain.OrderPartial) && cur.EtoroOrderID > 0 && !recent[cur.EtoroOrderID] {
-				why := fmt.Sprintf("pending for over %s", pendingMax)
-				switch {
-				case rep.flatten != "":
-					why = rep.flatten
-				case rep.Killed:
-					why = "the kill switch is on"
-				}
-				if _, err := s.cancelOrder(ctx, a, cur, why); err != nil {
-					rep.fail("cancelling order %s: %v", cur.RequestID, err)
-					continue
-				}
-				rep.Cancelled++
+			if (cur.State != domain.OrderPending && cur.State != domain.OrderPartial) || cur.EtoroOrderID <= 0 {
+				continue
 			}
+			if s.cancelBlocked(ctx, a, cur, hist[cur.EtoroOrderID], now) {
+				continue
+			}
+			why := fmt.Sprintf("pending for over %s", pendingMax)
+			switch {
+			case rep.flatten != "":
+				why = rep.flatten
+			case rep.Killed:
+				why = "the kill switch is on"
+			}
+			if _, err := s.cancelOrder(ctx, a, cur, why); err != nil {
+				rep.fail("cancelling order %s: %v", cur.RequestID, err)
+				continue
+			}
+			rep.Cancelled++
 		}
 	}
 }
 
-// recentCancels returns the eToro order ids a cancel of ours was sent for within
-// pendingMax, or is still in flight for: they are not cancelled again yet.
-func (s *Service) recentCancels(ctx context.Context, accountID string) (map[int64]bool, error) {
-	os, err := s.d.Store.Orders().List(ctx, accountID, 200)
+// maxCancels is the most cancels sent for one open order while none of them was accepted
+// (eToro refused them, or they were abandoned unconfirmed), a pendingMax apart. An accepted
+// cancel is never followed by another: on 2026-11-24 the supervisor sent 151 accepted cancels
+// for one filled order in 90 minutes (live findings).
+const maxCancels = 3
+
+// cancelRecord sums up the cancels of ours for one eToro order.
+type cancelRecord struct {
+	// inFlight: one is not final yet. accepted: eToro accepted one (stored as filled), the
+	// latest at acceptedAt.
+	inFlight, accepted bool
+	acceptedAt         time.Time
+	// sent counts every cancel stored for the order; lastAt is when the latest was stored.
+	sent   int
+	lastAt time.Time
+}
+
+// cancelHistory returns the cancels of ours per eToro order id, for every order sent from the
+// oldest open order with an eToro id on (a cancel is always younger than its target).
+func (s *Service) cancelHistory(ctx context.Context, accountID string, open []domain.Order) (map[int64]cancelRecord, error) {
+	out := map[int64]cancelRecord{}
+	var since time.Time
+	for _, o := range open {
+		if o.Kind == domain.OrderOpen && o.EtoroOrderID > 0 && (since.IsZero() || o.CreatedAt.Before(since)) {
+			since = o.CreatedAt
+		}
+	}
+	if since.IsZero() {
+		return out, nil
+	}
+	os, err := s.d.Store.Orders().ListSince(ctx, accountID, since)
 	if err != nil {
 		return nil, err
 	}
-	now := s.d.Clock.Now()
-	out := map[int64]bool{}
-	for _, o := range os {
-		if o.Kind == domain.OrderCancel && (!o.State.Final() || now.Sub(o.CreatedAt) < pendingMax) {
-			out[o.TargetOrderID] = true
+	for _, c := range os {
+		if c.Kind != domain.OrderCancel || c.TargetOrderID <= 0 {
+			continue
 		}
+		r := out[c.TargetOrderID]
+		r.sent++
+		if c.CreatedAt.After(r.lastAt) {
+			r.lastAt = c.CreatedAt
+		}
+		switch {
+		case !c.State.Final():
+			r.inFlight = true
+		case c.State == domain.OrderFilled:
+			r.accepted = true
+			if c.UpdatedAt.After(r.acceptedAt) {
+				r.acceptedAt = c.UpdatedAt
+			}
+		}
+		out[c.TargetOrderID] = r
 	}
 	return out, nil
+}
+
+// cancelBlocked reports whether no new cancel may be sent for the pending open order target
+// now: one is in flight; one was accepted (eToro's lookup must say cancelled or filled first);
+// maxCancels were sent; or the latest was sent less than pendingMax ago. An accepted cancel
+// still unconfirmed after pendingMax, and the maxCancels limit, raise one warning per order.
+func (s *Service) cancelBlocked(ctx context.Context, a domain.Account, target domain.Order, r cancelRecord, now time.Time) bool {
+	label := s.instrumentLabel(ctx, target.Instrument)
+	switch {
+	case r.inFlight:
+		return true
+	case r.accepted:
+		if now.Sub(r.acceptedAt) >= pendingMax {
+			s.warnOnce(ctx, a, target, "order.cancel_unconfirmed",
+				fmt.Sprintf("Cancel of %s order %d accepted but not confirmed", label, target.EtoroOrderID),
+				fmt.Sprintf("eToro accepted the cancel at %s but its lookup still says %s or does not find the order. No further cancel is sent; "+
+					"its cash stays reserved and entries in %s wait until a lookup says cancelled or filled", r.acceptedAt.UTC().Format(time.RFC3339), target.State, label))
+		}
+		return true
+	case r.sent >= maxCancels:
+		s.warnOnce(ctx, a, target, "order.cancel_refused",
+			fmt.Sprintf("Cancel of %s order %d not accepted after %d tries", label, target.EtoroOrderID, r.sent),
+			fmt.Sprintf("No further cancel is sent; its cash stays reserved and entries in %s wait until a lookup says cancelled or filled", label))
+		return true
+	case r.sent > 0 && now.Sub(r.lastAt) < pendingMax:
+		return true
+	}
+	return false
 }
 
 // sessionsFor returns, per instrument of the positions, the calendar session of its own

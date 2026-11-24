@@ -164,7 +164,7 @@ func TestReconcileBrokerErrors(t *testing.T) {
 	x.b.PortfolioErr = nil
 	x.storedOrder(t, openSpec(instNYSE), x.clock.Now(), domain.OrderSent)
 	h := &hookBroker{SimBroker: x.b}
-	h.lookup = func(context.Context, string) (domain.OrderStatus, error) {
+	h.lookup = func(context.Context, string, int64) (domain.OrderStatus, error) {
 		return domain.OrderStatus{}, fmt.Errorf("timeout: %w", domain.ErrUnavailable)
 	}
 	x.svc.d.Broker = h
@@ -272,7 +272,7 @@ func TestReconcileCloseAndCancelOrders(t *testing.T) {
 		}
 		return domain.OrderStatus{OrderID: id, State: domain.OrderFilled, Final: true}, nil
 	}
-	h.lookup = func(context.Context, string) (domain.OrderStatus, error) {
+	h.lookup = func(context.Context, string, int64) (domain.OrderStatus, error) {
 		return domain.OrderStatus{State: domain.OrderPending, OrderID: 515151}, nil
 	}
 	x.svc.d.Broker = h

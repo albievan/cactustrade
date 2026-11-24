@@ -67,7 +67,7 @@ func TestSimBrokerOpenOutcomes(t *testing.T) {
 			if err == nil && (st.State != domain.OrderPending || st.OrderID == 0 || st.RequestID != tt.intent.RequestID) {
 				t.Fatalf("accepted = %+v", st)
 			}
-			got, err := b.Lookup(ctx, tt.intent.RequestID)
+			got, err := b.Lookup(ctx, tt.intent.RequestID, 0)
 			if !errors.Is(err, tt.lookupErr) || got.State != tt.state || got.Final != tt.final {
 				t.Fatalf("Lookup = %+v %v", got, err)
 			}
@@ -106,11 +106,11 @@ func TestSimBrokerLifecycle(t *testing.T) {
 		t.Fatal(st, err)
 	}
 	for i, want := range []domain.OrderState{domain.OrderPending, domain.OrderPending, domain.OrderFilled} {
-		if got, _ := b.Lookup(ctx, "r1"); got.State != want {
+		if got, _ := b.Lookup(ctx, "r1", 0); got.State != want {
 			t.Fatalf("lookup %d = %s", i, got.State)
 		}
 	}
-	got, _ := b.Lookup(ctx, "r1")
+	got, _ := b.Lookup(ctx, "r1", 0)
 	if e := got.Executions[0]; e.OpenRate != 100_000_000 || e.Units != 1_000_000 || e.Amount != 100_00 || e.StopLossRate != 95_000_000 {
 		t.Fatalf("execution = %+v", e)
 	}
@@ -126,7 +126,7 @@ func TestSimBrokerLifecycle(t *testing.T) {
 	if err := b.Cancel(ctx, p.OrderID, "c1"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := b.Lookup(ctx, "r2"); got.State != domain.OrderCancelled || !got.Final {
+	if got, _ := b.Lookup(ctx, "r2", 0); got.State != domain.OrderCancelled || !got.Final {
 		t.Fatalf("cancelled = %+v", got)
 	}
 	if err := b.Cancel(ctx, p.OrderID, "c2"); err != nil { // idempotent on a final order
@@ -141,7 +141,7 @@ func TestSimBrokerLifecycle(t *testing.T) {
 		t.Fatalf("partial pending = %v", pf.PendingOpen)
 	}
 	_ = b.Cancel(ctx, pp.OrderID, "c4")
-	if got, _ := b.Lookup(ctx, "r3"); got.State != domain.OrderPartial || !got.Final || len(got.Executions) != 1 || got.Executions[0].Amount != 50_00 {
+	if got, _ := b.Lookup(ctx, "r3", 0); got.State != domain.OrderPartial || !got.Final || len(got.Executions) != 1 || got.Executions[0].Amount != 50_00 {
 		t.Fatalf("partial cancelled = %+v", got)
 	}
 	if b.Cancels != 4 || strings.Join(b.CancelRequests, ",") != "c1,c2,c3,c4" {
@@ -216,7 +216,7 @@ func TestSimBrokerGatesAndReads(t *testing.T) {
 		t.Fatal("no account")
 	}
 	t212 := ports.WithAccount(context.Background(), domain.Account{ID: "t", Mode: domain.ModeDemo, Platform: domain.PlatformTrading212})
-	if _, err := b.Lookup(t212, "x"); !errors.Is(err, domain.ErrUnavailable) {
+	if _, err := b.Lookup(t212, "x", 0); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatal("trading 212 account")
 	}
 	if len(b.Violations) != 6 || b.Opens != 2 {
@@ -232,7 +232,7 @@ func TestSimBrokerGatesAndReads(t *testing.T) {
 	if _, err := b.Portfolio(ctx); !errors.Is(err, boom) {
 		t.Fatal("portfolio")
 	}
-	if _, err := b.Lookup(ctx, "x"); !errors.Is(err, boom) {
+	if _, err := b.Lookup(ctx, "x", 0); !errors.Is(err, boom) {
 		t.Fatal("lookup")
 	}
 	if _, err := b.CloseOrder(ctx, 1); !errors.Is(err, boom) {

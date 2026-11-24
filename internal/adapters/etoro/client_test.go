@@ -425,7 +425,7 @@ func TestCostsSendOnlyGuardrailConstants(t *testing.T) {
 func TestLookupAndHistory(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.ctx()
-	st, err := e.c.Lookup(ctx, "req-1")
+	st, err := e.c.Lookup(ctx, "req-1", 0)
 	want := domain.OrderStatus{
 		RequestID: "req-1", OrderID: 555, State: domain.OrderFilled, Final: true, Instrument: 1001,
 		Settlement: domain.SettlementReal, Leverage: 1, Side: domain.Long, Reason: "Filled",
@@ -440,7 +440,7 @@ func TestLookupAndHistory(t *testing.T) {
 	if e.last().URL.Query().Get("referenceId") != "req-1" {
 		t.Fatal("lookup must use referenceId = our x-request-id")
 	}
-	if _, err := e.c.Lookup(ctx, ""); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := e.c.Lookup(ctx, "", 0); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatal("empty request id")
 	}
 	trades, err := e.c.TradeHistory(ctx, time.Date(2026, 11, 1, 23, 0, 0, 0, time.UTC))
@@ -462,7 +462,7 @@ func TestLookupStates(t *testing.T) {
 		e.fake.route = func(*http.Request, int) (int, string, http.Header) {
 			return 200, fmt.Sprintf(`{"orderId":1,"status":{"id":%d,"name":"x","errorMessage":"why"}}`, id), nil
 		}
-		st, err := e.c.Lookup(e.ctx(), "r")
+		st, err := e.c.Lookup(e.ctx(), "r", 0)
 		final := id == 3 || id == 4 || id == 7 || id == 8 || id == 9 || id == 10
 		if err != nil || st.State != want || st.Reason != "why" || st.Final != final {
 			t.Errorf("status %d → %+v %v", id, st, err)
@@ -472,7 +472,7 @@ func TestLookupStates(t *testing.T) {
 	e.fake.route = func(*http.Request, int) (int, string, http.Header) {
 		return 404, `{"type":"x","title":"Not Found","status":404,"detail":"no such order"}`, nil
 	}
-	st, err := e.c.Lookup(e.ctx(), "r")
+	st, err := e.c.Lookup(e.ctx(), "r", 0)
 	if !errors.Is(err, domain.ErrNotFound) || st.State != domain.OrderUnknown || !strings.Contains(err.Error(), "no such order") {
 		t.Fatalf("404 lookup = %+v %v", st, err)
 	}

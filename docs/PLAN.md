@@ -261,7 +261,7 @@ shows in `pnl`.
 | 4.14 | **Wiring.** Start-up order: migrate → `app.New` → env account / LLM migration → **`ReconcileAll` before any supervisor or agent loop** (scanner and equity loops are read-only) → `supervisorLoop` (10 s; one goroutine with a timeout per account, so one account's exits never wait for another's) → `agentLoop` (bar close + 5 s). Lease holder = random id per process. Graceful shutdown stops the loops and releases leases; positions handled per OD6. | `cmd/cactustrade/main.go`, `main_test.go` | `go test ./cmd/cactustrade` checks that an ordering hook sees `ReconcileAll` before the first `Supervise`; `make build` | done |
 | 4.15 | **Web.** Dashboard *Agent* panel: state, reconciled, kill reason, distance to daily floor and drawdown; Start / Pause / Stop; red kill-switch button with a confirmation dialog; Reset (admin, typed phrase). Controls disabled with "real trading needs the phase-7 gate" on real accounts. Remove the "orders arrive in phase 4" note. New *Orders* page under Trading. Risk limits page explains paused and killed. | `web/src/components/AgentPanel.tsx`, `web/src/pages/{Dashboard.tsx,Orders.tsx,RiskLimits.tsx}`, `components/Layout.tsx`, `lib/api.ts`, tests | `pnpm -C web check`. Vitest: buttons by role, kill confirmation, real account disabled, limits form disabled unless stopped. | done |
 | 4.16 | **Docs.** ARCHITECTURE: execution, supervisor, lease, D20–D26. `docs/etoro-api.md`: execution facts plus the unverified list U1–U11. README risk note. | docs | `make check` | done |
-| 4.17 | **Live demo verification, run by the owner.** One minimal long and one short on an NYSE share in session. Record sanitised fixtures (open, lookup pending/filled, close, close-orders). Settle U1–U11. Kill switch with 2 positions. Restart mid-position → reconciliation adopts it. Never real. | `testdata/`, `docs/etoro-api.md` | Fixture tests replaced by recordings and green | blocked: the owner's live demo run (needs the demo keys) |
+| 4.17 | **Live demo verification, run by the owner.** One minimal long and one short on an NYSE share in session. Record sanitised fixtures (open, lookup pending/filled, close, close-orders). Settle U1–U11. Kill switch with 2 positions. Restart mid-position → reconciliation adopts it. Never real. | `testdata/`, `docs/etoro-api.md` | Fixture tests replaced by recordings and green | partly settled (2026-11-24, "Live findings 2026-11-24": first live opens; lookup by `orderId`, amount fields, closed executions; U2/U8/U11 partly settled). Still open: a short, close and close-order recordings, kill with 2 positions, restart mid-position, U1/U3–U7/U9/U10 |
 
 Guardrails touched (CLAUDE.md §2): §2.1 no new path (allowlist test unchanged). §2.2 4.1, 4.7 (portfolio age re-checked before send), 4.10, 4.12. §2.3 4.6 (golden bodies), 4.7 (check after fill), 4.1/4.10/4.12 (short stop and 25 % cap). §2.4 4.2, 4.7, 4.12 (reservations). §2.5 4.2 (`ApplyVerdict`) and depguard. §2.6 4.9, 4.10, 4.11. §2.7 4.7, 4.8, 4.14. Demo only: 4.1, 4.6, 4.7, 4.11.
 
@@ -667,6 +667,59 @@ Decisions made while fixing (recorded here):
 Verification: `make check` green in the worktree (gofumpt, golangci-lint 0 issues, vet,
 `go test -race` with coverage domain 100.0 % / app 87.7 %, MariaDB `test-int`, govulncheck, contract drift,
 `pnpm -C web check`).
+
+### Live findings 2026-11-24 (demo account, first live orders) — `done` (2026-11-24; `make check` green incl. MariaDB test-int)
+
+The agent's first two demo opens (GOOG and AAPL, $100 each; eToro order ids 396359836 and
+396377388) were filled by eToro within 0.4 s. `orders:lookup?referenceId=<our x-request-id>`
+answered **404** before and after the fill; `orders:lookup?orderId=` works (recorded,
+sanitised: `internal/adapters/etoro/testdata/recorded/lookup_filled_by_order_id.json`).
+Consequences: the rows stayed `pending`, no agent position was recorded, so the positions
+counted as foreign (OD1) and would not have been flattened (eToro's take-profit closed them);
+the supervisor sent a cancel every minute (151 rows, each "accepted" by eToro); then every
+pass failed with "pending → abandoned: illegal order transition" (review-c forbids it, but
+`settleOrder` still tried). The fill's `investedAmountCurrency` was 1 for $100. Each fix has
+a test that failed before it (`internal/app/live_findings_test.go`,
+`internal/adapters/etoro/recorded_test.go`, `internal/ports/fakes/simbroker_risks_test.go`).
+Facts recorded in `docs/etoro-api.md` ("Live findings", U2/U8/U11).
+
+| ID | Fix | Test |
+|---|---|---|
+| LF1 | **Lookup by eToro's order id.** `ports.Broker.Lookup(ctx, requestID, orderID)`: the eToro adapter asks `orderId=` when orderID > 0, else `referenceId=`, and refuses an answer about another order id. Every caller passes the stored `EtoroOrderID` (executor `sendOpen`/`resolveOpen`, reconciliation `settleOrder`, which the supervisor uses); only an open whose answer was lost or rate limited has none. `LookupRaw` is gone: `cactustrade etoro-lookup` (`--order-id` or `--request-id`) goes through `LookupWithRaw` (the same parsing) and prints the parsed status plus eToro's raw answer. | `TestLookupRecordedFilledByOrderID`, `TestLookupWrongOrder`, `TestLookupWithRaw`, `TestExecutorLooksUpByOrderID`, `TestPrintLookup` |
+| LF2 | **Amount and closed executions.** An execution's amount is `initialExposureAccountCurrency`, else (0 or absent) `marginAccountCurrency`, else `investedAmountCurrency`. `settlementType` "REAL" is read in any case. New `domain.PositionExecution.Closed` (`state: closed`, any case): `recordFills` records the position as ours and settles it closed at once (`position.closed`), never sends it a close; a non-conforming closed fill still blocks the instrument and raises the danger alert ("already closed by eToro"). | `TestLookupAmountFields`, `TestExecutorClosedExecutions` |
+| LF3 | **No cancel storm.** The supervisor looks an order up first, then cancels only when `cancelBlocked` allows it, from the persisted cancels for that eToro order id (`cancelHistory`: `Orders.ListSince` from the oldest open order, so no 200-row window): never while one is in flight or **was accepted** (an accepted cancel is never repeated: eToro's lookup must say cancelled or filled); refused/abandoned ones at most `maxCancels` = 3 in all, a minute apart. The executor's 60 s cancel uses the same check. An accepted cancel still unconfirmed after a minute raises **one** `order.cancel_unconfirmed` warning (whether the lookups say pending or keep failing); the cap raises one `order.cancel_refused`. | `TestLiveOneCancelPerOrder` (10 minutes pending → exactly 1 cancel; also while killed; refused → 3) |
+| LF4 | **Stuck rows resolve; no endless illegal transition.** With LF1 the stuck rows resolve on the next supervisor pass (lookup by order id → filled with a closed execution → agent position recorded and closed → order filled). An accepted (pending/partial) order whose lookups keep answering 404 is held — in `settleOrder` and in the executor's `resolveOpen` — with **one** `order.unresolved` warning, its cash reserved and its instrument blocked; it is not a reconciliation problem (in flight, D24). | `TestLiveStuckOrderResolvesByOrderID`, `TestLiveUnresolvablePendingOrderHolds`, `TestExecutorHoldsAnAcceptedOrderItCannotFind` |
+| LF5 | **Wording.** Contract `Order.kindLabel` and `Order.stateLabel` (required), computed in the app (`app.OrderView.KindLabel/StateLabel`): "Buy GOOG", "Short AAPL", "Cancel request for GOOG (buy order 396359836)", "Close request for GOOG (position 3649965576)"; an open reads filled / partially filled, a cancel eToro took "accepted", a close "done" ("partly done"), a refused cancel or close "refused". `make gen`; the orders feed (`LiveCards`) and the Orders page show the labels as they are (no wording logic in React); the badge colour still follows `state`. | `TestOrderLabels`, `TestOrderLabelsInTheContract`, `Orders.test.tsx`, `Dashboard.test.tsx` |
+| LF6 | **Simulator.** `fakes.SimBroker.RefLookupNotFound` (by request id always 404; by order id found; counter `RefNotFound`) and `IgnoreCancels` (200, nothing happens). 4.12 arms `RefLookupNotFound` in a third of the scenarios and fails if no lookup by request id was ever answered 404; every invariant unchanged. A planted regression (lookups by request id only) fails 4.12 ("position … at the broker is not recorded as ours"). | `TestSimBrokerRefLookupNotFound`, `TestSimBrokerIgnoredCancels`, `TestAgentSequenceProperties` |
+
+Decisions made while fixing (recorded here):
+
+- **LF-a An accepted cancel is never repeated** for the same eToro order, whatever the lookup
+  says afterwards, until the order is final; the owner gets one warning and the order's cash
+  stays reserved (fail closed). Reading "until the lookup changes" as "until it says cancelled
+  or filled" (the only changes that end the wait). A cancel eToro refused (4xx) or that was
+  abandoned unconfirmed may be retried, at most 3 in all, a minute apart.
+- **LF-b One warning per order per process** (`runtimeState.warned`, in memory): after a
+  restart a still-stuck order warns once more. No migration.
+- **LF-c An accepted order that cannot be found is held, not unreconciled:** like a young
+  order in flight (4.8-a), it reserves its cash and blocks its instrument; reconciliation stays
+  OK so exits and other entries go on. With LF1 this needs eToro to answer 404 by order id,
+  which was not seen live.
+- **LF-d 4.12 and the lookup by request id:** in the scenarios that play
+  `RefLookupNotFound`, the outcomes "lost answer" and "429 that was processed" are not drawn:
+  such an open has no eToro order id, so its fill is found only by reconciliation's adoption
+  (review B2, within `ReconcileEvery`), after the tick that checks every broker position is
+  ours (same reasoning as review-d). `TestExecutorLooksUpByOrderID` covers that path
+  (abandoned after 2 min, then adopted). **Open risk for the owner:** with eToro's live
+  behaviour, a lost open answer leaves its fill unrecorded for up to 5 minutes (until the next
+  reconciliation adopts it); its cash shows as spent in the portfolio once eToro lists it.
+- **LF-e Labels in the app, not the domain:** they are presentation for the API (no decision
+  reads them); `OrderView` methods, so the REST list and the live stream word orders the same.
+- The stored state values are unchanged (a cancel eToro took is still `filled` in the
+  database and the CSV export); only the new labels change.
+
+Not changed: no migration, no new dependency, no eToro path (allowlist untouched), no
+guardrail loosened.
 
 ### Phase 5 steps
 

@@ -316,3 +316,15 @@ func TestAgentRolesAndRealAccounts(t *testing.T) {
 		t.Fatalf("viewer orders %d", code)
 	}
 }
+
+// TestOrderLabelsInTheContract: the orders feed shows the server's wording (live findings
+// 2026-11-24: "Cancel GOOG Long filled" confused the owner).
+func TestOrderLabelsInTheContract(t *testing.T) {
+	o := toOrder(app.OrderView{Order: domain.Order{
+		RequestID: "r1", Mode: domain.ModeDemo, Kind: domain.OrderCancel, Direction: domain.Long, Instrument: 1002,
+		TargetOrderID: 396359836, State: domain.OrderFilled,
+	}, Symbol: "GOOG"})
+	if o.KindLabel != "Cancel request for GOOG (buy order 396359836)" || o.StateLabel != "accepted" || o.State != "filled" {
+		t.Fatalf("order = %+v", o)
+	}
+}

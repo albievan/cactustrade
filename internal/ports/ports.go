@@ -433,9 +433,11 @@ type Broker interface {
 	// Open sends a market order to open a position; the intent's direction picks one of the
 	// two constant order shapes. The answer means accepted, not filled: poll Lookup.
 	Open(ctx context.Context, o domain.OrderIntent) (domain.OrderStatus, error)
-	// Lookup finds an open order by the request id it was sent with (domain.ErrNotFound when
-	// the broker does not know it), with what it executed.
-	Lookup(ctx context.Context, requestID string) (domain.OrderStatus, error)
+	// Lookup finds an open order, with what it executed: by eToro's order id when orderID > 0
+	// (eToro answered 404 to a lookup by our request id for filled demo orders, 2026-11-24),
+	// else by the request id it was sent with. domain.ErrNotFound when the broker does not
+	// know it.
+	Lookup(ctx context.Context, requestID string, orderID int64) (domain.OrderStatus, error)
 	// Cancel asks the broker to cancel a pending open order (eToro's order id).
 	Cancel(ctx context.Context, orderID int64, requestID string) error
 	// Close sends a market order closing the whole position; poll CloseOrder with the

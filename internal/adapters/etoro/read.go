@@ -481,10 +481,62 @@ func side(s string) domain.Direction {
 	return ""
 }
 
-// LookupRaw returns eToro's orders:lookup answer for requestID exactly as received (read
-// only; for the operator's diagnosis, PLAN 4.17: settling how a real answer is shaped). The
-// answer holds order data only, never a key.
-func (c *Client) LookupRaw(ctx context.Context, requestID string, orderID int64) (json.RawMessage, error) {
+// lookupWire is eToro's orders:lookup answer, as far as cactusTrade reads it.
+type lookupWire struct {
+	OrderID int64 `json:"orderId"`
+	Status  struct {
+		ID           int     `json:"id"`
+		Name         string  `json:"name"`
+		ErrorMessage *string `json:"errorMessage"`
+	} `json:"status"`
+	Asset struct {
+		InstrumentID   int64  `json:"instrumentId"`
+		SettlementType string `json:"settlementType"`
+		Leverage       int    `json:"leverage"`
+		Side           string `json:"side"`
+	} `json:"asset"`
+	PositionExecutions []struct {
+		PositionID int64  `json:"positionId"`
+		State      string `json:"state"`
+		// The fill's amount in the account currency: initialExposureAccountCurrency, else
+		// marginAccountCurrency (the same at leverage 1), else investedAmountCurrency, which
+		// is not the invested amount (it was 1 for a $100 position, 2026-11-24).
+		Exposure       *float64 `json:"initialExposureAccountCurrency"`
+		Margin         *float64 `json:"marginAccountCurrency"`
+		Invested       *float64 `json:"investedAmountCurrency"`
+		RemainingUnits float64  `json:"remainingUnits"`
+		StopLossRate   *float64 `json:"stopLossRate"`
+		OpeningData    struct {
+			Units    *float64 `json:"units"`
+			AvgPrice float64  `json:"avgPrice"`
+		} `json:"openingData"`
+	} `json:"positionExecutions"`
+}
+
+// firstPositive returns the first of the values that is present and above 0 (0 if none).
+func firstPositive(vs ...*float64) float64 {
+	for _, v := range vs {
+		if v != nil && *v > 0 {
+			return *v
+		}
+	}
+	return 0
+}
+
+// Lookup finds an open order with what eToro actually opened: the asset's settlement type,
+// leverage and side, and each resulting position with its units, amount, average price,
+// stop-loss and whether eToro already closed it. With orderID > 0 it asks by eToro's order id
+// (orderId=), else by the x-request-id it was sent with (referenceId=): on 2026-11-24 the
+// demo answered 404 by referenceId for two filled orders and found them by orderId.
+func (c *Client) Lookup(ctx context.Context, requestID string, orderID int64) (domain.OrderStatus, error) {
+	st, _, err := c.LookupWithRaw(ctx, requestID, orderID)
+	return st, err
+}
+
+// LookupWithRaw is Lookup that also returns eToro's answer exactly as received (read only),
+// for the operator's diagnosis (cactustrade etoro-lookup). The answer holds order data only,
+// never a key.
+func (c *Client) LookupWithRaw(ctx context.Context, requestID string, orderID int64) (domain.OrderStatus, json.RawMessage, error) {
 	q := url.Values{}
 	switch {
 	case orderID > 0:
@@ -492,48 +544,19 @@ func (c *Client) LookupRaw(ctx context.Context, requestID string, orderID int64)
 	case requestID != "":
 		q.Set("referenceId", requestID)
 	default:
-		return nil, domain.Invalid("requestId", "a request id or an order id is required")
+		return domain.OrderStatus{}, nil, domain.Invalid("requestId", "a request id or an eToro order id is required")
 	}
+	failed := domain.OrderStatus{RequestID: requestID, OrderID: orderID, State: domain.OrderUnknown}
 	var raw json.RawMessage
 	if err := c.call(ctx, OpOrderLookup, nil, q, nil, &raw); err != nil {
-		return nil, err
+		return failed, nil, err
 	}
-	return raw, nil
-}
-
-// Lookup finds an order by the x-request-id it was sent with (eToro's referenceId), with
-// what eToro actually opened: the asset's settlement type, leverage and side, and each
-// resulting position with its units, invested amount, average price and stop-loss.
-func (c *Client) Lookup(ctx context.Context, requestID string) (domain.OrderStatus, error) {
-	if requestID == "" {
-		return domain.OrderStatus{}, domain.Invalid("requestId", "is required")
+	var resp lookupWire
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return failed, raw, fmt.Errorf("etoro %s: decoding the answer: %w: %w", OpOrderLookup, domain.ErrUnavailable, err)
 	}
-	var resp struct {
-		OrderID int64 `json:"orderId"`
-		Status  struct {
-			ID           int     `json:"id"`
-			Name         string  `json:"name"`
-			ErrorMessage *string `json:"errorMessage"`
-		} `json:"status"`
-		Asset struct {
-			InstrumentID   int64  `json:"instrumentId"`
-			SettlementType string `json:"settlementType"`
-			Leverage       int    `json:"leverage"`
-			Side           string `json:"side"`
-		} `json:"asset"`
-		PositionExecutions []struct {
-			PositionID     int64    `json:"positionId"`
-			Invested       float64  `json:"investedAmountCurrency"`
-			RemainingUnits float64  `json:"remainingUnits"`
-			StopLossRate   *float64 `json:"stopLossRate"`
-			OpeningData    struct {
-				Units    *float64 `json:"units"`
-				AvgPrice float64  `json:"avgPrice"`
-			} `json:"openingData"`
-		} `json:"positionExecutions"`
-	}
-	if err := c.call(ctx, OpOrderLookup, nil, url.Values{"referenceId": {requestID}}, nil, &resp); err != nil {
-		return domain.OrderStatus{RequestID: requestID, State: domain.OrderUnknown}, err
+	if orderID > 0 && resp.OrderID != orderID {
+		return failed, raw, fmt.Errorf("etoro %s: asked for order %d, eToro answered about order %d: %w", OpOrderLookup, orderID, resp.OrderID, domain.ErrUnavailable)
 	}
 	st := domain.OrderStatus{
 		RequestID: requestID, OrderID: resp.OrderID, State: domain.OrderUnknown, Reason: resp.Status.Name,
@@ -551,11 +574,14 @@ func (c *Client) Lookup(ctx context.Context, requestID string) (domain.OrderStat
 		if pe.OpeningData.Units != nil {
 			units = *pe.OpeningData.Units
 		}
-		e := domain.PositionExecution{PositionID: pe.PositionID, Units: toMicros(units), Amount: toCents(pe.Invested), OpenRate: toMicros(pe.OpeningData.AvgPrice)}
+		e := domain.PositionExecution{
+			PositionID: pe.PositionID, Units: toMicros(units), Amount: toCents(firstPositive(pe.Exposure, pe.Margin, pe.Invested)),
+			OpenRate: toMicros(pe.OpeningData.AvgPrice), Closed: strings.EqualFold(strings.TrimSpace(pe.State), "closed"),
+		}
 		if pe.StopLossRate != nil {
 			e.StopLossRate = toMicros(*pe.StopLossRate)
 		}
 		st.Executions = append(st.Executions, e)
 	}
-	return st, nil
+	return st, raw, nil
 }

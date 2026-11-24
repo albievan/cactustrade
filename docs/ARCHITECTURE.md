@@ -87,12 +87,17 @@ Three paths act on an eToro demo account. Only the executor (`app/executor.go`) 
 
 - **Executor.** `placeEntry` stores the order row (`created`) first, re-checks the
   portfolio's age, marks it `sent` (stored), then calls `Open` with the row's id as
-  `x-request-id`. It polls `orders:lookup` by that id (1, 2, 4, 8, 15, 30 s, then cancel at
-  60 s, abandoned at 2 min when eToro never saw it). An open is never resent (review M3):
+  `x-request-id`. It polls `orders:lookup` (1, 2, 4, 8, 15, 30 s, then cancel at 60 s,
+  abandoned at 2 min when eToro never saw it) by eToro's order id from the open's answer, and
+  by our request id only when it has none (a lost or 429 answer): eToro's demo answered 404 by
+  request id for filled orders (live findings 2026-11-24, `Broker.Lookup(ctx, requestID,
+  orderID)`). An open is never resent (review M3):
   after a 429 it waits out Retry-After and looks the order up; a lost answer is resolved by
   lookup (OD2). Closes (≤ 5) and cancels (≤ 3) resend with the same id.
   Every fill is checked against the two order shapes, leverage 1 and the stop we sent (± 1 %);
-  a fill that does not conform is closed at once and its instrument blocked.
+  a fill that does not conform is closed at once and its instrument blocked. A fill whose
+  position eToro already closed (execution `state: closed`, its take-profit or stop hit) is
+  recorded as ours and settled as closed at once.
   `closePosition` and `cancelOrder` follow the same rules with their own stored ids.
 - **Reconciliation** (`app/reconcile.go`) resolves every non-final order of ours by its id and
   matches the positions cactusTrade opened (`agent_positions`) with eToro. Positions opened
@@ -106,8 +111,10 @@ Three paths act on an eToro demo account. Only the executor (`app/executor.go`) 
   with the session rule only), folds the equity into the risk state (risk day from 22:00 UTC,
   high-water mark, daily latch), trips the kill switch on a drawdown, closes positions due
   (flatten 10 min before their own market's close, non-conforming, bad stop, killed) and
-  cancels open orders pending for over a minute. It needs no LLM, no prices and no
-  reconciliation.
+  cancels open orders pending for over a minute — looked up first, and at most one cancel per
+  order while one is in flight or was accepted (refused ones: at most 3, a minute apart); a
+  cancel still unconfirmed raises one warning, not one per pass. It needs no LLM, no prices
+  and no reconciliation.
 - **Agent (entries).** `AgentLoop` wakes at each 5-minute bar close + 5 s (D26). An account
   ticks only when it is eToro, demo, running, not killed, reconciled, holds the lease and a
   market calendar is configured (D25). Per watchlist share in session: closed bars only →

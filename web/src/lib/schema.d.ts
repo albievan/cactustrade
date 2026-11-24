@@ -2540,6 +2540,8 @@ export interface components {
             mode: components["schemas"]["TradingMode"];
             /** @description open, close or cancel */
             kind: string;
+            /** @description what the order is, worded by the server, e.g. "Buy GOOG", "Cancel request for GOOG (buy order 396359836)", "Close request for GOOG (position 3649965576)" */
+            kindLabel: string;
             /** @description long, short or empty (cancel) */
             direction: string;
             /** Format: int64 */
@@ -2555,6 +2557,8 @@ export interface components {
             etoroOrderId?: number;
             /** @description created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned */
             state: string;
+            /** @description the state worded by the server: an open reads filled / partially filled; a cancel eToro took reads accepted, a close done (partly done); a refused cancel or close reads refused; otherwise the state's name */
+            stateLabel: string;
             reason: string;
             sends: number;
             /** Format: date-time */
