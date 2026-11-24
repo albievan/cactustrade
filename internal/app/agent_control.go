@@ -159,8 +159,17 @@ func (s *Service) startable(ctx context.Context, a domain.Account) error {
 
 // setAgentState writes an account's agent state and announces it on the bus.
 func (s *Service) setAgentState(ctx context.Context, accountID string, st domain.AgentState) error {
-	if err := s.d.Store.Settings().Set(ctx, agentStateKey(accountID), string(st), s.d.Clock.Now().UTC()); err != nil {
+	prev := s.agentState(ctx, accountID)
+	now := s.d.Clock.Now().UTC()
+	if err := s.d.Store.Settings().Set(ctx, agentStateKey(accountID), string(st), now); err != nil {
 		return err
+	}
+	// Remember when the state last changed (for "running for 2 h 5 min"). Writing the same
+	// state again (a resume after a restart) keeps the time it started.
+	if prev != st {
+		if err := s.d.Store.Settings().Set(ctx, agentSinceKey(accountID), now.Format(time.RFC3339Nano), now); err != nil {
+			s.d.Log.WarnContext(ctx, "storing when the agent state changed failed", "err", err)
+		}
 	}
 	s.publishAgentState(accountID, st)
 	return nil

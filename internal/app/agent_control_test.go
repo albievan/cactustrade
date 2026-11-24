@@ -550,3 +550,34 @@ func TestKillOutlivesItsRequest(t *testing.T) {
 		t.Fatal("the kill was not stored")
 	}
 }
+
+// TestAgentStateSince: the panel's "running for …" starts when the state changes, and a
+// write of the same state (a resume after a restart) keeps the original time.
+func TestAgentStateSince(t *testing.T) {
+	ae := newAgentEnv(t)
+	if err := ae.svc.setAgentState(ae.ctx, ae.a.ID, domain.AgentStopped); err != nil {
+		t.Fatal(err)
+	}
+	ae.clock.T = ae.clock.T.Add(time.Minute)
+	start := ae.clock.Now().UTC()
+	if err := ae.svc.setAgentState(ae.ctx, ae.a.ID, domain.AgentRunning); err != nil {
+		t.Fatal(err)
+	}
+	ae.clock.T = ae.clock.T.Add(2 * time.Hour)
+	if err := ae.svc.setAgentState(ae.ctx, ae.a.ID, domain.AgentRunning); err != nil {
+		t.Fatal(err)
+	}
+	if got := ae.svc.agentSince(ae.ctx, ae.a.ID); !got.Equal(start) {
+		t.Fatalf("since = %s, want %s", got, start)
+	}
+	if err := ae.svc.setAgentState(ae.ctx, ae.a.ID, domain.AgentPaused); err != nil {
+		t.Fatal(err)
+	}
+	if got := ae.svc.agentSince(ae.ctx, ae.a.ID); !got.Equal(ae.clock.Now().UTC()) {
+		t.Fatalf("since after pause = %s", got)
+	}
+	v, err := ae.svc.AgentStatusView(ae.ctx, ae.admin, ae.a.ID)
+	if err != nil || !v.StateSince.Equal(ae.clock.Now().UTC()) {
+		t.Fatalf("view since = %s %v", v.StateSince, err)
+	}
+}

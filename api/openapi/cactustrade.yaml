@@ -2705,6 +2705,7 @@ components:
         account: { $ref: "#/components/schemas/Account" }
         current: { type: boolean, description: "the caller's current account (the limits form edits it)" }
         state: { $ref: "#/components/schemas/AgentState" }
+        stateSince: { type: string, format: date-time, description: "when the agent entered this state; absent when unknown" }
         killed: { type: boolean }
         reconciliation: { $ref: "#/components/schemas/Reconciliation" }
         limitsEditable: { type: boolean, description: "the caller may change this account's limits now" }
@@ -2772,6 +2773,7 @@ components:
       properties:
         account: { $ref: "#/components/schemas/Account" }
         state: { $ref: "#/components/schemas/AgentState" }
+        stateSince: { type: string, format: date-time, description: "when the agent entered this state; absent when unknown" }
         reconciliation: { $ref: "#/components/schemas/Reconciliation" }
         limits: { $ref: "#/components/schemas/RiskLimits" }
         killed: { type: boolean }

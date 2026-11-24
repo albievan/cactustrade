@@ -57,6 +57,22 @@ func (j limitsJSON) domain() domain.RiskLimits {
 
 // agentState is an account's stored agent state; anything unreadable or unknown is
 // "stopped" (fail closed: never running by accident).
+func agentSinceKey(accountID string) string { return "agent.since." + accountID }
+
+// agentSince is when the agent entered its current state (zero when unknown, e.g. a state
+// stored before this was recorded, or never started).
+func (s *Service) agentSince(ctx context.Context, accountID string) time.Time {
+	v, err := s.d.Store.Settings().Get(ctx, agentSinceKey(accountID))
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 func (s *Service) agentState(ctx context.Context, accountID string) domain.AgentState {
 	v, err := s.d.Store.Settings().Get(ctx, agentStateKey(accountID))
 	if err != nil {

@@ -53,8 +53,10 @@ type LeaseStatus struct {
 
 // AgentView is an account's agent as the dashboard shows it.
 type AgentView struct {
-	Account        domain.AccountView
-	State          domain.AgentState
+	Account domain.AccountView
+	State   domain.AgentState
+	// StateSince is when the agent entered State (zero when unknown).
+	StateSince     time.Time
 	Reconciliation Reconciliation
 	Limits         domain.RiskLimits
 	// Risk is the stored risk state (zero Version: none yet). Today is the current risk day;
@@ -109,7 +111,7 @@ func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID st
 	}
 	now := s.d.Clock.Now()
 	out := AgentView{
-		Account: v, State: s.agentState(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
+		Account: v, State: s.agentState(ctx, v.ID), StateSince: s.agentSince(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
 		Limits: s.riskLimits(ctx, v.ID), Today: domain.RiskDay(now), ResetPhrase: ResetPhrase(v.Name),
 		Controls: s.controlsFor(p, v),
 	}
@@ -149,6 +151,7 @@ type AgentCard struct {
 	// Current: the caller's current account (the one the limits form edits).
 	Current        bool
 	State          domain.AgentState
+	StateSince     time.Time // as AgentView.StateSince
 	Killed         bool
 	Reconciliation Reconciliation
 	// LimitsEditable follows SetRiskLimits' rules for this caller now; LimitsBlocked says
@@ -177,7 +180,7 @@ func (s *Service) AgentCards(ctx context.Context, p Principal) ([]AgentCard, err
 			continue
 		}
 		c := AgentCard{
-			Account: v, Current: v.ID == cur, State: s.agentState(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
+			Account: v, Current: v.ID == cur, State: s.agentState(ctx, v.ID), StateSince: s.agentSince(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
 			LimitsBlocked: s.limitsEditBlocked(ctx, p, v), Controls: s.controlsFor(p, v),
 		}
 		c.LimitsEditable = c.LimitsBlocked == ""

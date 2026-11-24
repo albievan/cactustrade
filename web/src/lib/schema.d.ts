@@ -2415,6 +2415,11 @@ export interface components {
             /** @description the caller's current account (the limits form edits it) */
             current: boolean;
             state: components["schemas"]["AgentState"];
+            /**
+             * Format: date-time
+             * @description when the agent entered this state; absent when unknown
+             */
+            stateSince?: string;
             killed: boolean;
             reconciliation: components["schemas"]["Reconciliation"];
             /** @description the caller may change this account's limits now */
@@ -2483,6 +2488,11 @@ export interface components {
         AgentPanel: {
             account: components["schemas"]["Account"];
             state: components["schemas"]["AgentState"];
+            /**
+             * Format: date-time
+             * @description when the agent entered this state; absent when unknown
+             */
+            stateSince?: string;
             reconciliation: components["schemas"]["Reconciliation"];
             limits: components["schemas"]["RiskLimits"];
             killed: boolean;

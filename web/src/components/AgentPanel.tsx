@@ -3,6 +3,7 @@ import { api, errorText, usd, type AgentPanel as Panel, type Missing } from "../
 import type { Live } from "../lib/live";
 import { useRefreshMode } from "../lib/mode";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { StateSince } from "./StateSince";
 import { FixButton, fixes } from "./FixButton";
 import { ForceCloseDialog, forceCloseNote } from "./ForceCloseDialog";
 import { ProblemAlert } from "./ProblemAlert";
@@ -138,6 +139,7 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
                 {p.reconciliation.ok ? "reconciled" : "not reconciled"}
               </span>
               {p.dayStopped && <span className="badge text-bg-warning">daily limit reached</span>}
+              <StateSince state={p.state} since={p.stateSince} />
             </div>
             {gated && (
               <div className="alert alert-secondary py-2 small mb-2">

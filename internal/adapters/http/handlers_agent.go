@@ -64,7 +64,7 @@ func toControls(c app.AgentControls, startBlocked string) AgentControls {
 
 func toAgentPanel(v app.AgentView) AgentPanel {
 	out := AgentPanel{
-		Account: toAccount(v.Account), State: AgentState(v.State), Reconciliation: toReconciliation(v.Reconciliation),
+		Account: toAccount(v.Account), State: AgentState(v.State), StateSince: optTime(v.StateSince), Reconciliation: toReconciliation(v.Reconciliation),
 		Limits: toRiskLimits(v.Limits), Killed: v.Risk.State.Killed || v.State == domain.AgentKilled,
 		DayStopped: v.Risk.State.DayStopped && v.Risk.State.Day == v.Today, RiskDay: string(v.Risk.State.Day), Today: string(v.Today),
 		StartOfDayEquityCents: Cents(v.Risk.State.StartOfDayEquity), HighWaterMarkCents: Cents(v.Risk.State.HighWaterMark),

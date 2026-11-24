@@ -661,6 +661,9 @@ type AgentCard struct {
 	PendingOrders  int            `json:"pendingOrders"`
 	Reconciliation Reconciliation `json:"reconciliation"`
 	State          AgentState     `json:"state"`
+
+	// StateSince when the agent entered this state; absent when unknown
+	StateSince *time.Time `json:"stateSince,omitempty"`
 }
 
 // AgentControls The agent actions the caller may take on this account
@@ -748,6 +751,9 @@ type AgentPanel struct {
 	// StartOfDayEquityCents US dollars in cents (the eToro account currency is USD)
 	StartOfDayEquityCents Cents      `json:"startOfDayEquityCents"`
 	State                 AgentState `json:"state"`
+
+	// StateSince when the agent entered this state; absent when unknown
+	StateSince *time.Time `json:"stateSince,omitempty"`
 
 	// ToDailyFloorCents US dollars in cents (the eToro account currency is USD)
 	ToDailyFloorCents *Cents `json:"toDailyFloorCents,omitempty"`

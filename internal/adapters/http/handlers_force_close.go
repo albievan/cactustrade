@@ -21,7 +21,7 @@ func (s *Server) ListAgents(w http.ResponseWriter, r *http.Request) {
 	out := make([]AgentCard, 0, len(cs))
 	for _, c := range cs {
 		x := AgentCard{
-			Account: toAccount(c.Account), Current: c.Current, State: AgentState(c.State), Killed: c.Killed,
+			Account: toAccount(c.Account), Current: c.Current, State: AgentState(c.State), StateSince: optTime(c.StateSince), Killed: c.Killed,
 			Reconciliation: toReconciliation(c.Reconciliation), LimitsEditable: c.LimitsEditable,
 			Controls: toControls(c.Controls, c.StartBlocked), OpenPositions: c.OpenPositions, PendingOrders: c.Pending,
 		}

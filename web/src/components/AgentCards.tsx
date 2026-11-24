@@ -1,4 +1,5 @@
 import type { AgentCard } from "../lib/api";
+import { StateSince } from "./StateSince";
 
 const stateBadge: Record<AgentCard["state"], string> = {
   running: "text-bg-success", paused: "text-bg-warning", stopped: "text-bg-secondary", killed: "text-bg-danger",
@@ -72,6 +73,7 @@ export function AgentCardView({ card, busy, onAction, onSwitch }: {
                 <i className={"bi me-1 " + (card.limitsEditable ? "bi-unlock" : "bi-lock-fill")} />
                 {card.limitsEditable ? "limits editable" : "limits locked"}
               </span>
+              <StateSince state={card.state} since={card.stateSince} />
             </div>
             <div className="small text-secondary mt-1">Open positions / orders: {card.openPositions} / {card.pendingOrders}</div>
             {c.startBlockedReason && <div className="small text-warning-emphasis mt-1">Cannot start: {c.startBlockedReason}.</div>}
