@@ -22,12 +22,13 @@ func etoroLookupCmd(ctx context.Context, args []string, getenv func(string) stri
 	fs := flag.NewFlagSet("etoro-lookup", flag.ContinueOnError)
 	fs.SetOutput(out)
 	acct := fs.String("account", "", "account id (required)")
-	req := fs.String("request-id", "", "the order's request id (required)")
+	req := fs.String("request-id", "", "the order's request id")
+	oid := fs.Int64("order-id", 0, "eToro's order id (instead of the request id)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *acct == "" || *req == "" {
-		return errors.New("etoro-lookup: --account and --request-id are required")
+	if *acct == "" || (*req == "" && *oid <= 0) {
+		return errors.New("etoro-lookup: --account and --request-id or --order-id are required")
 	}
 	cfg, err := loadConfig(nil, getenv)
 	if err != nil {
@@ -51,7 +52,7 @@ func etoroLookupCmd(ctx context.Context, args []string, getenv func(string) stri
 	if err != nil {
 		return err
 	}
-	raw, err := c.LookupRaw(ports.WithAccount(ctx, a), *req)
+	raw, err := c.LookupRaw(ports.WithAccount(ctx, a), *req, *oid)
 	if err != nil {
 		return err
 	}

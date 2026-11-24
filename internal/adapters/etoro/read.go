@@ -484,12 +484,18 @@ func side(s string) domain.Direction {
 // LookupRaw returns eToro's orders:lookup answer for requestID exactly as received (read
 // only; for the operator's diagnosis, PLAN 4.17: settling how a real answer is shaped). The
 // answer holds order data only, never a key.
-func (c *Client) LookupRaw(ctx context.Context, requestID string) (json.RawMessage, error) {
-	if requestID == "" {
-		return nil, domain.Invalid("requestId", "is required")
+func (c *Client) LookupRaw(ctx context.Context, requestID string, orderID int64) (json.RawMessage, error) {
+	q := url.Values{}
+	switch {
+	case orderID > 0:
+		q.Set("orderId", strconv.FormatInt(orderID, 10))
+	case requestID != "":
+		q.Set("referenceId", requestID)
+	default:
+		return nil, domain.Invalid("requestId", "a request id or an order id is required")
 	}
 	var raw json.RawMessage
-	if err := c.call(ctx, OpOrderLookup, nil, url.Values{"referenceId": {requestID}}, nil, &raw); err != nil {
+	if err := c.call(ctx, OpOrderLookup, nil, q, nil, &raw); err != nil {
 		return nil, err
 	}
 	return raw, nil
