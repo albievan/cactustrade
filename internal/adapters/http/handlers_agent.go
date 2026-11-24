@@ -66,6 +66,9 @@ func toAgentPanel(v app.AgentView) AgentPanel {
 	for _, m := range v.Missing {
 		out.Missing = append(out.Missing, MissingItem{What: Missing(m.What), CanFix: m.CanFix})
 	}
+	if v.StartBlocked != "" {
+		out.Controls.StartBlockedReason = ptr(v.StartBlocked)
+	}
 	if v.Risk.KillReason != "" {
 		out.KillReason = ptr(v.Risk.KillReason)
 	}

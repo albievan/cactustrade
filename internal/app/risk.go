@@ -111,7 +111,7 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	if err != nil {
 		return domain.RiskLimits{}, err
 	}
-	if p.Via != ViaSession {
+	if p.Via != ViaSession { // RiskLimitsView applies the same rules
 		return domain.RiskLimits{}, fmt.Errorf("risk limits can only be changed in the web UI: %w", domain.ErrForbidden)
 	}
 	if err := s.limitsChangeable(ctx, v.ID); err != nil {
@@ -160,18 +160,65 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 // kill is latched. The state is read directly (review m2): an unreadable state is a refusal,
 // never "stopped"; only a state never stored counts as stopped.
 func (s *Service) limitsChangeable(ctx context.Context, accountID string) error {
+	_, err := s.limitsBlocked(ctx, accountID)
+	return err
+}
+
+// limitsBlocked applies limitsChangeable's rules and returns, besides its error, the reason
+// for people ("" with a nil error = the limits can change).
+func (s *Service) limitsBlocked(ctx context.Context, accountID string) (string, error) {
 	v, err := s.d.Store.Settings().Get(ctx, agentStateKey(accountID))
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		v = string(domain.AgentStopped)
 	case err != nil:
-		return fmt.Errorf("reading the agent state: %w: %w", err, domain.ErrUnavailable)
+		return "The agent's state could not be read; try again in a moment",
+			fmt.Errorf("reading the agent state: %w: %w", err, domain.ErrUnavailable)
 	}
-	if st := domain.AgentState(v); st != domain.AgentStopped {
-		return fmt.Errorf("stop the agent before changing the limits (it is %s): %w", st, domain.ErrConflict)
+	st := domain.AgentState(v)
+	if st == domain.AgentKilled || s.rt.killLatched(accountID) {
+		return msgLimitsKilled, fmt.Errorf("the kill switch is on: an admin must reset it before the limits can change: %w", domain.ErrConflict)
 	}
-	if s.rt.killLatched(accountID) {
-		return fmt.Errorf("the kill switch is on: %w", domain.ErrConflict)
+	if st != domain.AgentStopped {
+		return fmt.Sprintf("Stop the agent to change the limits (it is %s)", st),
+			fmt.Errorf("stop the agent before changing the limits (it is %s): %w", st, domain.ErrConflict)
 	}
-	return nil
+	return "", nil
+}
+
+// The reasons for people why the caller cannot change the limits (PLAN 6.14).
+const (
+	msgLimitsKilled     = "The kill switch is on: an admin must reset it on the dashboard before the limits can change"
+	msgLimitsNotOwner   = "Only the account's owner can change its limits"
+	msgLimitsNotSession = "The limits can only be changed in the web UI, not with an API key"
+)
+
+// RiskLimitsView is the current account's limits with whether the caller may change them now.
+type RiskLimitsView struct {
+	Limits domain.RiskLimits
+	// CanEdit follows SetRiskLimits' rules; EditBlocked says why not ("" when CanEdit).
+	CanEdit     bool
+	EditBlocked string
+}
+
+// RiskLimitsView returns the current account's limits (view access) and whether the caller
+// may change them now, by the rules SetRiskLimits applies (PLAN 6.14: the server decides,
+// the web UI only shows it): the account's owner, in a web session, with the agent stopped
+// and no kill switch on. Whether a budget fits the equity is checked only on the change.
+func (s *Service) RiskLimitsView(ctx context.Context, p Principal) (RiskLimitsView, error) {
+	v, err := s.account(ctx, p, "", domain.AccessView)
+	if err != nil {
+		return RiskLimitsView{}, err
+	}
+	out := RiskLimitsView{Limits: s.riskLimits(ctx, v.ID)}
+	switch {
+	case !v.Access.AtLeast(domain.AccessOwner):
+		out.EditBlocked = msgLimitsNotOwner
+	case p.Via != ViaSession:
+		out.EditBlocked = msgLimitsNotSession
+	default:
+		out.EditBlocked, _ = s.limitsBlocked(ctx, v.ID)
+	}
+	out.CanEdit = out.EditBlocked == ""
+	return out, nil
 }

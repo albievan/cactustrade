@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, errorText } from "../lib/api";
 import { useMode } from "../lib/mode";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 // Admin: version, database, and the reload / restart actions.
 export function System() {
@@ -8,6 +9,7 @@ export function System() {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState(false);
   async function reload() {
     setError(""); setMsg("");
     try {
@@ -18,7 +20,6 @@ export function System() {
     }
   }
   async function restart() {
-    if (!window.confirm("Restart cactusTrade now? The agent stops and the page reconnects when it is back.")) return;
     setError(""); setBusy(true);
     try {
       await api.restart();
@@ -64,8 +65,14 @@ export function System() {
           <div className="fw-semibold">Restart cactusTrade</div>
           <div className="small text-secondary">A graceful restart: requests finish, the agent stops, and the server starts again (in containers the orchestrator starts it). On start-up it reconciles with eToro before anything else.</div>
         </div>
-        <button className="btn btn-outline-danger" onClick={() => void restart()} disabled={busy}><i className="bi bi-power me-1" />{busy ? "Restarting…" : "Restart"}</button>
+        <button className="btn btn-outline-danger" onClick={() => setAsking(true)} disabled={busy}><i className="bi bi-power me-1" />{busy ? "Restarting…" : "Restart"}</button>
       </div></div>
+      {asking && (
+        <ConfirmDialog title="Restart cactusTrade now?" confirmLabel="Restart" icon="power" onCancel={() => setAsking(false)}
+          onConfirm={() => { setAsking(false); void restart(); }}>
+          <p className="mb-0">The agent stops and the page reconnects when cactusTrade is back. On start-up it reconciles with eToro before anything else.</p>
+        </ConfirmDialog>
+      )}
     </>
   );
 }

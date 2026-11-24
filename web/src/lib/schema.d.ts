@@ -805,7 +805,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The risk limits (viewer) */
+        /**
+         * The risk limits (viewer)
+         * @description The current account's limits, and whether the caller may change them now (`canEdit`,
+         *     decided by the same rules as the PUT: the account's owner, in a web session, with the
+         *     agent stopped and the kill switch off). When not, `editBlockedReason` says why. The
+         *     UI only shows these.
+         */
         get: operations["getRiskLimits"];
         /** Change the risk limits (admin, web UI, only while the agent is stopped) */
         put: operations["setRiskLimits"];
@@ -1583,6 +1589,13 @@ export interface components {
             /** @description all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %) */
             maxShortBp: number;
         };
+        /** @description The limits as GET returns them, with whether the caller may change them now (not part of the PUT body) */
+        RiskLimitsView: components["schemas"]["RiskLimits"] & {
+            /** @description the caller may change the limits now (same rules as the PUT) */
+            canEdit: boolean;
+            /** @description why not, for people (absent when canEdit) */
+            editBlockedReason?: string;
+        };
         LlmProvider: {
             id: string;
             label: string;
@@ -1953,6 +1966,12 @@ export interface components {
             reset: boolean;
             /** @description a real-money account: real trading needs the phase-7 gate */
             gated: boolean;
+            /**
+             * @description Why `start` is false although the caller could otherwise start the agent: this
+             *     process's agent loop is not running (still starting up, or the start-up resume
+             *     failed and cactusTrade must be restarted). Absent when nothing blocks it.
+             */
+            startBlockedReason?: string;
         };
         BlockedInstrument: {
             /** Format: int64 */
@@ -3481,7 +3500,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RiskLimits"];
+                    "application/json": components["schemas"]["RiskLimitsView"];
                 };
             };
             401: components["responses"]["Problem"];

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type ApiKey, type Role } from "../lib/api";
 import { useSession } from "../lib/session";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 const order: Role[] = ["viewer", "operator", "admin"];
 
@@ -9,6 +10,7 @@ export function ApiKeys() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [error, setError] = useState("");
   const [secret, setSecret] = useState("");
+  const [revoking, setRevoking] = useState<ApiKey | null>(null);
   const [form, setForm] = useState({ name: "", role: "viewer" as Role, days: 90 });
   const load = useCallback(() => {
     api.apiKeys().then(setKeys).catch((e) => setError(errorText(e)));
@@ -28,12 +30,14 @@ export function ApiKeys() {
     }
   }
   async function revoke(id: string) {
-    if (!window.confirm("Revoke this key? Programs using it stop working.")) return;
+    setError("");
     try {
       await api.revokeApiKey(id);
       load();
     } catch (err) {
       setError(errorText(err));
+    } finally {
+      setRevoking(null);
     }
   }
   return (
@@ -49,20 +53,29 @@ export function ApiKeys() {
         </div>
       )}
       <table className="table align-middle">
-        <thead><tr><th>Name</th><th>Role</th><th>Created</th><th>Last used</th><th>Expires</th><th /></tr></thead>
+        <thead><tr><th><span className="visually-hidden">Actions</span></th><th>Name</th><th>Role</th><th>Created</th><th>Last used</th><th>Expires</th></tr></thead>
         <tbody>
           {keys.map((k) => (
             <tr key={k.id}>
+              <td className="text-nowrap" style={{ width: "1%" }}>
+                <button className="btn btn-sm btn-outline-danger" title="Revoke" aria-label={`Revoke ${k.name}`} onClick={() => setRevoking(k)}>
+                  <i className="bi bi-x-circle" /></button>
+              </td>
               <td>{k.name}{k.ownerId !== me?.user.id && <span className="badge text-bg-secondary ms-2">other user</span>}</td>
               <td>{k.role}</td>
               <td>{new Date(k.createdAt).toLocaleDateString()}</td>
               <td>{k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : "never"}</td>
               <td>{k.expiresAt ? new Date(k.expiresAt).toLocaleDateString() : "never"}</td>
-              <td className="text-end"><button className="btn btn-sm btn-outline-danger" onClick={() => void revoke(k.id)}>Revoke</button></td>
             </tr>
           ))}
         </tbody>
       </table>
+      {revoking && (
+        <ConfirmDialog title={`Revoke the key ${revoking.name}?`} confirmLabel="Revoke" busyLabel="Revoking…" icon="x-circle"
+          onCancel={() => setRevoking(null)} onConfirm={() => revoke(revoking.id)}>
+          <p className="mb-0">Programs using it stop working at once. This cannot be undone.</p>
+        </ConfirmDialog>
+      )}
       {me?.via === "session" && (
         <form className="row g-2" onSubmit={create}>
           <div className="col-md-5"><input className="form-control" placeholder="name, e.g. grafana" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type Role, type User } from "../lib/api";
 import { useSession } from "../lib/session";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 const roles: Role[] = ["viewer", "operator", "admin"];
 
@@ -9,6 +10,8 @@ export function Users() {
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState("");
   const [form, setForm] = useState({ username: "", password: "", role: "viewer" as Role });
+  const [dialog, setDialog] = useState<{ kind: "delete" | "password"; user: User } | null>(null);
+  const [newPassword, setNewPassword] = useState("");
   const load = useCallback(() => {
     api.users().then(setUsers).catch((e) => setError(errorText(e)));
   }, []);
@@ -21,6 +24,12 @@ export function Users() {
     } catch (e) {
       setError(errorText(e));
     }
+  }
+  const ask = (kind: "delete" | "password", user: User) => { setNewPassword(""); setDialog({ kind, user }); };
+  async function confirmed(f: () => Promise<unknown>) {
+    await act(f);
+    setDialog(null);
+    setNewPassword("");
   }
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -35,10 +44,23 @@ export function Users() {
       <p className="text-secondary">Viewers read; operators can also start, stop and pull the kill switch; admins manage everything.</p>
       {error && <div className="alert alert-danger">{error}</div>}
       <table className="table align-middle">
-        <thead><tr><th>Username</th><th>Role</th><th>Status</th><th /></tr></thead>
+        <thead><tr><th><span className="visually-hidden">Actions</span></th><th>Username</th><th>Role</th><th>Status</th></tr></thead>
         <tbody>
           {users.map((u) => (
             <tr key={u.id}>
+              <td className="text-nowrap" style={{ width: "1%" }}>
+                <div className="btn-group btn-group-sm" role="group" aria-label={`Actions for ${u.username}`}>
+                  <button className="btn btn-outline-secondary" title={u.disabled ? "Enable" : "Disable"} aria-label={`${u.disabled ? "Enable" : "Disable"} ${u.username}`}
+                    onClick={() => void act(() => api.updateUser(u.id, { disabled: !u.disabled }))}>
+                    <i className={"bi " + (u.disabled ? "bi-person-check" : "bi-person-slash")} /></button>
+                  <button className="btn btn-outline-secondary" title="Reset password" aria-label={`Reset the password of ${u.username}`} onClick={() => ask("password", u)}>
+                    <i className="bi bi-key" /></button>
+                  {u.id !== me?.user.id && (
+                    <button className="btn btn-outline-danger" title="Delete" aria-label={`Delete ${u.username}`} onClick={() => ask("delete", u)}>
+                      <i className="bi bi-trash" /></button>
+                  )}
+                </div>
+              </td>
               <td>{u.username}{u.id === me?.user.id && <span className="badge text-bg-secondary ms-2">you</span>}</td>
               <td>
                 <select className="form-select form-select-sm w-auto" value={u.role} onChange={(e) => void act(() => api.updateUser(u.id, { role: e.target.value as Role }))}>
@@ -46,15 +68,25 @@ export function Users() {
                 </select>
               </td>
               <td>{u.disabled ? <span className="badge text-bg-warning">disabled</span> : <span className="badge text-bg-success">active</span>}</td>
-              <td className="text-end">
-                <button className="btn btn-sm btn-outline-secondary me-2" onClick={() => void act(() => api.updateUser(u.id, { disabled: !u.disabled }))}>{u.disabled ? "Enable" : "Disable"}</button>
-                <button className="btn btn-sm btn-outline-secondary me-2" onClick={() => { const p = window.prompt(`New password for ${u.username} (12+ characters)`); if (p) void act(() => api.updateUser(u.id, { password: p })); }}>Reset password</button>
-                {u.id !== me?.user.id && <button className="btn btn-sm btn-outline-danger" onClick={() => { if (window.confirm(`Delete ${u.username}?`)) void act(() => api.deleteUser(u.id)); }}>Delete</button>}
-              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {dialog?.kind === "delete" && (
+        <ConfirmDialog title={`Delete ${dialog.user.username}?`} confirmLabel="Delete" busyLabel="Deleting…" icon="trash"
+          onCancel={() => setDialog(null)} onConfirm={() => confirmed(() => api.deleteUser(dialog.user.id))}>
+          <p className="mb-0">Their sessions and API keys stop working. This cannot be undone.</p>
+        </ConfirmDialog>
+      )}
+      {dialog?.kind === "password" && (
+        <ConfirmDialog title={`New password for ${dialog.user.username}`} confirmLabel="Set password" busyLabel="Setting…" icon="key" variant="primary"
+          confirmDisabled={newPassword === ""} onCancel={() => setDialog(null)}
+          onConfirm={() => confirmed(() => api.updateUser(dialog.user.id, { password: newPassword }))}>
+          <label className="form-label" htmlFor="new-password">New password (12+ characters)</label>
+          <input id="new-password" className="form-control" type="password" autoComplete="new-password" autoFocus
+            value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+        </ConfirmDialog>
+      )}
       <h2 className="h5 mt-4">Add a user</h2>
       <form className="row g-2" onSubmit={create}>
         <div className="col-md-4"><input className="form-control" placeholder="username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required /></div>

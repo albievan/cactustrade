@@ -58,6 +58,14 @@ func (h *orderHook) loop(ctx context.Context, name string) {
 func (h *orderHook) SuperviseLoop(ctx context.Context) { h.loop(ctx, "supervise") }
 func (h *orderHook) AgentLoop(ctx context.Context)     { h.loop(ctx, "agent") }
 
+func (h *orderHook) SetAgentLoop(running bool) {
+	if running {
+		h.note("loop on")
+		return
+	}
+	h.note("loop off")
+}
+
 func (h *orderHook) ReleaseLeases(context.Context) error {
 	h.note("release")
 	return nil
@@ -80,10 +88,11 @@ func TestStartTradingOrder(t *testing.T) {
 		reconErr  error
 		resumeErr error
 		loops     []string
+		loopNote  string // what SetAgentLoop was told (6.13)
 	}{
-		{"clean start", nil, nil, []string{"supervise", "agent"}},
-		{"reconciliation failed: still resume (agents come back paused) and supervise", errors.New("db down"), nil, []string{"supervise", "agent"}},
-		{"resume failed: exits only, no agent loop", nil, errors.New("db down"), []string{"supervise"}},
+		{"clean start", nil, nil, []string{"supervise", "agent"}, "loop on"},
+		{"reconciliation failed: still resume (agents come back paused) and supervise", errors.New("db down"), nil, []string{"supervise", "agent"}, "loop on"},
+		{"resume failed: exits only, no agent loop", nil, errors.New("db down"), []string{"supervise"}, "loop off"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -107,6 +116,14 @@ func TestStartTradingOrder(t *testing.T) {
 				if want && slices.Index(mid, l) > slices.Index(mid, l+" ended") {
 					t.Fatalf("calls = %v", got)
 				}
+			}
+			// the agent loop is reported exactly once, and "on" before the loop starts
+			notes := slices.DeleteFunc(slices.Clone(mid), func(c string) bool { return !strings.HasPrefix(c, "loop ") })
+			if !slices.Equal(notes, []string{tt.loopNote}) {
+				t.Fatalf("SetAgentLoop calls %v, want [%s] (all calls %v)", notes, tt.loopNote, got)
+			}
+			if tt.loopNote == "loop on" && slices.Index(mid, "loop on") > slices.Index(mid, "agent") {
+				t.Fatalf("loop reported running after it started: %v", got)
 			}
 		})
 	}
@@ -138,10 +155,18 @@ func TestLeaseHolderID(t *testing.T) {
 	}
 }
 
-// TestStartTradingWithTheService runs the real use cases on fakes: the start-up
-// reconciliation happens before the first supervisor pass (seen as the first portfolio read
-// after it), and the lease this process took is released at shutdown.
-func TestStartTradingWithTheService(t *testing.T) {
+// tradingEnv is the real service on fakes with one demo account that has keys.
+type tradingEnv struct {
+	svc *app.Service
+	st  *fakes.Store
+	clk *fakes.Clock
+	b   *fakes.SimBroker
+	p   app.Principal
+	v   domain.AccountView
+}
+
+func newTradingEnv(t *testing.T) *tradingEnv {
+	t.Helper()
 	ctx := context.Background()
 	st := fakes.NewStore()
 	clk := &fakes.Clock{T: time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)}
@@ -180,29 +205,101 @@ func TestStartTradingWithTheService(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if svc.Reconciled(v.ID).OK {
-		t.Fatal("reconciled before the start")
-	}
-	stop := startTrading(ctx, svc, slog.New(slog.DiscardHandler))
-	// the first supervisor pass takes the lease; reconciliation must have happened before
+	return &tradingEnv{svc: svc, st: st, clk: clk, b: b, p: p, v: v}
+}
+
+// waitLease waits for the first supervisor pass, which takes the account's lease.
+func (e *tradingEnv) waitLease(t *testing.T) {
+	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if l, err := st.AgentLeases().Get(ctx, v.ID); err == nil && l.Holder == "this-process" {
-			break
+		if l, err := e.st.AgentLeases().Get(context.Background(), e.v.ID); err == nil && l.Holder == "this-process" {
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the supervisor did not take the lease")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !svc.Reconciled(v.ID).OK {
-		t.Fatalf("not reconciled before the supervisor: %+v", svc.Reconciled(v.ID))
+}
+
+// TestStartTradingWithTheService runs the real use cases on fakes: the start-up
+// reconciliation happens before the first supervisor pass (seen as the first portfolio read
+// after it), and the lease this process took is released at shutdown.
+func TestStartTradingWithTheService(t *testing.T) {
+	ctx := context.Background()
+	e := newTradingEnv(t)
+	if e.svc.Reconciled(e.v.ID).OK {
+		t.Fatal("reconciled before the start")
+	}
+	stop := startTrading(ctx, e.svc, slog.New(slog.DiscardHandler))
+	// the first supervisor pass takes the lease; reconciliation must have happened before
+	e.waitLease(t)
+	if !e.svc.Reconciled(e.v.ID).OK {
+		t.Fatalf("not reconciled before the supervisor: %+v", e.svc.Reconciled(e.v.ID))
 	}
 	stop()
-	if err := st.AgentLeases().Acquire(ctx, v.ID, "successor", clk.Now(), clk.Now().Add(domain.LeaseTTL)); err != nil {
+	if err := e.st.AgentLeases().Acquire(ctx, e.v.ID, "successor", e.clk.Now(), e.clk.Now().Add(domain.LeaseTTL)); err != nil {
 		t.Fatalf("the lease was not released at shutdown: %v", err)
 	}
-	if b.Opens != 0 || b.Closes != 0 {
-		t.Fatalf("orders at start-up: opens %d closes %d", b.Opens, b.Closes)
+	if e.b.Opens != 0 || e.b.Closes != 0 {
+		t.Fatalf("orders at start-up: opens %d closes %d", e.b.Opens, e.b.Closes)
+	}
+}
+
+// failingResume is the real service whose OD5 resume fails (e.g. the database is down).
+type failingResume struct{ *app.Service }
+
+func (failingResume) ResumeAgents(context.Context) ([]app.ResumeOutcome, error) {
+	return nil, errors.New("db down")
+}
+
+// TestStartAgentNeedsTheAgentLoop (PLAN 6.13): StartAgent is refused while start-up has not
+// decided and after a failed resume (no agent loop), with the reason on the panel; after a
+// clean start it gets past that check.
+func TestStartAgentNeedsTheAgentLoop(t *testing.T) {
+	tests := []struct {
+		name     string
+		trader   func(*app.Service) trader
+		loopRuns bool
+	}{
+		{"clean start", func(s *app.Service) trader { return s }, true},
+		{"failed resume", func(s *app.Service) trader { return failingResume{s} }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			e := newTradingEnv(t)
+			if _, err := e.svc.StartAgent(ctx, e.p, e.v.ID); !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "starting up") {
+				t.Fatalf("start before start-up decided: %v", err)
+			}
+			stop := startTrading(ctx, tt.trader(e.svc), slog.New(slog.DiscardHandler))
+			defer stop()
+			e.waitLease(t) // the supervisor runs either way: exits still work
+			_, err := e.svc.StartAgent(ctx, e.p, e.v.ID)
+			view, verr := e.svc.AgentStatusView(ctx, e.p, e.v.ID)
+			if verr != nil {
+				t.Fatal(verr)
+			}
+			if tt.loopRuns {
+				// past the loop check: refused only for the missing budget
+				if !errors.Is(err, domain.ErrInvalid) || errors.Is(err, domain.ErrUnavailable) {
+					t.Fatalf("start after a clean start-up: %v", err)
+				}
+				if !view.Controls.Start || view.StartBlocked != "" {
+					t.Fatalf("controls %+v blocked %q", view.Controls, view.StartBlocked)
+				}
+				return
+			}
+			if !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "resume failed") {
+				t.Fatalf("start after a failed resume: %v", err)
+			}
+			if view.Controls.Start || !strings.Contains(view.StartBlocked, "resume failed") {
+				t.Fatalf("controls %+v blocked %q", view.Controls, view.StartBlocked)
+			}
+			if !view.Controls.Kill || !view.Controls.Stop {
+				t.Fatalf("kill and stop must stay available: %+v", view.Controls)
+			}
+		})
 	}
 }

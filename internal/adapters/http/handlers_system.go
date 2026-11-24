@@ -66,14 +66,26 @@ func toRiskLimits(l domain.RiskLimits) RiskLimits {
 	}
 }
 
-// GetRiskLimits returns the limits.
+// GetRiskLimits returns the limits and whether the caller may change them now (the use
+// case decides; PLAN 6.14).
 func (s *Server) GetRiskLimits(w http.ResponseWriter, r *http.Request) {
-	l, err := s.svc.RiskLimits(r.Context(), state(r).principal)
+	v, err := s.svc.RiskLimitsView(r.Context(), state(r).principal)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toRiskLimits(l))
+	l := toRiskLimits(v.Limits)
+	out := RiskLimitsView{
+		TradingBudgetCents: l.TradingBudgetCents, DailyLossBp: l.DailyLossBp, DrawdownBp: l.DrawdownBp,
+		MaxPositionBp: l.MaxPositionBp, MaxOpenPositions: l.MaxOpenPositions,
+		NoEntryBeforeCloseMinutes: l.NoEntryBeforeCloseMinutes, FlattenBeforeCloseMinutes: l.FlattenBeforeCloseMinutes,
+		MaxPortfolioAgeSeconds: l.MaxPortfolioAgeSeconds, MaxQuoteAgeSeconds: l.MaxQuoteAgeSeconds,
+		MaxShortBp: l.MaxShortBp, CanEdit: v.CanEdit,
+	}
+	if v.EditBlocked != "" {
+		out.EditBlockedReason = ptr(v.EditBlocked)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // SetRiskLimits changes the limits.

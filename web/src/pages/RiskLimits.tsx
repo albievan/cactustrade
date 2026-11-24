@@ -1,27 +1,30 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, usd, type RiskLimits as Limits } from "../lib/api";
-import { useSession } from "../lib/session";
 import { useMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
 
 // The owner's limits. The risk engine enforces them on every entry; they can be changed only
-// while the agent is stopped, and every change is audited.
+// while the agent is stopped, and every change is audited. Whether the caller may change them
+// now comes from the server (canEdit, editBlockedReason); this page only shows it.
 export function RiskLimits() {
-  const { me } = useSession();
   const status = useMode();
   const [l, setL] = useState<Limits | null>(null);
+  const [edit, setEdit] = useState<{ canEdit: boolean; reason?: string }>({ canEdit: false });
   const [budget, setBudget] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
   const accountId = status?.account?.id;
+  const agentState = status?.agentState; // a change of state may change canEdit: fetch again
   useEffect(() => {
     if (!accountId) return;
-    api.riskLimits().then((x) => { setL(x); setBudget((x.tradingBudgetCents / 100).toFixed(2)); }).catch(setError);
-  }, [accountId]);
-  const owner = status?.account?.access === "owner";
-  const editable = owner && me?.via === "session" && status?.agentState === "stopped";
+    api.riskLimits().then(({ canEdit, editBlockedReason, ...x }) => {
+      setL(x); setEdit({ canEdit, reason: editBlockedReason });
+      setBudget((x.tradingBudgetCents / 100).toFixed(2));
+    }).catch(setError);
+  }, [accountId, agentState]);
+  const editable = edit.canEdit;
   if (status && !status.account) return <><h1 className="h3">Risk limits</h1><NeedAccount /></>;
   if (!l) return <><h1 className="h3">Risk limits</h1><ProblemAlert error={error} /></>;
   const num = (k: keyof Limits) => (e: React.ChangeEvent<HTMLInputElement>) => setL({ ...l, [k]: Number(e.target.value) });
@@ -66,13 +69,7 @@ export function RiskLimits() {
             and the limits can be changed.</li>
         </ul>
       </InfoCard>
-      {owner && !editable && status?.agentState === "killed" && (
-        <div className="alert alert-danger">The kill switch is on: an admin must reset it on the dashboard before the limits can change.</div>
-      )}
-      {owner && !editable && status?.agentState !== "killed" && (
-        <div className="alert alert-info">Stop the agent to change the limits (it is <strong>{status?.agentState}</strong>).</div>
-      )}
-      {!owner && <div className="alert alert-secondary">Only the account's owner can change its limits.</div>}
+      {!editable && edit.reason && <div className="alert alert-info" role="status"><i className="bi bi-lock-fill me-1" />{edit.reason}.</div>}
       <ProblemAlert error={error} />
       {saved && <div className="alert alert-success" role="status">Saved and audited.</div>}
       <form onSubmit={save} className="card"><div className="card-body row g-4">

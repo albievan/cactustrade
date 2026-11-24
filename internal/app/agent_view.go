@@ -58,18 +58,22 @@ type AgentView struct {
 	Today domain.RiskDate
 	// Equity is eToro's figure read now (EquityKnown false with EquityError when it could
 	// not be read). The floors and distances are set only when it is known.
-	Equity                 domain.Cents
-	EquityKnown            bool
-	EquityError            string
-	DailyFloor             domain.Cents
-	DailyFloorKnown        bool
-	ToDailyFloor           domain.Cents
-	DrawdownFloor          domain.Cents
-	ToDrawdownFloor        domain.Cents
-	Blocked                []BlockedInstrument
-	Flatten                []FlattenTime
-	Lease                  LeaseStatus
-	Controls               AgentControls
+	Equity          domain.Cents
+	EquityKnown     bool
+	EquityError     string
+	DailyFloor      domain.Cents
+	DailyFloorKnown bool
+	ToDailyFloor    domain.Cents
+	DrawdownFloor   domain.Cents
+	ToDrawdownFloor domain.Cents
+	Blocked         []BlockedInstrument
+	Flatten         []FlattenTime
+	Lease           LeaseStatus
+	Controls        AgentControls
+	// StartBlocked says why Controls.Start is false although the caller could otherwise
+	// start the agent: the agent loop does not run in this process (PLAN 6.13). "" = not
+	// blocked.
+	StartBlocked           string
 	ResetPhrase            string
 	OpenPositions, Pending int
 	// Missing lists what must be set up before the agent can start (R22), in the order
@@ -101,6 +105,9 @@ func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID st
 		Account: v, State: s.agentState(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
 		Limits: s.riskLimits(ctx, v.ID), Today: domain.RiskDay(now), ResetPhrase: ResetPhrase(v.Name),
 		Controls: s.controlsFor(p, v),
+	}
+	if why := s.agentLoopBlocked(); why != "" && out.Controls.Start {
+		out.Controls.Start, out.StartBlocked = false, why
 	}
 	switch rs, err := s.d.Store.RiskStates().Get(ctx, v.ID); {
 	case err == nil:

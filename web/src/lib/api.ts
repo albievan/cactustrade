@@ -22,6 +22,7 @@ export type Quote = components["schemas"]["Quote"];
 export type EventFeed = components["schemas"]["EventFeed"];
 export type AppEvent = components["schemas"]["Event"];
 export type RiskLimits = components["schemas"]["RiskLimits"];
+export type RiskLimitsView = components["schemas"]["RiskLimitsView"];
 export type LlmSetup = components["schemas"]["LlmSetup"];
 export type Account = components["schemas"]["Account"];
 export type Theme = components["schemas"]["Theme"];
@@ -153,7 +154,7 @@ export const api = {
   watchlistQuotes: () => request<Quote[]>("GET", "/api/v1/watchlist/quotes"),
   events: (limit = 50) => request<EventFeed>("GET", `/api/v1/events?limit=${limit}`),
   eventsSeen: () => request<void>("POST", "/api/v1/events/seen"),
-  riskLimits: () => request<RiskLimits>("GET", "/api/v1/risk/limits"),
+  riskLimits: () => request<RiskLimitsView>("GET", "/api/v1/risk/limits"),
   setRiskLimits: (l: RiskLimits) => request<RiskLimits>("PUT", "/api/v1/risk/limits", l),
   reloadSettings: () => request<void>("POST", "/api/v1/system/reload"),
   restart: () => request<void>("POST", "/api/v1/system/restart"),
