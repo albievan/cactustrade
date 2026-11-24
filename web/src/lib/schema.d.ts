@@ -1543,6 +1543,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/research": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Web research for the current account (R29) - mode, readiness, runs and the proposals waiting (view) */
+        get: operations["getResearch"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run web research for the current account now (agent.control, trade access, web UI). It proposes or adds watchlist shares through eToro's eligibility check; it never trades. A provider failure is a result with error, not an HTTP error. */
+        post: operations["runResearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/proposals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Dismiss a research proposal (trade access) */
+        delete: operations["dismissResearchProposal"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/proposals/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put a research proposal on the watchlist through eToro's eligibility check (trade access). A share eToro refuses is dropped with the reason (400); when eToro cannot be asked the proposal stays. */
+        post: operations["acceptResearchProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/llm/research": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Web research settings (R29) - the LLM profile, shares per run, runs per day (viewer) */
+        get: operations["getResearchSettings"];
+        /** Store the web research settings (admin, web UI). The profile's provider must have a built-in web search. */
+        put: operations["setResearchSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/llm": {
         parameters: {
             query?: never;
@@ -2018,6 +2108,11 @@ export interface components {
             addedBy: string;
             /** Format: date-time */
             addedAt: string;
+            /**
+             * @description who put it on the watchlist: a person, the scanner or web research (R29)
+             * @enum {string}
+             */
+            origin: "user" | "scanner" | "research";
             /** @description the account's theme this share is in (absent = none; R27) */
             themeId?: string;
             holding?: components["schemas"]["WatchHolding"];
@@ -2185,12 +2280,99 @@ export interface components {
             /** @description why not, for people (absent when canEdit) */
             editBlockedReason?: string;
         };
+        ResearchConfig: {
+            /** @description the LLM profile research uses (empty = the default reviewer profile) */
+            profileId: string;
+            /** @description at most this many shares per run */
+            maxShares: number;
+            /** @description runs per account in 24 hours (0 = research off) */
+            runsPerDay: number;
+        };
+        ResearchSetup: {
+            config: components["schemas"]["ResearchConfig"];
+            /** @description the profile research uses now (absent = none usable) */
+            profileId?: string;
+            profileName?: string;
+            /** @description why research cannot run, for people (absent = it can) */
+            note?: string;
+            missing: components["schemas"]["MissingItem"][];
+        };
+        /** @description A share web research named, waiting for the owner. Untrusted text from the web, shown as plain text; links are never fetched by the server. */
+        ResearchProposal: {
+            id: string;
+            /** Format: int64 */
+            instrumentId: number;
+            /** Format: date-time */
+            at: string;
+            symbol: string;
+            /** @enum {string} */
+            exchange: "LSE" | "NYSE" | "NASDAQ" | "ASX";
+            name: string;
+            theme?: string;
+            reason: string;
+            sources: string[];
+        };
+        ResearchRefusal: {
+            symbol: string;
+            reason: string;
+        };
+        ResearchAddedShare: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            name: string;
+            /** @description the theme it was put in (absent = none) */
+            theme?: string;
+            reason: string;
+        };
+        /**
+         * @description off; propose: results wait on the Watchlist page; auto_add: eligible results join the watchlist at once
+         * @enum {string}
+         */
+        ResearchMode: "off" | "propose" | "auto_add";
+        ResearchRun: {
+            mode: components["schemas"]["ResearchMode"];
+            added: components["schemas"]["ResearchAddedShare"][];
+            proposed: components["schemas"]["ResearchProposal"][];
+            refused: components["schemas"]["ResearchRefusal"][];
+            /** @description the provider failed: nothing was added */
+            error?: string;
+            /** @description the logged LLM call (purpose research) */
+            callId?: string;
+            model?: string;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            costUsd?: components["schemas"]["UsdCost"];
+        };
+        ResearchView: {
+            mode: components["schemas"]["ResearchMode"];
+            config: components["schemas"]["ResearchConfig"];
+            profileName?: string;
+            /** @description research can run for this account */
+            ready: boolean;
+            /** @description why not, for people */
+            note?: string;
+            missing: components["schemas"]["MissingItem"][];
+            /** @description runs in the last 24 hours */
+            runsUsed: number;
+            /** Format: date-time */
+            lastRunAt?: string;
+            proposals: components["schemas"]["ResearchProposal"][];
+            /** @description the caller may press Research now */
+            canRun: boolean;
+            /** @description the caller may accept or dismiss proposals */
+            canDecide: boolean;
+        };
         LlmProvider: {
             id: string;
             label: string;
             defaultBaseUrl: string;
             keyRequired: boolean;
             note: string;
+            /** @description the provider has a built-in web search web research can use (R29); else research not supported */
+            webSearch: boolean;
         };
         LlmProfile: {
             inputPricePerMTok: components["schemas"]["LlmPrice"];
@@ -5532,6 +5714,154 @@ export interface operations {
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
+        };
+    };
+    getResearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Research card */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchView"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    runResearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchRun"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    dismissResearchProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dismissed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    acceptResearchProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Added */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchAddedShare"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getResearchSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchSetup"];
+                };
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    setResearchSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchConfig"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchSetup"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
         };
     };
     getLlmSetup: {

@@ -247,22 +247,22 @@ func (e LlmTestResultVerdict) Valid() bool {
 
 // Defines values for Market.
 const (
-	ASX   Market = "ASX"
-	Empty Market = ""
-	LSE   Market = "LSE"
-	NYSE  Market = "NYSE"
+	MarketASX   Market = "ASX"
+	MarketEmpty Market = ""
+	MarketLSE   Market = "LSE"
+	MarketNYSE  Market = "NYSE"
 )
 
 // Valid indicates whether the value is a known member of the Market enum.
 func (e Market) Valid() bool {
 	switch e {
-	case ASX:
+	case MarketASX:
 		return true
-	case Empty:
+	case MarketEmpty:
 		return true
-	case LSE:
+	case MarketLSE:
 		return true
-	case NYSE:
+	case MarketNYSE:
 		return true
 	default:
 		return false
@@ -362,6 +362,51 @@ func (e RealGateState) Valid() bool {
 	case Armed:
 		return true
 	case Locked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResearchMode.
+const (
+	AutoAdd ResearchMode = "auto_add"
+	Off     ResearchMode = "off"
+	Propose ResearchMode = "propose"
+)
+
+// Valid indicates whether the value is a known member of the ResearchMode enum.
+func (e ResearchMode) Valid() bool {
+	switch e {
+	case AutoAdd:
+		return true
+	case Off:
+		return true
+	case Propose:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResearchProposalExchange.
+const (
+	ResearchProposalExchangeASX    ResearchProposalExchange = "ASX"
+	ResearchProposalExchangeLSE    ResearchProposalExchange = "LSE"
+	ResearchProposalExchangeNASDAQ ResearchProposalExchange = "NASDAQ"
+	ResearchProposalExchangeNYSE   ResearchProposalExchange = "NYSE"
+)
+
+// Valid indicates whether the value is a known member of the ResearchProposalExchange enum.
+func (e ResearchProposalExchange) Valid() bool {
+	switch e {
+	case ResearchProposalExchangeASX:
+		return true
+	case ResearchProposalExchangeLSE:
+		return true
+	case ResearchProposalExchangeNASDAQ:
+		return true
+	case ResearchProposalExchangeNYSE:
 		return true
 	default:
 		return false
@@ -482,6 +527,27 @@ func (e TradingMode) Valid() bool {
 	case Demo:
 		return true
 	case Real:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WatchItemOrigin.
+const (
+	WatchItemOriginResearch WatchItemOrigin = "research"
+	WatchItemOriginScanner  WatchItemOrigin = "scanner"
+	WatchItemOriginUser     WatchItemOrigin = "user"
+)
+
+// Valid indicates whether the value is a known member of the WatchItemOrigin enum.
+func (e WatchItemOrigin) Valid() bool {
+	switch e {
+	case WatchItemOriginResearch:
+		return true
+	case WatchItemOriginScanner:
+		return true
+	case WatchItemOriginUser:
 		return true
 	default:
 		return false
@@ -1805,6 +1871,9 @@ type LlmProvider struct {
 	KeyRequired    bool   `json:"keyRequired"`
 	Label          string `json:"label"`
 	Note           string `json:"note"`
+
+	// WebSearch the provider has a built-in web search web research can use (R29); else research not supported
+	WebSearch bool `json:"webSearch"`
 }
 
 // LlmSettings defines model for LlmSettings.
@@ -2207,6 +2276,115 @@ type RenameAccountRequest struct {
 	Name string `json:"name"`
 }
 
+// ResearchAddedShare defines model for ResearchAddedShare.
+type ResearchAddedShare struct {
+	InstrumentId int64  `json:"instrumentId"`
+	Name         string `json:"name"`
+	Reason       string `json:"reason"`
+	Symbol       string `json:"symbol"`
+
+	// Theme the theme it was put in (absent = none)
+	Theme *string `json:"theme,omitempty"`
+}
+
+// ResearchConfig defines model for ResearchConfig.
+type ResearchConfig struct {
+	// MaxShares at most this many shares per run
+	MaxShares int `json:"maxShares"`
+
+	// ProfileId the LLM profile research uses (empty = the default reviewer profile)
+	ProfileId string `json:"profileId"`
+
+	// RunsPerDay runs per account in 24 hours (0 = research off)
+	RunsPerDay int `json:"runsPerDay"`
+}
+
+// ResearchMode off; propose: results wait on the Watchlist page; auto_add: eligible results join the watchlist at once
+type ResearchMode string
+
+// ResearchProposal A share web research named, waiting for the owner. Untrusted text from the web, shown as plain text; links are never fetched by the server.
+type ResearchProposal struct {
+	At           time.Time                `json:"at"`
+	Exchange     ResearchProposalExchange `json:"exchange"`
+	Id           string                   `json:"id"`
+	InstrumentId int64                    `json:"instrumentId"`
+	Name         string                   `json:"name"`
+	Reason       string                   `json:"reason"`
+	Sources      []string                 `json:"sources"`
+	Symbol       string                   `json:"symbol"`
+	Theme        *string                  `json:"theme,omitempty"`
+}
+
+// ResearchProposalExchange defines model for ResearchProposal.Exchange.
+type ResearchProposalExchange string
+
+// ResearchRefusal defines model for ResearchRefusal.
+type ResearchRefusal struct {
+	Reason string `json:"reason"`
+	Symbol string `json:"symbol"`
+}
+
+// ResearchRun defines model for ResearchRun.
+type ResearchRun struct {
+	Added []ResearchAddedShare `json:"added"`
+
+	// CallId the logged LLM call (purpose research)
+	CallId *string `json:"callId,omitempty"`
+
+	// CostUsd US dollars to the micro-dollar (absent = unknown, OD13)
+	CostUsd *UsdCost `json:"costUsd,omitempty"`
+
+	// Error the provider failed: nothing was added
+	Error       *string `json:"error,omitempty"`
+	InputTokens int64   `json:"inputTokens"`
+
+	// Mode off; propose: results wait on the Watchlist page; auto_add: eligible results join the watchlist at once
+	Mode         ResearchMode       `json:"mode"`
+	Model        *string            `json:"model,omitempty"`
+	OutputTokens int64              `json:"outputTokens"`
+	Proposed     []ResearchProposal `json:"proposed"`
+	Refused      []ResearchRefusal  `json:"refused"`
+}
+
+// ResearchSetup defines model for ResearchSetup.
+type ResearchSetup struct {
+	Config  ResearchConfig `json:"config"`
+	Missing []MissingItem  `json:"missing"`
+
+	// Note why research cannot run, for people (absent = it can)
+	Note *string `json:"note,omitempty"`
+
+	// ProfileId the profile research uses now (absent = none usable)
+	ProfileId   *string `json:"profileId,omitempty"`
+	ProfileName *string `json:"profileName,omitempty"`
+}
+
+// ResearchView defines model for ResearchView.
+type ResearchView struct {
+	// CanDecide the caller may accept or dismiss proposals
+	CanDecide bool `json:"canDecide"`
+
+	// CanRun the caller may press Research now
+	CanRun    bool           `json:"canRun"`
+	Config    ResearchConfig `json:"config"`
+	LastRunAt *time.Time     `json:"lastRunAt,omitempty"`
+	Missing   []MissingItem  `json:"missing"`
+
+	// Mode off; propose: results wait on the Watchlist page; auto_add: eligible results join the watchlist at once
+	Mode ResearchMode `json:"mode"`
+
+	// Note why not, for people
+	Note        *string            `json:"note,omitempty"`
+	ProfileName *string            `json:"profileName,omitempty"`
+	Proposals   []ResearchProposal `json:"proposals"`
+
+	// Ready research can run for this account
+	Ready bool `json:"ready"`
+
+	// RunsUsed runs in the last 24 hours
+	RunsUsed int `json:"runsUsed"`
+}
+
 // ResetKillRequest defines model for ResetKillRequest.
 type ResetKillRequest struct {
 	// Confirm exactly RESET <account name>
@@ -2526,9 +2704,15 @@ type WatchItem struct {
 	Holding    *WatchHolding `json:"holding,omitempty"`
 	Instrument Instrument    `json:"instrument"`
 
+	// Origin who put it on the watchlist: a person, the scanner or web research (R29)
+	Origin WatchItemOrigin `json:"origin"`
+
 	// ThemeId the account's theme this share is in (absent = none; R27)
 	ThemeId *string `json:"themeId,omitempty"`
 }
+
+// WatchItemOrigin who put it on the watchlist: a person, the scanner or web research (R29)
+type WatchItemOrigin string
 
 // WatchlistCount defines model for WatchlistCount.
 type WatchlistCount struct {
@@ -2864,6 +3048,9 @@ type CreateLlmProfileJSONRequestBody = LlmProfileInput
 // UpdateLlmProfileJSONRequestBody defines body for UpdateLlmProfile for application/json ContentType.
 type UpdateLlmProfileJSONRequestBody = LlmProfileInput
 
+// SetResearchSettingsJSONRequestBody defines body for SetResearchSettings for application/json ContentType.
+type SetResearchSettingsJSONRequestBody = ResearchConfig
+
 // SetMyProfileJSONRequestBody defines body for SetMyProfile for application/json ContentType.
 type SetMyProfileJSONRequestBody = ProfileInput
 
@@ -3082,6 +3269,12 @@ type ServerInterface interface {
 	// TestLlmProfile Ask a profile about a made-up trade (admin; nothing is traded)
 	// (POST /api/v1/llm/profiles/{id}/test)
 	TestLlmProfile(w http.ResponseWriter, r *http.Request, id string)
+	// GetResearchSettings Web research settings (R29) - the LLM profile, shares per run, runs per day (viewer)
+	// (GET /api/v1/llm/research)
+	GetResearchSettings(w http.ResponseWriter, r *http.Request)
+	// SetResearchSettings Store the web research settings (admin, web UI). The profile's provider must have a built-in web search.
+	// (PUT /api/v1/llm/research)
+	SetResearchSettings(w http.ResponseWriter, r *http.Request)
 	// GetLlmUsage LLM calls of the last days per profile and purpose, with tokens and cost (admin)
 	// (GET /api/v1/llm/usage)
 	GetLlmUsage(w http.ResponseWriter, r *http.Request, params GetLlmUsageParams)
@@ -3118,6 +3311,18 @@ type ServerInterface interface {
 	// GetPublicStatus What the sign-in page needs before anyone is signed in
 	// (GET /api/v1/public/status)
 	GetPublicStatus(w http.ResponseWriter, r *http.Request)
+	// GetResearch Web research for the current account (R29) - mode, readiness, runs and the proposals waiting (view)
+	// (GET /api/v1/research)
+	GetResearch(w http.ResponseWriter, r *http.Request)
+	// DismissResearchProposal Dismiss a research proposal (trade access)
+	// (DELETE /api/v1/research/proposals/{id})
+	DismissResearchProposal(w http.ResponseWriter, r *http.Request, id string)
+	// AcceptResearchProposal Put a research proposal on the watchlist through eToro's eligibility check (trade access). A share eToro refuses is dropped with the reason (400); when eToro cannot be asked the proposal stays.
+	// (POST /api/v1/research/proposals/{id}/accept)
+	AcceptResearchProposal(w http.ResponseWriter, r *http.Request, id string)
+	// RunResearch Run web research for the current account now (agent.control, trade access, web UI). It proposes or adds watchlist shares through eToro's eligibility check; it never trades. A provider failure is a result with error, not an HTTP error.
+	// (POST /api/v1/research/run)
+	RunResearch(w http.ResponseWriter, r *http.Request)
 	// ListReviews The stocks the scanner reviewed for the current account, the rules applied and the outcome (view)
 	// (GET /api/v1/reviews)
 	ListReviews(w http.ResponseWriter, r *http.Request, params ListReviewsParams)
@@ -4808,6 +5013,34 @@ func (siw *ServerInterfaceWrapper) TestLlmProfile(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetResearchSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetResearchSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetResearchSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetResearchSettings operation middleware
+func (siw *ServerInterfaceWrapper) SetResearchSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetResearchSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLlmUsage operation middleware
 func (siw *ServerInterfaceWrapper) GetLlmUsage(w http.ResponseWriter, r *http.Request) {
 
@@ -5082,6 +5315,86 @@ func (siw *ServerInterfaceWrapper) GetPublicStatus(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPublicStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetResearch operation middleware
+func (siw *ServerInterfaceWrapper) GetResearch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetResearch(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DismissResearchProposal operation middleware
+func (siw *ServerInterfaceWrapper) DismissResearchProposal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DismissResearchProposal(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptResearchProposal operation middleware
+func (siw *ServerInterfaceWrapper) AcceptResearchProposal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptResearchProposal(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunResearch operation middleware
+func (siw *ServerInterfaceWrapper) RunResearch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunResearch(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5788,6 +6101,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/reviews", wrapper.ListReviews)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/scanner", wrapper.SetScanner)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/scanner/run", wrapper.RunScanner)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/research", wrapper.GetResearch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/research/run", wrapper.RunResearch)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/research/proposals/{id}", wrapper.DismissResearchProposal)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/research/proposals/{id}/accept", wrapper.AcceptResearchProposal)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/llm/research", wrapper.GetResearchSettings)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/llm/research", wrapper.SetResearchSettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/llm", wrapper.GetLlmSetup)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/llm", wrapper.SetLlmSettings)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/profiles", wrapper.CreateLlmProfile)

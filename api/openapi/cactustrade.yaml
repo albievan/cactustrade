@@ -1697,6 +1697,103 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/research:
+    get:
+      tags: [research]
+      operationId: getResearch
+      summary: Web research for the current account (R29) - mode, readiness, runs and the proposals waiting (view)
+      responses:
+        "200":
+          description: The Research card
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResearchView" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/research/run:
+    post:
+      tags: [research]
+      operationId: runResearch
+      summary: >-
+        Run web research for the current account now (agent.control, trade access, web UI). It proposes or adds
+        watchlist shares through eToro's eligibility check; it never trades. A provider failure is a result with
+        error, not an HTTP error.
+      responses:
+        "200":
+          description: Done
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResearchRun" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/research/proposals/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    delete:
+      tags: [research]
+      operationId: dismissResearchProposal
+      summary: Dismiss a research proposal (trade access)
+      responses:
+        "204": { description: Dismissed }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/research/proposals/{id}/accept:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [research]
+      operationId: acceptResearchProposal
+      summary: >-
+        Put a research proposal on the watchlist through eToro's eligibility check (trade access). A share eToro
+        refuses is dropped with the reason (400); when eToro cannot be asked the proposal stays.
+      responses:
+        "200":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResearchAddedShare" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/llm/research:
+    get:
+      tags: [llm]
+      operationId: getResearchSettings
+      summary: Web research settings (R29) - the LLM profile, shares per run, runs per day (viewer)
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResearchSetup" }
+        "401": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [llm]
+      operationId: setResearchSettings
+      summary: Store the web research settings (admin, web UI). The profile's provider must have a built-in web search.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResearchConfig" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResearchSetup" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
   /api/v1/llm:
     get:
       tags: [llm]
@@ -2255,12 +2352,16 @@ components:
         checkedAt: { type: string, format: date-time }
     WatchItem:
       type: object
-      required: [instrument, eligibility, addedBy, addedAt]
+      required: [instrument, eligibility, addedBy, addedAt, origin]
       properties:
         instrument: { $ref: "#/components/schemas/Instrument" }
         eligibility: { $ref: "#/components/schemas/Eligibility" }
         addedBy: { type: string }
         addedAt: { type: string, format: date-time }
+        origin:
+          type: string
+          enum: [user, scanner, research]
+          description: "who put it on the watchlist: a person, the scanner or web research (R29)"
         themeId: { type: string, description: "the account's theme this share is in (absent = none; R27)" }
         holding: { $ref: "#/components/schemas/WatchHolding" }
     WatchHolding:
@@ -2440,15 +2541,109 @@ components:
           properties:
             canEdit: { type: boolean, description: "the caller may change the limits now (same rules as the PUT)" }
             editBlockedReason: { type: string, description: "why not, for people (absent when canEdit)" }
+    ResearchConfig:
+      type: object
+      required: [profileId, maxShares, runsPerDay]
+      properties:
+        profileId: { type: string, maxLength: 64, description: "the LLM profile research uses (empty = the default reviewer profile)" }
+        maxShares: { type: integer, minimum: 1, maximum: 20, description: "at most this many shares per run" }
+        runsPerDay: { type: integer, minimum: 0, maximum: 24, description: "runs per account in 24 hours (0 = research off)" }
+    ResearchSetup:
+      type: object
+      required: [config, missing]
+      properties:
+        config: { $ref: "#/components/schemas/ResearchConfig" }
+        profileId: { type: string, description: "the profile research uses now (absent = none usable)" }
+        profileName: { type: string }
+        note: { type: string, description: "why research cannot run, for people (absent = it can)" }
+        missing:
+          type: array
+          items: { $ref: "#/components/schemas/MissingItem" }
+    ResearchProposal:
+      type: object
+      required: [id, instrumentId, at, symbol, exchange, name, reason, sources]
+      description: A share web research named, waiting for the owner. Untrusted text from the web, shown as plain text; links are never fetched by the server.
+      properties:
+        id: { type: string }
+        instrumentId: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+        symbol: { type: string }
+        exchange: { type: string, enum: [LSE, NYSE, NASDAQ, ASX] }
+        name: { type: string }
+        theme: { type: string }
+        reason: { type: string, maxLength: 300 }
+        sources:
+          type: array
+          maxItems: 3
+          items: { type: string, description: "an http(s) link, shown as text" }
+    ResearchRefusal:
+      type: object
+      required: [symbol, reason]
+      properties:
+        symbol: { type: string }
+        reason: { type: string }
+    ResearchAddedShare:
+      type: object
+      required: [instrumentId, symbol, name, reason]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string }
+        name: { type: string }
+        theme: { type: string, description: "the theme it was put in (absent = none)" }
+        reason: { type: string }
+    ResearchMode:
+      type: string
+      enum: ["off", propose, auto_add]
+      description: "off; propose: results wait on the Watchlist page; auto_add: eligible results join the watchlist at once"
+    ResearchRun:
+      type: object
+      required: [mode, added, proposed, refused, inputTokens, outputTokens]
+      properties:
+        mode: { $ref: "#/components/schemas/ResearchMode" }
+        added:
+          type: array
+          items: { $ref: "#/components/schemas/ResearchAddedShare" }
+        proposed:
+          type: array
+          items: { $ref: "#/components/schemas/ResearchProposal" }
+        refused:
+          type: array
+          items: { $ref: "#/components/schemas/ResearchRefusal" }
+        error: { type: string, description: "the provider failed: nothing was added" }
+        callId: { type: string, description: "the logged LLM call (purpose research)" }
+        model: { type: string }
+        inputTokens: { type: integer, format: int64 }
+        outputTokens: { type: integer, format: int64 }
+        costUsd: { $ref: "#/components/schemas/UsdCost" }
+    ResearchView:
+      type: object
+      required: [mode, config, ready, missing, runsUsed, proposals, canRun, canDecide]
+      properties:
+        mode: { $ref: "#/components/schemas/ResearchMode" }
+        config: { $ref: "#/components/schemas/ResearchConfig" }
+        profileName: { type: string }
+        ready: { type: boolean, description: "research can run for this account" }
+        note: { type: string, description: "why not, for people" }
+        missing:
+          type: array
+          items: { $ref: "#/components/schemas/MissingItem" }
+        runsUsed: { type: integer, description: "runs in the last 24 hours" }
+        lastRunAt: { type: string, format: date-time }
+        proposals:
+          type: array
+          items: { $ref: "#/components/schemas/ResearchProposal" }
+        canRun: { type: boolean, description: "the caller may press Research now" }
+        canDecide: { type: boolean, description: "the caller may accept or dismiss proposals" }
     LlmProvider:
       type: object
-      required: [id, label, defaultBaseUrl, keyRequired, note]
+      required: [id, label, defaultBaseUrl, keyRequired, note, webSearch]
       properties:
         id: { type: string }
         label: { type: string }
         defaultBaseUrl: { type: string }
         keyRequired: { type: boolean }
         note: { type: string }
+        webSearch: { type: boolean, description: "the provider has a built-in web search web research can use (R29); else research not supported" }
     LlmProfile:
       type: object
       required: [id, name, provider, model, baseUrl, timeoutSeconds, keySet, inputPricePerMTok, outputPricePerMTok]
