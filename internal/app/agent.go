@@ -178,6 +178,8 @@ func (s *Service) AgentTick(ctx context.Context, accountID string) (AgentTrace, 
 		}
 		tr.Killed = true
 	}
+	// After everything was stored and the kill tripped; the bus never blocks (R26).
+	s.publishTick(tr)
 	return tr, nil
 }
 
@@ -374,6 +376,9 @@ func (s *Service) finishDecision(ctx context.Context, dl *decisionLog, it *Instr
 		it.DecisionErr = fmt.Sprintf("storing decision %s (%s) failed: %v", dl.d.ID, dl.d.Outcome, err)
 		s.d.Log.ErrorContext(ctx, "storing a decision failed", "account", dl.d.AccountID, "decision", dl.d.ID, "outcome", dl.d.Outcome, "err", err)
 	}
+	// After the write (attempted), like an event: a live viewer sees the decision even when
+	// the database refused it; the decision log has it once stored (R26).
+	s.publishDecision(dl.d, it.OrderState)
 }
 
 // decide runs steps (4)–(9) for a candidate and records each answer in dl. It returns why

@@ -3,8 +3,9 @@
 // keep working through their own REST calls when the stream is down.
 //
 // Messages (the contract's description of /api/v1/live): `snapshot` (LiveSnapshot), `event`
-// (LiveEvent), `order` (LiveOrder), `resync` and `bye` (LiveNotice). The browser sends the
-// session cookie with the same-origin EventSource.
+// (LiveEvent), `order` (LiveOrder), `tick` (LiveTick), `decision` (LiveDecision), `resync` and
+// `bye` (LiveNotice). Events, ticks and decisions become lines of the activity log (R26). The
+// browser sends the session cookie with the same-origin EventSource.
 //
 // Connection rules:
 //   - an error or a bye other than signed_out / no_access reconnects with backoff 1 s, 2 s,
@@ -16,7 +17,8 @@
 //   - `stale` is true when no snapshot arrived for 30 s, or the server marked the last one
 //     stale (its portfolio is missing or older than 30 s).
 import { useEffect, useRef, useState } from "react";
-import { api, type AppEvent, type Order } from "./api";
+import { api, type Order } from "./api";
+import { ACTIVITY, fromDecision, fromEvent, fromTick, mergeActivity, type ActivityEntry, type LiveDecision, type LiveTick } from "./activity";
 import type { components } from "./schema";
 
 export type LiveSnapshot = components["schemas"]["LiveSnapshot"];
@@ -46,7 +48,7 @@ export type LiveConnection = "connecting" | "live" | "reconnecting" | "polling" 
 export interface Live {
   snapshot: LiveSnapshot | null;
   orders: Order[]; // the orders feed: the snapshot's latest orders, updated by `order` messages
-  events: AppEvent[]; // events received on the stream, newest first
+  activity: ActivityEntry[]; // the activity log's lines received on the stream, newest first (at most ACTIVITY.cap)
   connection: LiveConnection;
   endedReason: string; // the bye reason when connection is "ended" (signed_out or no_access)
   stale: boolean;
@@ -77,7 +79,7 @@ export function upsertOrder(feed: Order[], o: Order, size = LIVE.feedSize): Orde
 export function useLive(accountId: string | undefined): Live {
   const [snapshot, setSnapshot] = useState<LiveSnapshot | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [events, setEvents] = useState<AppEvent[]>([]);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [connection, setConnection] = useState<LiveConnection>("connecting");
   const [endedReason, setEndedReason] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -146,9 +148,18 @@ export function useLive(accountId: string | undefined): Live {
         const o = parse<LiveOrder>(m);
         if (o) setOrders((feed) => upsertOrder(feed, o.order));
       }));
+      const line = (e: ActivityEntry) => setActivity((log) => mergeActivity(log, [e], ACTIVITY.cap));
       src.addEventListener("event", mine((m) => {
         const e = parse<LiveEvent>(m);
-        if (e) setEvents((feed) => [e.event, ...feed.filter((x) => x.id !== e.event.id)].slice(0, LIVE.feedSize));
+        if (e) line(fromEvent(e.event, e.accountId));
+      }));
+      src.addEventListener("tick", mine((m) => {
+        const t = parse<LiveTick>(m);
+        if (t) line(fromTick(t));
+      }));
+      src.addEventListener("decision", mine((m) => {
+        const d = parse<LiveDecision>(m);
+        if (d) line(fromDecision(d.decision));
       }));
       src.addEventListener("resync", mine(() => {
         // Messages may have been missed: fetch again; a fresh snapshot follows.
@@ -217,5 +228,5 @@ export function useLive(accountId: string | undefined): Live {
   let staleReason = "";
   if (watching && quiet) staleReason = "no live update for 30 seconds";
   else if (snapshot?.stale) staleReason = snapshot.portfolioKnown ? "the portfolio is older than 30 seconds" : "no portfolio read yet";
-  return { snapshot, orders, events, connection, endedReason, stale: staleReason !== "", staleReason, refresh };
+  return { snapshot, orders, activity, connection, endedReason, stale: staleReason !== "", staleReason, refresh };
 }

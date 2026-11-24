@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ReviewBoard } from "../components/ReviewBoard";
 import { AgentPanel } from "../components/AgentPanel";
+import { ActivityLog } from "../components/ActivityLog";
 import { InfoCard } from "../components/InfoCard";
 import { LimitBars, LiveEnded, LivePositions, LiveStats, LiveStatus, OrderFeed, RegimeList } from "../components/LiveCards";
 import { api, type Account, type MarketSession, type SystemStatus } from "../lib/api";
@@ -64,10 +65,11 @@ function LiveDashboard({ account }: { account: Account }) {
       </div>
       <LiveEnded reason={live.endedReason} />
       <LiveStats snapshot={s} />
+      <ActivityLog account={account} live={live} />
       <AgentPanel live={live} />
       <div className="row g-3 mb-4">
         <div className="col-xl-6"><LimitBars figures={s?.figures} accountId={account.id} /></div>
-        <div className="col-xl-6"><OrderFeed orders={live.orders} events={live.events} /></div>
+        <div className="col-xl-6"><OrderFeed orders={live.orders} /></div>
       </div>
       <LivePositions snapshot={s} />
       <div className="row g-3 mb-4">
@@ -82,6 +84,10 @@ function LiveDashboard({ account }: { account: Account }) {
               <li>When the stream fails three times the page refreshes every 15 seconds instead and keeps retrying. The
                 kill switch and the agent's buttons never depend on the stream.</li>
               <li>A tab hidden for a minute closes the stream; it reopens when you come back.</li>
+              <li><strong>Agent activity</strong> lists the newest first: on opening, the latest stored events and
+                decisions; then each round of the agent (every 5 minutes while it runs; rounds are shown live only and
+                are not kept), each idea with the reviewer's and the risk engine's answer, orders, fills and closes.
+                Pause keeps the list still while you read; at most 300 entries are kept on the page.</li>
             </ul>
           </InfoCard>
         </div>

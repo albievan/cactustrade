@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { usd, type AppEvent, type Order } from "../lib/api";
+import { usd, type Order } from "../lib/api";
 import type { Live, LiveFigures, LiveRegime, LiveSnapshot } from "../lib/live";
 import { FixButton } from "./FixButton";
 
@@ -204,14 +204,14 @@ export function LivePositions({ snapshot }: { snapshot: LiveSnapshot | null }) {
   );
 }
 
-// OrderFeed is the orders and fills feed plus the events that arrived on the stream.
-export function OrderFeed({ orders, events }: { orders: Order[]; events: AppEvent[] }) {
+// OrderFeed is the orders and fills feed (the events are in the activity log, R26).
+export function OrderFeed({ orders }: { orders: Order[] }) {
   return (
     <div className="card h-100"><div className="card-body">
       <h2 className="h5">Orders and fills</h2>
-      {orders.length === 0 && <p className="text-secondary">No orders yet.</p>}
+      {orders.length === 0 && <p className="text-secondary mb-0">No orders yet.</p>}
       {orders.length > 0 && (
-        <ul className="list-unstyled small mb-3" aria-label="Orders feed">
+        <ul className="list-unstyled small mb-0" aria-label="Orders feed">
           {orders.map((o) => (
             <li key={o.requestId} className="d-flex flex-wrap align-items-center gap-2 py-1 border-bottom">
               <span className="text-secondary text-nowrap">{clock(o.updatedAt)}</span>
@@ -224,14 +224,6 @@ export function OrderFeed({ orders, events }: { orders: Order[]; events: AppEven
           ))}
         </ul>
       )}
-      <h3 className="h6">Events</h3>
-      {events.length === 0 && <p className="text-secondary small mb-0">No new events since the page opened.</p>}
-      {events.map((e) => (
-        <div key={e.id} className={"ev small mb-1 " + e.severity}>
-          <span className="when me-2">{clock(e.at)}</span>{e.title}
-          {e.detail && <div className="text-secondary">{e.detail}</div>}
-        </div>
-      ))}
     </div></div>
   );
 }

@@ -1432,6 +1432,11 @@ paths:
           only; `stale` is true when the portfolio is missing or older than 30 seconds.
         - `event` (`LiveEvent`): a new event of the account's feed (or a system-wide one).
         - `order` (`LiveOrder`): one of cactusTrade's orders after a stored change.
+        - `tick` (`LiveTick`): the agent finished a decision round on the account: how many
+          shares it checked, its ideas and the orders it sent, and why the others stopped.
+          Not stored: it is on the stream only (no event, bell or e-mail).
+        - `decision` (`LiveDecision`): the agent decided about an idea (a candidate), sent
+          after the decision log was written; GET /api/v1/decisions lists the stored ones.
         - `resync` (`LiveNotice`): messages may have been missed (the stream fell behind);
           fetch again what the page shows. A new snapshot follows.
         - `bye` (`LiveNotice`): the server closes the stream: the session ended or was
@@ -2175,6 +2180,7 @@ components:
         title: { type: string }
         detail: { type: string }
         actor: { type: string }
+        accountId: { type: string, description: "the account the event is about (absent = system-wide)" }
     EventFeed:
       type: object
       required: [events, unread]
@@ -3110,6 +3116,43 @@ components:
       properties:
         accountId: { type: string, description: "the account it is about (empty = system-wide)" }
         event: { $ref: "#/components/schemas/Event" }
+    LiveTick:
+      type: object
+      description: One agent decision round on an account (the `tick` message; not stored)
+      required: [accountId, at, checked, ideas, orders, skipped, reasons, shares, killed, errors]
+      properties:
+        accountId: { type: string }
+        at: { type: string, format: date-time, description: "when the round started" }
+        checked: { type: integer, description: "watchlist shares looked at" }
+        ideas: { type: integer, description: "candidates the strategy proposed (one decision each)" }
+        orders: { type: integer, description: "orders sent" }
+        skipped: { type: string, description: "why the round did nothing (empty = it ran)" }
+        reasons:
+          type: object
+          description: "shares that led to no order, by the step that stopped them (session, candles, signal, costs, review, prices, reservations, risk, order)"
+          additionalProperties: { type: integer }
+        shares:
+          type: array
+          items: { $ref: "#/components/schemas/LiveTickShare" }
+        killed: { type: boolean, description: "the round tripped the kill switch" }
+        errors: { type: integer, description: "errors the round met" }
+    LiveTickShare:
+      type: object
+      description: What one round did with one share
+      required: [instrumentId, symbol, entered, step, detail]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string }
+        entered: { type: boolean, description: "an order was sent" }
+        step: { type: string, description: "the step that stopped it (empty when entered)" }
+        detail: { type: string, description: "the last step's answer (at most 200 characters)" }
+    LiveDecision:
+      type: object
+      description: A decision of the agent with its outcome (the `decision` message)
+      required: [accountId, decision]
+      properties:
+        accountId: { type: string }
+        decision: { $ref: "#/components/schemas/Decision" }
     LiveOrder:
       type: object
       description: One of cactusTrade's orders as just stored (the `order` message)

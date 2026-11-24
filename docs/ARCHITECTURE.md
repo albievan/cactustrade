@@ -197,9 +197,11 @@ unchanged), and nothing an order path decides reads them.
  view use cases ──► viewPortfolio (≤ 1 eToro read per account per 10 s, shared flight)
  executor / reconcile / agent / supervisor ──publish──► event bus (never blocks)
  GET /api/v1/live ──► LiveSnapshot (cache + store only) every 5 s, and on agent.state /
-                      account.portfolio (≤ 1 per second); event / order messages filtered
-                      by LiveFilter; resync on overflow; bye on sign-out, lost access,
-                      30-min lifetime, shutdown
+                      account.portfolio (≤ 1 per second); event / order / tick / decision
+                      messages filtered by LiveFilter; resync on overflow; bye on sign-out,
+                      lost access, 30-min lifetime, shutdown
+ agent tick ──publish──► agent.tick (summary) and decision (after the row is written):
+                      bus only, never stored as events (R26: the dashboard's activity log)
  historyLoop (15 min) ──► SyncTradesAll ──► Broker.TradeHistory ──► trades (upsert in Go)
  GET /api/v1/history/{summary,daily,trades}, /history/export/{file}.csv ──► Trades, snapshots
 ```

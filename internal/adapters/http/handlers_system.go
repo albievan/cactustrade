@@ -48,6 +48,9 @@ func toEvent(e domain.Event) Event {
 	if e.Detail != "" {
 		ev.Detail = ptr(e.Detail)
 	}
+	if e.AccountID != "" {
+		ev.AccountId = ptr(e.AccountID)
+	}
 	return ev
 }
 

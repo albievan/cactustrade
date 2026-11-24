@@ -174,6 +174,10 @@ func TestEventsSystemAndRiskEndpoints(t *testing.T) {
 	if code != 200 || m["unread"] != 2.0 || len(evs) != 2 || evs[0].(map[string]any)["kind"] != "watchlist.added" || evs[1].(map[string]any)["kind"] != "account.created" {
 		t.Fatalf("events %d %v", code, m)
 	}
+	// each event names its account (R26: the dashboard's activity log keeps the current one's)
+	if id, ok := evs[0].(map[string]any)["accountId"].(string); !ok || id == "" {
+		t.Fatalf("event without its account: %v", evs[0])
+	}
 	if code, _, _ := x.do("POST", "/api/v1/events/seen", "", csrf...); code != 204 {
 		t.Fatalf("seen %d", code)
 	}

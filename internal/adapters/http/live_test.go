@@ -319,6 +319,69 @@ func TestLiveStreamViewerOfANeverGetsB(t *testing.T) {
 	}
 }
 
+// TestLiveStreamTicksAndDecisions (R26): a viewer of A gets A's tick summaries and
+// decisions as "tick" and "decision" messages, never B's.
+func TestLiveStreamTicksAndDecisions(t *testing.T) {
+	x := newLiveTC(t, LiveLimits{Snapshot: time.Hour})
+	b := x.account(t, "Other demo")
+	viewer := x.user(t, "viewer1", domain.RoleViewer)
+	if err := x.svc.ShareAccount(context.Background(), x.admin, x.acct, "viewer1", domain.AccessView); err != nil {
+		t.Fatal(err)
+	}
+	s := openSSE(t, viewer, x.url(x.acct))
+	if m, ok := s.next(5 * time.Second); !ok || m.event != "snapshot" {
+		t.Fatalf("first %v", m)
+	}
+	at := time.Date(2026, 11, 24, 15, 0, 5, 0, time.UTC)
+	tick := func(acct string) app.TickSummary {
+		return app.TickSummary{
+			AccountID: acct, At: at, Checked: 3, Ideas: 1, Orders: 1,
+			Reasons: map[app.TraceStep]int{app.StepSession: 1, app.StepSignal: 1},
+			Shares: []app.TickShare{
+				{Instrument: 101, Symbol: "AAPL", Entered: true, Detail: "long $480"},
+				{Instrument: 104, Symbol: "MSFT", Step: app.StepSignal, Detail: "no signal: flat"},
+			},
+		}
+	}
+	decision := func(acct, id string) app.DecisionView {
+		return app.DecisionView{Decision: domain.Decision{
+			ID: id, AccountID: acct, At: at, Outcome: domain.DecisionOrdered, OrderRequestID: "req-" + id,
+			Signal:  domain.DecisionSignal{Instrument: 101, Symbol: "AAPL", Direction: domain.Long, Playbook: "trend_breakout"},
+			Verdict: domain.DecisionVerdict{Kind: domain.VerdictApprove, SizeBp: domain.FullSize},
+			Risk:    domain.DecisionRisk{Allowed: true, Size: 480_00},
+		}, OrderState: domain.OrderFilled}
+	}
+	x.bus.Publish(ports.Event{Type: app.BusTick, Data: tick(b)})
+	x.bus.Publish(ports.Event{Type: app.BusDecision, Data: decision(b, "b-dec")})
+	x.bus.Publish(ports.Event{Type: app.BusTick, Data: tick(x.acct)})
+	x.bus.Publish(ports.Event{Type: app.BusDecision, Data: decision(x.acct, "a-dec")})
+	seen := s.until(5*time.Second, isEvent("decision"))
+	var ticks []LiveTick
+	for _, m := range seen {
+		if strings.Contains(m.data, b) || strings.Contains(m.data, "b-dec") {
+			t.Fatalf("B leaked to A's viewer: %v", m)
+		}
+		if m.event == "tick" {
+			ticks = append(ticks, decodeData[LiveTick](t, m))
+		}
+	}
+	if len(ticks) != 1 {
+		t.Fatalf("ticks %+v", ticks)
+	}
+	if tk := ticks[0]; tk.AccountId != x.acct || !tk.At.Equal(at) || tk.Checked != 3 || tk.Ideas != 1 || tk.Orders != 1 ||
+		tk.Reasons["session"] != 1 || tk.Reasons["signal"] != 1 || len(tk.Shares) != 2 ||
+		tk.Shares[0] != (LiveTickShare{InstrumentId: 101, Symbol: "AAPL", Entered: true, Detail: "long $480"}) ||
+		tk.Shares[1] != (LiveTickShare{InstrumentId: 104, Symbol: "MSFT", Step: "signal", Detail: "no signal: flat"}) {
+		t.Fatalf("tick %+v", tk)
+	}
+	d := decodeData[LiveDecision](t, last(seen))
+	if d.AccountId != x.acct || d.Decision.Id != "a-dec" || d.Decision.Outcome != "ordered" || d.Decision.OrderRequestId != "req-a-dec" ||
+		d.Decision.OrderState != "filled" || d.Decision.Verdict != "approve" || !d.Decision.RiskAllowed || d.Decision.RiskSizeCents != 480_00 ||
+		d.Decision.Playbook != "trend_breakout" || d.Decision.Symbol != "AAPL" {
+		t.Fatalf("decision %+v", d)
+	}
+}
+
 func TestLiveStreamAccessErrors(t *testing.T) {
 	x := newLiveTC(t, LiveLimits{})
 	anon := &http.Client{Transport: x.c.Transport}

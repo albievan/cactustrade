@@ -267,8 +267,9 @@ func (st *liveStream) loop(ctx context.Context, events <-chan ports.Event) {
 	}
 }
 
-// forward sends a bus event the caller may see. change: the agent's state or the portfolio
-// of the stream's account changed (a snapshot is due).
+// forward sends a bus event the caller may see: events (system-wide ones too), and the
+// stream's own account's orders, tick summaries and decisions (R26). change: the agent's
+// state or the portfolio of the stream's account changed (a snapshot is due).
 func (st *liveStream) forward(e ports.Event) (change bool, err error) {
 	acct := app.BusAccount(e)
 	mine := acct != "" && acct == st.account && st.filter[acct]
@@ -283,6 +284,16 @@ func (st *liveStream) forward(e ports.Event) (change bool, err error) {
 			return false, nil
 		}
 		return false, st.send("order", LiveOrder{AccountId: acct, Order: toOrder(app.OrderView{Order: d, Symbol: st.symbols[int64(d.Instrument)]})})
+	case app.TickSummary:
+		if !mine {
+			return false, nil
+		}
+		return false, st.send("tick", toLiveTick(d))
+	case app.DecisionView:
+		if !mine {
+			return false, nil
+		}
+		return false, st.send("decision", LiveDecision{AccountId: acct, Decision: toDecision(d)})
 	case app.AgentStatus, app.PortfolioRead:
 		return mine, nil
 	}
@@ -484,6 +495,22 @@ func toLiveSnapshot(v app.LiveSnapshot) LiveSnapshot {
 			x.Regime, x.Probabilities, x.At = ptr(string(rg.Regime)), &probs, ptr(rg.At)
 		}
 		out.Regimes = append(out.Regimes, x)
+	}
+	return out
+}
+
+func toLiveTick(t app.TickSummary) LiveTick {
+	out := LiveTick{
+		AccountId: t.AccountID, At: t.At, Checked: t.Checked, Ideas: t.Ideas, Orders: t.Orders, Skipped: t.Skipped,
+		Reasons: make(map[string]int, len(t.Reasons)), Shares: make([]LiveTickShare, 0, len(t.Shares)), Killed: t.Killed, Errors: t.Errors,
+	}
+	for k, n := range t.Reasons {
+		out.Reasons[string(k)] = n
+	}
+	for _, sh := range t.Shares {
+		out.Shares = append(out.Shares, LiveTickShare{
+			InstrumentId: int64(sh.Instrument), Symbol: sh.Symbol, Entered: sh.Entered, Step: string(sh.Step), Detail: sh.Detail,
+		})
 	}
 	return out
 }

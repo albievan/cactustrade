@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
@@ -47,7 +48,75 @@ const (
 	BusAgentState = "agent.state"
 	// BusPortfolio: the supervisor read an account's portfolio (Data PortfolioRead).
 	BusPortfolio = "account.portfolio"
+	// BusTick: an agent tick of an account ended (Data TickSummary). Bus only: it is never
+	// stored as an event, so the bell and the e-mails stay quiet (R26).
+	BusTick = "agent.tick"
+	// BusDecision: a decision with its outcome, after its write was attempted (Data
+	// DecisionView). Bus only, like BusTick; the decision log holds the stored row (R26).
+	BusDecision = "decision"
 )
+
+// tickDetailMax bounds each share's detail in a tick summary.
+const tickDetailMax = 200
+
+// TickShare is what one agent tick did with one watchlist share.
+type TickShare struct {
+	Instrument domain.InstrumentID
+	Symbol     string
+	// Entered: an order was sent. Otherwise Step is the step that stopped the share.
+	Entered bool
+	Step    TraceStep
+	// Detail is the last step's answer (at most tickDetailMax bytes, cut at a rune).
+	Detail string
+}
+
+// TickSummary is what one agent tick of an account did, for the live activity log (R26).
+type TickSummary struct {
+	AccountID string
+	At        time.Time // when the tick started
+	// Checked counts the shares looked at, Ideas the candidates (one decision each), Orders
+	// the orders sent.
+	Checked, Ideas, Orders int
+	// Skipped says why the tick did nothing ("" = it ran).
+	Skipped string
+	// Reasons counts the shares that led to no order by the step that stopped them.
+	Reasons map[TraceStep]int
+	Shares  []TickShare
+	Killed  bool
+	Errors  int
+}
+
+// Summary condenses an agent trace into its tick summary.
+func (t AgentTrace) Summary() TickSummary {
+	out := TickSummary{
+		AccountID: t.AccountID, At: t.At, Checked: len(t.Instruments), Orders: t.Entries, Skipped: t.Skipped,
+		Reasons: map[TraceStep]int{}, Shares: make([]TickShare, 0, len(t.Instruments)), Killed: t.Killed, Errors: len(t.Errors),
+	}
+	for _, it := range t.Instruments {
+		if it.DecisionID != "" {
+			out.Ideas++
+		}
+		sh := TickShare{Instrument: it.Instrument, Symbol: it.Symbol, Entered: it.Entered, Detail: cutDetail(lastDetail(&it))}
+		if !it.Entered && len(it.Checks) > 0 {
+			sh.Step = it.Checks[len(it.Checks)-1].Step
+			out.Reasons[sh.Step]++
+		}
+		out.Shares = append(out.Shares, sh)
+	}
+	return out
+}
+
+// cutDetail shortens s to at most tickDetailMax bytes without splitting a rune.
+func cutDetail(s string) string {
+	if len(s) <= tickDetailMax {
+		return s
+	}
+	cut := tickDetailMax - len("…")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
 
 // PortfolioRead says that an account's portfolio was read at At (the figures are in the view
 // cache; a stream sends a new snapshot).
@@ -68,6 +137,10 @@ func BusAccount(e ports.Event) string {
 	case AgentStatus:
 		return d.AccountID
 	case PortfolioRead:
+		return d.AccountID
+	case TickSummary:
+		return d.AccountID
+	case DecisionView:
 		return d.AccountID
 	default:
 		return ""
@@ -94,6 +167,17 @@ func (s *Service) publishAgentState(accountID string, st domain.AgentState) {
 // publishPortfolio announces the supervisor's portfolio read.
 func (s *Service) publishPortfolio(accountID string, pf domain.Portfolio) {
 	s.publish(BusPortfolio, s.d.Clock.Now().UTC(), PortfolioRead{AccountID: accountID, At: s.d.Clock.Now().UTC(), Equity: pf.Equity()})
+}
+
+// publishTick announces what an agent tick did (bus only).
+func (s *Service) publishTick(tr AgentTrace) {
+	s.publish(BusTick, s.d.Clock.Now().UTC(), tr.Summary())
+}
+
+// publishDecision announces a decision with its outcome after its write was attempted (bus
+// only). The order state is the trace's: no read is made for it.
+func (s *Service) publishDecision(d domain.Decision, st domain.OrderState) {
+	s.publish(BusDecision, s.d.Clock.Now().UTC(), DecisionView{Decision: d, OrderState: st})
 }
 
 // EventFeed is the newest events and how many the caller has not seen.

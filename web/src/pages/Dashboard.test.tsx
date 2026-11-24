@@ -73,6 +73,10 @@ function serve(answers: Record<string, unknown> = {}) {
     if (url.endsWith("/api/v1/market/status")) return json([]);
     if (url.includes("/api/v1/orders")) return json([order({ requestId: "r9", symbol: "NVDA", state: "filled" })]);
     if (url.includes("/api/v1/reviews")) return json({ scanner: { enabled: false }, reviews: [] });
+    if (url.includes("/api/v1/events")) {
+      return json({ events: [{ id: "old", at: "2026-11-24T14:00:00Z", kind: "agent.started", severity: "info", title: "Agent started on Main demo", actor: "admin", accountId: "a1" }], unread: 0 });
+    }
+    if (url.includes("/api/v1/decisions")) return json([]);
     const key = url.replace(/^.*\/api\/v1\//, "");
     if (key in answers) return json(answers[key]);
     return new Response(JSON.stringify({ title: "Not found", status: 404 }), { status: 404 });
@@ -155,6 +159,32 @@ describe("Dashboard", () => {
     expect(within(feed).getByText("TSLA")).toBeInTheDocument();
     act(() => es.send("event", { accountId: "a1", event: { id: "e1", at: "2026-11-24T15:00:10Z", kind: "order", severity: "success", title: "Bought AAPL", actor: "agent" } }));
     expect(screen.getByText("Bought AAPL")).toBeInTheDocument();
+  });
+
+  it("shows the agent's activity under the figures, the newest message on top", async () => {
+    serve();
+    mount();
+    const es = await stream();
+    act(() => es.send("snapshot", snapshot()));
+    const log = await screen.findByRole("log", { name: "Agent activity" });
+    await within(log).findByText(/Agent started on Main demo by admin/);
+    act(() => es.send("tick", {
+      accountId: "a1", at: "2026-11-24T15:05:05Z", checked: 12, ideas: 1, orders: 0, skipped: "", reasons: { signal: 11, risk: 1 },
+      shares: [], killed: false, errors: 0,
+    }));
+    act(() => es.send("decision", { accountId: "a1", decision: {
+      id: "d1", accountId: "a1", at: "2026-11-24T15:05:06Z", instrumentId: 1001, symbol: "AAPL", direction: "long", playbook: "trend_breakout",
+      signalReason: "", entry: "189", stopLoss: "185", suggestedSizeCents: 60000, regimeProbs: {}, verdict: "approve", sizeBp: 10000,
+      verdictReason: "", llmCallId: "", riskAllowed: false, riskSizeCents: 0, riskReason: "the daily loss limit is reached",
+      outcome: "rejected_risk", orderRequestId: "", orderState: "",
+    } }));
+    const items = within(log).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("AAPL long idea (trend breakout) — reviewer approved — risk refused");
+    expect(items[1]).toHaveTextContent("Tick: checked 12 shares, 1 idea · 11 no signal, 1 risk refused");
+    expect(items[2]).toHaveTextContent("Agent started");
+    // the log sits right under the headline figures, above the agent panel
+    const panel = screen.getByRole("group", { name: "Agent controls" });
+    expect(log.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("refetches the agent panel and the orders on resync", async () => {

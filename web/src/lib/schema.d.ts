@@ -1300,6 +1300,11 @@ export interface paths {
          *       only; `stale` is true when the portfolio is missing or older than 30 seconds.
          *     - `event` (`LiveEvent`): a new event of the account's feed (or a system-wide one).
          *     - `order` (`LiveOrder`): one of cactusTrade's orders after a stored change.
+         *     - `tick` (`LiveTick`): the agent finished a decision round on the account: how many
+         *       shares it checked, its ideas and the orders it sent, and why the others stopped.
+         *       Not stored: it is on the stream only (no event, bell or e-mail).
+         *     - `decision` (`LiveDecision`): the agent decided about an idea (a candidate), sent
+         *       after the decision log was written; GET /api/v1/decisions lists the stored ones.
          *     - `resync` (`LiveNotice`): messages may have been missed (the stream fell behind);
          *       fetch again what the page shows. A new snapshot follows.
          *     - `bye` (`LiveNotice`): the server closes the stream: the session ended or was
@@ -1925,6 +1930,8 @@ export interface components {
             title: string;
             detail?: string;
             actor: string;
+            /** @description the account the event is about (absent = system-wide) */
+            accountId?: string;
         };
         EventFeed: {
             events: components["schemas"]["Event"][];
@@ -2897,6 +2904,49 @@ export interface components {
             /** @description the account it is about (empty = system-wide) */
             accountId: string;
             event: components["schemas"]["Event"];
+        };
+        /** @description One agent decision round on an account (the `tick` message; not stored) */
+        LiveTick: {
+            accountId: string;
+            /**
+             * Format: date-time
+             * @description when the round started
+             */
+            at: string;
+            /** @description watchlist shares looked at */
+            checked: number;
+            /** @description candidates the strategy proposed (one decision each) */
+            ideas: number;
+            /** @description orders sent */
+            orders: number;
+            /** @description why the round did nothing (empty = it ran) */
+            skipped: string;
+            /** @description shares that led to no order, by the step that stopped them (session, candles, signal, costs, review, prices, reservations, risk, order) */
+            reasons: {
+                [key: string]: number;
+            };
+            shares: components["schemas"]["LiveTickShare"][];
+            /** @description the round tripped the kill switch */
+            killed: boolean;
+            /** @description errors the round met */
+            errors: number;
+        };
+        /** @description What one round did with one share */
+        LiveTickShare: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            /** @description an order was sent */
+            entered: boolean;
+            /** @description the step that stopped it (empty when entered) */
+            step: string;
+            /** @description the last step's answer (at most 200 characters) */
+            detail: string;
+        };
+        /** @description A decision of the agent with its outcome (the `decision` message) */
+        LiveDecision: {
+            accountId: string;
+            decision: components["schemas"]["Decision"];
         };
         /** @description One of cactusTrade's orders as just stored (the `order` message) */
         LiveOrder: {

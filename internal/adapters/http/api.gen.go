@@ -1094,13 +1094,15 @@ type EquitySeries struct {
 
 // Event defines model for Event.
 type Event struct {
-	Actor    string        `json:"actor"`
-	At       time.Time     `json:"at"`
-	Detail   *string       `json:"detail,omitempty"`
-	Id       string        `json:"id"`
-	Kind     string        `json:"kind"`
-	Severity EventSeverity `json:"severity"`
-	Title    string        `json:"title"`
+	// AccountId the account the event is about (absent = system-wide)
+	AccountId *string       `json:"accountId,omitempty"`
+	Actor     string        `json:"actor"`
+	At        time.Time     `json:"at"`
+	Detail    *string       `json:"detail,omitempty"`
+	Id        string        `json:"id"`
+	Kind      string        `json:"kind"`
+	Severity  EventSeverity `json:"severity"`
+	Title     string        `json:"title"`
 }
 
 // EventSeverity defines model for Event.Severity.
@@ -1431,6 +1433,14 @@ type KillRequest struct {
 	Reason *string `json:"reason,omitempty"`
 }
 
+// LiveDecision A decision of the agent with its outcome (the `decision` message)
+type LiveDecision struct {
+	AccountId string `json:"accountId"`
+
+	// Decision One candidate the agent handled (PLAN 5.5)
+	Decision Decision `json:"decision"`
+}
+
 // LiveEvent A new event of the feed (the `event` message)
 type LiveEvent struct {
 	// AccountId the account it is about (empty = system-wide)
@@ -1640,6 +1650,50 @@ type LiveSnapshot struct {
 	// Stale no portfolio, or one older than 30 seconds
 	Stale bool       `json:"stale"`
 	State AgentState `json:"state"`
+}
+
+// LiveTick One agent decision round on an account (the `tick` message; not stored)
+type LiveTick struct {
+	AccountId string `json:"accountId"`
+
+	// At when the round started
+	At time.Time `json:"at"`
+
+	// Checked watchlist shares looked at
+	Checked int `json:"checked"`
+
+	// Errors errors the round met
+	Errors int `json:"errors"`
+
+	// Ideas candidates the strategy proposed (one decision each)
+	Ideas int `json:"ideas"`
+
+	// Killed the round tripped the kill switch
+	Killed bool `json:"killed"`
+
+	// Orders orders sent
+	Orders int `json:"orders"`
+
+	// Reasons shares that led to no order, by the step that stopped them (session, candles, signal, costs, review, prices, reservations, risk, order)
+	Reasons map[string]int  `json:"reasons"`
+	Shares  []LiveTickShare `json:"shares"`
+
+	// Skipped why the round did nothing (empty = it ran)
+	Skipped string `json:"skipped"`
+}
+
+// LiveTickShare What one round did with one share
+type LiveTickShare struct {
+	// Detail the last step's answer (at most 200 characters)
+	Detail string `json:"detail"`
+
+	// Entered an order was sent
+	Entered      bool  `json:"entered"`
+	InstrumentId int64 `json:"instrumentId"`
+
+	// Step the step that stopped it (empty when entered)
+	Step   string `json:"step"`
+	Symbol string `json:"symbol"`
 }
 
 // LlmCall One call to an LLM reviewer as sent and received (never a key or a header)
