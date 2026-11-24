@@ -619,7 +619,11 @@ func (x *execEnv) openPosition(t *testing.T, inst domain.InstrumentID, d domain.
 	t.Helper()
 	r := x.entry(d)
 	r.Instrument, r.PortfolioAt = inst, x.clock.Now()
+	// A setup position is not the agent's decision: only the order row is required.
+	hook := x.b.OnOpen
+	x.b.OnOpen = fakes.RequireOrderRow(x.store.Orders())
 	o, err := x.svc.placeEntry(x.ctx, x.a, r, domain.DefaultRiskLimits)
+	x.b.OnOpen = hook
 	if err != nil || o.State != domain.OrderFilled {
 		t.Fatalf("open = %+v %v", o, err)
 	}

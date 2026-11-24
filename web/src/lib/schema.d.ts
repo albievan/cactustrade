@@ -975,6 +975,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The account's decision log, newest first (viewer; one entry per candidate the agent handled) */
+        get: operations["listDecisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/decisions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** One decision with the LLM call that reviewed it, prompt and response included (viewer; never a key) */
+        get: operations["getDecision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/themes": {
         parameters: {
             query?: never;
@@ -1166,6 +1202,23 @@ export interface paths {
         put?: never;
         /** List the models a provider offers, with the key typed in or a profile's stored key (admin) */
         post: operations["listLlmModels"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/llm/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** LLM calls of the last days per profile and purpose, with tokens and cost (admin) */
+        get: operations["getLlmUsage"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1525,6 +1578,8 @@ export interface components {
             note: string;
         };
         LlmProfile: {
+            inputPricePerMTok: components["schemas"]["LlmPrice"];
+            outputPricePerMTok: components["schemas"]["LlmPrice"];
             id: string;
             name: string;
             provider: string;
@@ -1535,7 +1590,11 @@ export interface components {
             timeoutSeconds: number;
             keySet: boolean;
         };
+        /** @description What the provider charges in USD per million tokens, as entered by the admin (OD13: no built-in price table). "" or "0" = unknown, and then every call's cost is unknown. At most 1000000. */
+        LlmPrice: string;
         LlmProfileInput: {
+            inputPricePerMTok: components["schemas"]["LlmPrice"];
+            outputPricePerMTok: components["schemas"]["LlmPrice"];
             /** @description empty = provider and model */
             name: string;
             provider: string;
@@ -1573,6 +1632,15 @@ export interface components {
             error?: string;
             /** Format: int64 */
             latencyMs: number;
+            /** @description the model that answered (the one asked for when there was no answer) */
+            model?: string;
+            /** Format: int64 */
+            inputTokens?: number;
+            /** Format: int64 */
+            outputTokens?: number;
+            costUsd?: components["schemas"]["UsdCost"];
+            /** @description the logged call (purpose test); absent when it could not be logged */
+            callId?: string;
         };
         /**
          * @description eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
@@ -1967,6 +2035,104 @@ export interface components {
             sentAt?: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        /** @description US dollars to the micro-dollar (absent = unknown, OD13) */
+        UsdCost: string;
+        /** @description One candidate the agent handled (PLAN 5.5) */
+        Decision: {
+            id: string;
+            accountId: string;
+            /** Format: date-time */
+            at: string;
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            /** @description long or short */
+            direction: string;
+            playbook: string;
+            signalReason: string;
+            entry: components["schemas"]["Decimal"];
+            stopLoss: components["schemas"]["Decimal"];
+            takeProfit?: components["schemas"]["Decimal"];
+            suggestedSizeCents: components["schemas"]["Cents"];
+            /** @description the regime model's probabilities (regime → 0..1) */
+            regimeProbs: {
+                [key: string]: number;
+            };
+            /** @description approve, reduce, reject or empty (not reviewed: reviewing off, or ended before the review) */
+            verdict: string;
+            /** @description the size the reviewer left, in basis points of the proposed size */
+            sizeBp: number;
+            verdictReason: string;
+            /** @description the logged reviewer call (empty = none) */
+            llmCallId: string;
+            riskAllowed: boolean;
+            riskSizeCents: components["schemas"]["Cents"];
+            /** @description the risk engine's answer, or why the candidate ended before or after it */
+            riskReason: string;
+            /** @description pending, rejected_reviewer, rejected_cost, rejected_risk, ordered or order_failed */
+            outcome: string;
+            /** @description the order's x-request-id (empty = no order) */
+            orderRequestId: string;
+            /** @description the order's state now (empty = no order) */
+            orderState: string;
+        };
+        /** @description One call to an LLM reviewer as sent and received (never a key or a header) */
+        LlmCall: {
+            id: string;
+            /** @description agent, scanner or test */
+            purpose: string;
+            profileId: string;
+            provider: string;
+            /** @description the model that answered */
+            model: string;
+            /** @description the request body as sent (cut at 32 KiB) */
+            prompt: string;
+            /** @description the raw response body (cut at 32 KiB) */
+            response: string;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            latencyMs: number;
+            costUsd?: components["schemas"]["UsdCost"];
+            error: string;
+            /** Format: date-time */
+            at: string;
+        };
+        DecisionDetail: {
+            decision: components["schemas"]["Decision"];
+            call?: components["schemas"]["LlmCall"];
+        };
+        LlmUsageRow: {
+            profileId: string;
+            /** @description empty when the profile was deleted */
+            profileName: string;
+            /** @description agent, scanner or test (empty in the total) */
+            purpose: string;
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            knownCostUsd: components["schemas"]["UsdCost"];
+            /**
+             * Format: int64
+             * @description calls without a price (their cost is unknown; knownCostUsd leaves them out)
+             */
+            costUnknownCalls: number;
+            costUsd?: components["schemas"]["UsdCost"];
+        };
+        LlmUsage: {
+            days: number;
+            /** Format: date-time */
+            since: string;
+            rows: components["schemas"]["LlmUsageRow"][];
+            total: components["schemas"]["LlmUsageRow"];
         };
     };
     responses: {
@@ -3532,6 +3698,66 @@ export interface operations {
             404: components["responses"]["Problem"];
         };
     };
+    listDecisions: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+                limit?: number;
+                /** @description only decisions made before this time (the next page: the last row's time) */
+                before?: string;
+                /** @description pending, rejected_reviewer, rejected_cost, rejected_risk, ordered or order_failed (absent = any) */
+                outcome?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Decisions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Decision"][];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getDecision: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The decision */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionDetail"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
     listThemes: {
         parameters: {
             query?: never;
@@ -3918,6 +4144,31 @@ export interface operations {
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
+        };
+    };
+    getLlmUsage: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Usage */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmUsage"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
         };
     };
     listAudit: {

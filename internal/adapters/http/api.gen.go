@@ -736,6 +736,70 @@ type CurrencyTotal struct {
 // Decimal An exact decimal (prices and units, up to 6 places)
 type Decimal = string
 
+// Decision One candidate the agent handled (PLAN 5.5)
+type Decision struct {
+	AccountId string    `json:"accountId"`
+	At        time.Time `json:"at"`
+
+	// Direction long or short
+	Direction string `json:"direction"`
+
+	// Entry An exact decimal (prices and units, up to 6 places)
+	Entry        Decimal `json:"entry"`
+	Id           string  `json:"id"`
+	InstrumentId int64   `json:"instrumentId"`
+
+	// LlmCallId the logged reviewer call (empty = none)
+	LlmCallId string `json:"llmCallId"`
+
+	// OrderRequestId the order's x-request-id (empty = no order)
+	OrderRequestId string `json:"orderRequestId"`
+
+	// OrderState the order's state now (empty = no order)
+	OrderState string `json:"orderState"`
+
+	// Outcome pending, rejected_reviewer, rejected_cost, rejected_risk, ordered or order_failed
+	Outcome  string `json:"outcome"`
+	Playbook string `json:"playbook"`
+
+	// RegimeProbs the regime model's probabilities (regime → 0..1)
+	RegimeProbs map[string]float64 `json:"regimeProbs"`
+	RiskAllowed bool               `json:"riskAllowed"`
+
+	// RiskReason the risk engine's answer, or why the candidate ended before or after it
+	RiskReason string `json:"riskReason"`
+
+	// RiskSizeCents US dollars in cents (the eToro account currency is USD)
+	RiskSizeCents Cents  `json:"riskSizeCents"`
+	SignalReason  string `json:"signalReason"`
+
+	// SizeBp the size the reviewer left, in basis points of the proposed size
+	SizeBp int `json:"sizeBp"`
+
+	// StopLoss An exact decimal (prices and units, up to 6 places)
+	StopLoss Decimal `json:"stopLoss"`
+
+	// SuggestedSizeCents US dollars in cents (the eToro account currency is USD)
+	SuggestedSizeCents Cents  `json:"suggestedSizeCents"`
+	Symbol             string `json:"symbol"`
+
+	// TakeProfit An exact decimal (prices and units, up to 6 places)
+	TakeProfit *Decimal `json:"takeProfit,omitempty"`
+
+	// Verdict approve, reduce, reject or empty (not reviewed: reviewing off, or ended before the review)
+	Verdict       string `json:"verdict"`
+	VerdictReason string `json:"verdictReason"`
+}
+
+// DecisionDetail defines model for DecisionDetail.
+type DecisionDetail struct {
+	// Call One call to an LLM reviewer as sent and received (never a key or a header)
+	Call *LlmCall `json:"call,omitempty"`
+
+	// Decision One candidate the agent handled (PLAN 5.5)
+	Decision Decision `json:"decision"`
+}
+
 // Eligibility defines model for Eligibility.
 type Eligibility struct {
 	CheckedAt *time.Time `json:"checkedAt,omitempty"`
@@ -956,6 +1020,33 @@ type KillRequest struct {
 	Reason *string `json:"reason,omitempty"`
 }
 
+// LlmCall One call to an LLM reviewer as sent and received (never a key or a header)
+type LlmCall struct {
+	At time.Time `json:"at"`
+
+	// CostUsd US dollars to the micro-dollar (absent = unknown, OD13)
+	CostUsd     *UsdCost `json:"costUsd,omitempty"`
+	Error       string   `json:"error"`
+	Id          string   `json:"id"`
+	InputTokens int64    `json:"inputTokens"`
+	LatencyMs   int64    `json:"latencyMs"`
+
+	// Model the model that answered
+	Model        string `json:"model"`
+	OutputTokens int64  `json:"outputTokens"`
+	ProfileId    string `json:"profileId"`
+
+	// Prompt the request body as sent (cut at 32 KiB)
+	Prompt   string `json:"prompt"`
+	Provider string `json:"provider"`
+
+	// Purpose agent, scanner or test
+	Purpose string `json:"purpose"`
+
+	// Response the raw response body (cut at 32 KiB)
+	Response string `json:"response"`
+}
+
 // LlmModelsRequest defines model for LlmModelsRequest.
 type LlmModelsRequest struct {
 	// ApiKey the key typed on the page; absent = the stored key of profileId
@@ -965,18 +1056,27 @@ type LlmModelsRequest struct {
 	Provider  string  `json:"provider"`
 }
 
+// LlmPrice What the provider charges in USD per million tokens, as entered by the admin (OD13: no built-in price table). "" or "0" = unknown, and then every call's cost is unknown. At most 1000000.
+type LlmPrice = string
+
 // LlmProfile defines model for LlmProfile.
 type LlmProfile struct {
 	// BaseUrl empty = the provider's address
 	BaseUrl string `json:"baseUrl"`
 	Id      string `json:"id"`
-	KeySet  bool   `json:"keySet"`
+
+	// InputPricePerMTok What the provider charges in USD per million tokens, as entered by the admin (OD13: no built-in price table). "" or "0" = unknown, and then every call's cost is unknown. At most 1000000.
+	InputPricePerMTok LlmPrice `json:"inputPricePerMTok"`
+	KeySet            bool     `json:"keySet"`
 
 	// Model empty = the provider's default (Anthropic: claude-opus-5-5)
-	Model          string `json:"model"`
-	Name           string `json:"name"`
-	Provider       string `json:"provider"`
-	TimeoutSeconds int    `json:"timeoutSeconds"`
+	Model string `json:"model"`
+	Name  string `json:"name"`
+
+	// OutputPricePerMTok What the provider charges in USD per million tokens, as entered by the admin (OD13: no built-in price table). "" or "0" = unknown, and then every call's cost is unknown. At most 1000000.
+	OutputPricePerMTok LlmPrice `json:"outputPricePerMTok"`
+	Provider           string   `json:"provider"`
+	TimeoutSeconds     int      `json:"timeoutSeconds"`
 }
 
 // LlmProfileInput defines model for LlmProfileInput.
@@ -984,12 +1084,18 @@ type LlmProfileInput struct {
 	// ApiKey write-only; absent = keep the stored key, empty = remove it
 	ApiKey  *string `json:"apiKey,omitempty"`
 	BaseUrl string  `json:"baseUrl"`
-	Model   string  `json:"model"`
+
+	// InputPricePerMTok What the provider charges in USD per million tokens, as entered by the admin (OD13: no built-in price table). "" or "0" = unknown, and then every call's cost is unknown. At most 1000000.
+	InputPricePerMTok LlmPrice `json:"inputPricePerMTok"`
+	Model             string   `json:"model"`
 
 	// Name empty = provider and model
-	Name           string `json:"name"`
-	Provider       string `json:"provider"`
-	TimeoutSeconds int    `json:"timeoutSeconds"`
+	Name string `json:"name"`
+
+	// OutputPricePerMTok What the provider charges in USD per million tokens, as entered by the admin (OD13: no built-in price table). "" or "0" = unknown, and then every call's cost is unknown. At most 1000000.
+	OutputPricePerMTok LlmPrice `json:"outputPricePerMTok"`
+	Provider           string   `json:"provider"`
+	TimeoutSeconds     int      `json:"timeoutSeconds"`
 }
 
 // LlmProvider defines model for LlmProvider.
@@ -1020,9 +1126,19 @@ type LlmSetup struct {
 
 // LlmTestResult defines model for LlmTestResult.
 type LlmTestResult struct {
-	Error          *string               `json:"error,omitempty"`
-	LatencyMs      int64                 `json:"latencyMs"`
+	// CallId the logged call (purpose test); absent when it could not be logged
+	CallId *string `json:"callId,omitempty"`
+
+	// CostUsd US dollars to the micro-dollar (absent = unknown, OD13)
+	CostUsd     *UsdCost `json:"costUsd,omitempty"`
+	Error       *string  `json:"error,omitempty"`
+	InputTokens *int64   `json:"inputTokens,omitempty"`
+	LatencyMs   int64    `json:"latencyMs"`
+
+	// Model the model that answered (the one asked for when there was no answer)
+	Model          *string               `json:"model,omitempty"`
 	Ok             bool                  `json:"ok"`
+	OutputTokens   *int64                `json:"outputTokens,omitempty"`
 	Reason         *string               `json:"reason,omitempty"`
 	SizeMultiplier *float32              `json:"sizeMultiplier,omitempty"`
 	Verdict        *LlmTestResultVerdict `json:"verdict,omitempty"`
@@ -1030,6 +1146,38 @@ type LlmTestResult struct {
 
 // LlmTestResultVerdict defines model for LlmTestResult.Verdict.
 type LlmTestResultVerdict string
+
+// LlmUsage defines model for LlmUsage.
+type LlmUsage struct {
+	Days  int           `json:"days"`
+	Rows  []LlmUsageRow `json:"rows"`
+	Since time.Time     `json:"since"`
+	Total LlmUsageRow   `json:"total"`
+}
+
+// LlmUsageRow defines model for LlmUsageRow.
+type LlmUsageRow struct {
+	Calls int64 `json:"calls"`
+
+	// CostUnknownCalls calls without a price (their cost is unknown; knownCostUsd leaves them out)
+	CostUnknownCalls int64 `json:"costUnknownCalls"`
+
+	// CostUsd US dollars to the micro-dollar (absent = unknown, OD13)
+	CostUsd     *UsdCost `json:"costUsd,omitempty"`
+	Failed      int64    `json:"failed"`
+	InputTokens int64    `json:"inputTokens"`
+
+	// KnownCostUsd US dollars to the micro-dollar (absent = unknown, OD13)
+	KnownCostUsd UsdCost `json:"knownCostUsd"`
+	OutputTokens int64   `json:"outputTokens"`
+	ProfileId    string  `json:"profileId"`
+
+	// ProfileName empty when the profile was deleted
+	ProfileName string `json:"profileName"`
+
+	// Purpose agent, scanner or test (empty in the total)
+	Purpose string `json:"purpose"`
+}
 
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
@@ -1449,6 +1597,9 @@ type UpdateUserRequest struct {
 	Role     *Role   `json:"role,omitempty"`
 }
 
+// UsdCost US dollars to the micro-dollar (absent = unknown, OD13)
+type UsdCost = string
+
 // User defines model for User.
 type User struct {
 	CreatedAt time.Time `json:"createdAt"`
@@ -1525,6 +1676,25 @@ type ListAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListDecisionsParams defines parameters for ListDecisions.
+type ListDecisionsParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+	Limit     *int            `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Before only decisions made before this time (the next page: the last row's time)
+	Before *time.Time `form:"before,omitempty" json:"before,omitempty"`
+
+	// Outcome pending, rejected_reviewer, rejected_cost, rejected_risk, ordered or order_failed (absent = any)
+	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty"`
+}
+
+// GetDecisionParams defines parameters for GetDecision.
+type GetDecisionParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
 // ListEventsParams defines parameters for ListEvents.
 type ListEventsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -1533,6 +1703,11 @@ type ListEventsParams struct {
 // SearchInstrumentsParams defines parameters for SearchInstruments.
 type SearchInstrumentsParams struct {
 	Q string `form:"q" json:"q"`
+}
+
+// GetLlmUsageParams defines parameters for GetLlmUsage.
+type GetLlmUsageParams struct {
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
 }
 
 // SaxoCallbackParams defines parameters for SaxoCallback.
@@ -1738,6 +1913,12 @@ type ServerInterface interface {
 	// SetCredential Set a credential (admin, web UI session only); write-only
 	// (PUT /api/v1/credentials/{name})
 	SetCredential(w http.ResponseWriter, r *http.Request, name CredentialName)
+	// ListDecisions The account's decision log, newest first (viewer; one entry per candidate the agent handled)
+	// (GET /api/v1/decisions)
+	ListDecisions(w http.ResponseWriter, r *http.Request, params ListDecisionsParams)
+	// GetDecision One decision with the LLM call that reviewed it, prompt and response included (viewer; never a key)
+	// (GET /api/v1/decisions/{id})
+	GetDecision(w http.ResponseWriter, r *http.Request, id string, params GetDecisionParams)
 	// GetEmailSetup The outgoing mail server (admin; never the password)
 	// (GET /api/v1/email)
 	GetEmailSetup(w http.ResponseWriter, r *http.Request)
@@ -1783,6 +1964,9 @@ type ServerInterface interface {
 	// TestLlmProfile Ask a profile about a made-up trade (admin; nothing is traded)
 	// (POST /api/v1/llm/profiles/{id}/test)
 	TestLlmProfile(w http.ResponseWriter, r *http.Request, id string)
+	// GetLlmUsage LLM calls of the last days per profile and purpose, with tokens and cost (admin)
+	// (GET /api/v1/llm/usage)
+	GetLlmUsage(w http.ResponseWriter, r *http.Request, params GetLlmUsageParams)
 	// GetMarketStatus Today's sessions for LSE, NYSE/NASDAQ and ASX (viewer)
 	// (GET /api/v1/market/status)
 	GetMarketStatus(w http.ResponseWriter, r *http.Request)
@@ -2646,6 +2830,120 @@ func (siw *ServerInterfaceWrapper) SetCredential(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ListDecisions operation middleware
+func (siw *ServerInterfaceWrapper) ListDecisions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListDecisionsParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "outcome" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "outcome", r.URL.Query(), &params.Outcome, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "outcome"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "outcome", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDecisions(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDecision operation middleware
+func (siw *ServerInterfaceWrapper) GetDecision(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDecisionParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDecision(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetEmailSetup operation middleware
 func (siw *ServerInterfaceWrapper) GetEmailSetup(w http.ResponseWriter, r *http.Request) {
 
@@ -2921,6 +3219,39 @@ func (siw *ServerInterfaceWrapper) TestLlmProfile(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.TestLlmProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLlmUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetLlmUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetLlmUsageParams
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLlmUsage(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3751,6 +4082,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/reset", wrapper.ResetKill)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/reconcile", wrapper.ReconcileAgent)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/orders", wrapper.ListOrders)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/decisions", wrapper.ListDecisions)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/decisions/{id}", wrapper.GetDecision)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/themes", wrapper.ListThemes)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/themes", wrapper.CreateTheme)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/themes/{themeId}", wrapper.DeleteTheme)
@@ -3766,6 +4099,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/llm/profiles/{id}", wrapper.UpdateLlmProfile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/profiles/{id}/test", wrapper.TestLlmProfile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/models", wrapper.ListLlmModels)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/llm/usage", wrapper.GetLlmUsage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.ListAudit)
 
 	return m

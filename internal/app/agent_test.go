@@ -82,13 +82,21 @@ type agentReviewer struct {
 	seen   []ports.ReviewInput
 }
 
-func (r *agentReviewer) Review(ctx context.Context, _ domain.LLMConfig, _ string, in ports.ReviewInput) (domain.Verdict, error) {
+func (r *agentReviewer) Review(ctx context.Context, cfg domain.LLMConfig, _ string, in ports.ReviewInput) (domain.Verdict, domain.LLMCall, error) {
 	r.mu.Lock()
 	r.calls++
 	r.seen = append(r.seen, in)
 	f := r.answer
 	r.mu.Unlock()
-	return f(ctx, in)
+	v, err := f(ctx, in)
+	call := domain.LLMCall{
+		Provider: cfg.Provider, Model: "served-" + cfg.Model, Prompt: `{"messages":[]}`, Response: `{"verdict":"` + string(v.Kind) + `"}`,
+		InputTokens: 1_000, OutputTokens: 100, Latency: 1500 * time.Millisecond,
+	}
+	if err != nil {
+		call.Error, call.Response = err.Error(), ""
+	}
+	return v, call, err
 }
 
 func (r *agentReviewer) Models(context.Context, domain.LLMConfig, string) ([]string, error) {
@@ -125,6 +133,8 @@ func shortCand(id domain.InstrumentID) *domain.Candidate {
 func newAgentEnv(t *testing.T, watch ...domain.InstrumentID) *agentEnv {
 	t.Helper()
 	x := supEnv(t, agentStart)
+	// The decision is logged (pending, with the request id) before the order row (PLAN 5.5).
+	x.b.OnOpen = fakes.AllHooks(fakes.RequireOrderRow(x.store.Orders()), fakes.RequireDecision(x.store.Decisions(), x.a.ID))
 	ae := &agentEnv{execEnv: x, m: &agentMarket{clock: x.clock}, cand: longCand}
 	x.svc.d.Market = ae.m
 	for _, id := range []domain.InstrumentID{instNYSE, instLSE, instASX} {
@@ -185,7 +195,7 @@ func (ae *agentEnv) tick(t *testing.T) AgentTrace {
 func (ae *agentEnv) reviewing(t *testing.T, answer func(context.Context, ports.ReviewInput) (domain.Verdict, error)) *agentReviewer {
 	t.Helper()
 	r := &agentReviewer{answer: answer}
-	ae.svc.d.Reviewer = r
+	ae.svc.d.LLM = r
 	pr, err := ae.svc.SaveLLMProfile(ae.ctx, ae.admin, domain.LLMProfile{Name: "Desk", LLMConfig: domain.LLMConfig{Provider: "openai", Model: "gpt"}}, sp("k-desk"))
 	if err != nil {
 		t.Fatal(err)
@@ -453,7 +463,7 @@ func TestAgentTickRefusals(t *testing.T) {
 		}, step: StepCosts},
 		{name: "reviewing on without a reviewer", setup: func(t *testing.T, ae *agentEnv) {
 			ae.reviewing(t, verdict(domain.Verdict{Kind: domain.VerdictApprove}, nil))
-			ae.svc.d.Reviewer = nil
+			ae.svc.d.LLM = nil
 		}, step: StepReview},
 		{name: "stale quote", setup: func(t *testing.T, ae *agentEnv) { ae.m.QuoteAge = time.Minute }, step: StepPrices},
 		{name: "price passed the stop", setup: func(t *testing.T, ae *agentEnv) { ae.m.setQuote(instNYSE, 96_000_000, 96_500_000) }, step: StepPrices},

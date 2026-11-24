@@ -124,3 +124,19 @@ func TestApplyVerdictNeverEnlarges(t *testing.T) {
 		}
 	}
 }
+
+func TestLLMUsageAdd(t *testing.T) {
+	a := LLMUsage{Calls: 2, Failed: 1, InputTokens: 10, OutputTokens: 5, Cost: 7, CostUnknownCalls: 0}
+	b := LLMUsage{Calls: 1, InputTokens: 1, OutputTokens: 1, CostUnknownCalls: 1}
+	got := a.Add(b)
+	if got.Calls != 3 || got.Failed != 1 || got.InputTokens != 11 || got.OutputTokens != 6 || got.Cost != 7 || got.CostKnown() {
+		t.Fatalf("sum = %+v", got)
+	}
+	if !a.CostKnown() {
+		t.Fatal("a has every cost")
+	}
+	huge := LLMUsage{Calls: math.MaxInt64, Cost: Micros(math.MaxInt64)}
+	if s := huge.Add(huge); s.Calls != math.MaxInt64 || s.Cost != Micros(math.MaxInt64) {
+		t.Fatalf("saturating sum = %+v", s)
+	}
+}

@@ -66,6 +66,39 @@ func (r llmCallRepo) Get(_ context.Context, id string) (domain.LLMCall, error) {
 	return c, nil
 }
 
+func (r llmCallRepo) Usage(_ context.Context, since time.Time) ([]domain.LLMUsage, error) {
+	defer r.s.lockLog()()
+	type key struct {
+		profile string
+		purpose domain.LLMPurpose
+	}
+	sums := map[key]domain.LLMUsage{}
+	for _, c := range r.s.log.calls {
+		if c.At.Before(since) {
+			continue
+		}
+		k := key{c.ProfileID, c.Purpose}
+		u := domain.LLMUsage{ProfileID: c.ProfileID, Purpose: c.Purpose, Calls: 1, InputTokens: max(c.InputTokens, 0), OutputTokens: max(c.OutputTokens, 0)}
+		if c.Error != "" {
+			u.Failed = 1
+		}
+		if c.CostMicros >= 0 {
+			u.Cost = c.CostMicros
+		} else {
+			u.CostUnknownCalls = 1
+		}
+		sums[k] = sums[k].Add(u)
+		x := sums[k]
+		x.ProfileID, x.Purpose = c.ProfileID, c.Purpose
+		sums[k] = x
+	}
+	out := slices.Collect(maps.Values(sums))
+	slices.SortFunc(out, func(a, b domain.LLMUsage) int {
+		return cmp.Or(cmp.Compare(a.ProfileID, b.ProfileID), cmp.Compare(a.Purpose, b.Purpose))
+	})
+	return out, nil
+}
+
 func (r llmCallRepo) DeleteBefore(_ context.Context, t time.Time) (int64, error) {
 	defer r.s.lockLog()()
 	n := len(r.s.log.calls)

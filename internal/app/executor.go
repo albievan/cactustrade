@@ -154,6 +154,9 @@ type entryRequest struct {
 	// PortfolioAt is when the cash figure the size came from was read; it must still be
 	// within MaxPortfolioAge when the order is sent (CLAUDE.md §2.2).
 	PortfolioAt time.Time
+	// RequestID is the order's x-request-id when the caller chose it first (the agent writes
+	// it into the pending decision before the order row, PLAN 5.5); "" = a new one.
+	RequestID string
 }
 
 // mayMutate refuses an account change for a non-eToro or real-money account (before any
@@ -286,8 +289,12 @@ func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryReque
 	if rc := s.Reconciled(a.ID); !rc.OK {
 		return domain.Order{}, fmt.Errorf("executor.placeEntry: account not reconciled (%s): %w", rc.Reason, domain.ErrUnavailable)
 	}
+	id := r.RequestID
+	if id == "" {
+		id = s.d.Random.ID()
+	}
 	o, err := domain.NewOrder(domain.Order{
-		RequestID: s.d.Random.ID(), AccountID: a.ID, Mode: a.Mode, Kind: domain.OrderOpen,
+		RequestID: id, AccountID: a.ID, Mode: a.Mode, Kind: domain.OrderOpen,
 		Direction: r.Direction, Instrument: r.Instrument, Amount: r.Amount,
 		Entry: r.Entry, StopLoss: r.StopLoss, TakeProfit: r.TakeProfit,
 	}, s.d.Clock.Now().UTC())

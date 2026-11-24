@@ -134,8 +134,8 @@ func (f *countingMarket) Instruments(context.Context, []domain.InstrumentID) ([]
 // failingReviewer counts calls and fails them: the supervisor never asks the LLM.
 type failingReviewer struct{ countingMarket }
 
-func (f *failingReviewer) Review(context.Context, domain.LLMConfig, string, ports.ReviewInput) (domain.Verdict, error) {
-	return domain.Verdict{}, f.fail()
+func (f *failingReviewer) Review(context.Context, domain.LLMConfig, string, ports.ReviewInput) (domain.Verdict, domain.LLMCall, error) {
+	return domain.Verdict{}, domain.LLMCall{}, f.fail()
 }
 
 func (f *failingReviewer) Models(context.Context, domain.LLMConfig, string) ([]string, error) {
@@ -160,7 +160,7 @@ func TestSuperviseExitsWhateverTheAgentDoes(t *testing.T) {
 			x.b.PortfolioErr = fmt.Errorf("HTTP 503: %w", domain.ErrUnavailable)
 		}, true},
 		{"market data and LLM fail", func(_ *testing.T, x *execEnv) {
-			x.svc.d.Market, x.svc.d.Reviewer = mkt, rev
+			x.svc.d.Market, x.svc.d.LLM = mkt, rev
 		}, false},
 	}
 	for _, tt := range tests {

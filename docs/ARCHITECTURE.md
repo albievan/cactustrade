@@ -44,7 +44,8 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `OAuthConnector` | browser sign-in of a view-only platform: `saxo.Client` (authorize URL; code exchange and refresh token rotation at the sign-in host's `/token`, the client's only POST) |
 | `EquitySnapshots` (repository) | `sqlstore` (`equity_snapshots`, migration 00008): equity every 15 minutes per account, kept 400 days |
 | `SignalModel` | phase 3 |
-| `Reviewer` | `adapters/llm` (Anthropic SDK; OpenAI-compatible for the others); profiles in settings, keys `llm.<id>.api_key` |
+| `Reviewer` | `adapters/llm` (Anthropic SDK; OpenAI-compatible for the others); profiles (with the admin's prices, OD13) in settings, keys `llm.<id>.api_key`. `Review` returns the verdict and the call's trace (request body as sent, raw response, served model, tokens, latency), filled even on error, never with the key |
+| `LLMCalls`, `Decisions` (repository) | `sqlstore` (migration 00010): every LLM call (agent, scanner, test) and the decision log (one row per candidate the agent handled); both kept 400 days (OD12); `LLMCalls.Usage` sums them per profile and purpose |
 | `Mailer` | `adapters/mail` (net/smtp: STARTTLS required / implicit TLS / plain to localhost; header-injection checks); `Outbox` and `PasswordResets` repositories |
 
 The `Broker` port has no money-movement operation. Its `Open` takes a `domain.OrderIntent`,
@@ -86,8 +87,9 @@ Three paths act on an eToro demo account. Only the executor (`app/executor.go`) 
 - **Executor.** `placeEntry` stores the order row (`created`) first, re-checks the
   portfolio's age, marks it `sent` (stored), then calls `Open` with the row's id as
   `x-request-id`. It polls `orders:lookup` by that id (1, 2, 4, 8, 15, 30 s, then cancel at
-  60 s, abandoned at 2 min when eToro never saw it). A 429 is the only case that resends,
-  with the same id (≤ 3 sends); a lost answer is resolved by lookup, never resent (OD2).
+  60 s, abandoned at 2 min when eToro never saw it). An open is never resent (review M3):
+  after a 429 it waits out Retry-After and looks the order up; a lost answer is resolved by
+  lookup (OD2). Closes (≤ 5) and cancels (≤ 3) resend with the same id.
   Every fill is checked against the two order shapes, leverage 1 and the stop we sent (± 1 %);
   a fill that does not conform is closed at once and its instrument blocked.
   `closePosition` and `cancelOrder` follow the same rules with their own stored ids.
@@ -109,7 +111,8 @@ Three paths act on an eToro demo account. Only the executor (`app/executor.go`) 
   ticks only when it is eToro, demo, running, not killed, reconciled, holds the lease and a
   market calendar is configured (D25). Per watchlist share in session: closed bars only →
   strategy → cost gate (OD8) → reviewer (OD7; only shrinks, D23) → fresh portfolio and quote
-  → reservations from our own orders (D24) → `domain.AssessEntry` (D20) → `placeEntry`.
+  → reservations from our own orders (D24) → `domain.AssessEntry` (D20) → decision stored as
+  `pending` → `placeEntry`. Every candidate leaves exactly one decision (below).
 - **Control.** Start, Pause, Stop, Kill, ResetKill, `SetRiskLimits`, the supervisor's kill and
   the OD5 resume take the account's *control* lock; one agent tick holds the *entry* lock.
   Order: control, then entry; a tick never waits for control. Kill stores the kill first,
@@ -138,6 +141,42 @@ Three paths act on an eToro demo account. Only the executor (`app/executor.go`) 
 | D24 | Reservations come from our own non-final orders; eToro's `ordersForOpen` counts too (conservative). An `unknown` order blocks entries. |
 | D25 | Entries need a calendar; without one every market is closed for entries. |
 | D26 | Decisions on 5-minute bars, at each bar close + 5 s. |
+
+### Decision log and LLM calls (phase 5)
+
+```
+ candidate (passed the signal step)
+   → costs ─✗→ rejected_cost        → reviewer ─✗→ rejected_reviewer (LLM call logged first)
+   → fresh prices / reservations / AssessEntry ─✗→ rejected_risk (a kill too)
+   → Decisions.Add(pending, request id)  ─✗→ nothing sent (fail closed)
+   → orders row → Open → Decisions.Update(ordered | order_failed, request id)
+```
+
+- **One decision per candidate** (`app/agent.go`, `decide` + `finishDecision`). A candidate is
+  what the strategy proposed *and* passed the signal step's shape checks; a share skipped
+  before that (session, candles, no signal) leaves none. Every exit after it writes exactly
+  one row with its outcome: `rejected_cost`, `rejected_reviewer`, `rejected_risk`, `ordered`
+  (the request reached eToro; the order's own state says what eToro did) or `order_failed`
+  (allowed but not sent).
+- **The decision comes first.** The agent chooses the request id, stores the decision as
+  `pending` with it, and only then does the executor store the order row and send. A failed
+  decision write means no order row and no send. The final update is not cancelled with the
+  tick (a kill must not lose the record of an order sent); if it fails the row stays
+  `pending` with the request id, and the tick reports the error.
+- **Every LLM call is logged** (`app.logCall`): purpose `agent` (the account), `scanner` (the
+  account) or `test` (no account). The adapter fills the provider's side; the app adds id,
+  account, purpose, profile, time and the cost from the profile's prices (`LLMProfile.Cost`,
+  rounded up, −1 = unknown). For the agent a failed log write is a reject; for the scanner and
+  the test it is logged and ignored (nothing is traded there). A call answered after the time
+  limit is logged with that error and not used.
+- **Reading it.** `GET /api/v1/decisions` (viewer, account access; filter by outcome, page by
+  `before`) joins each row with its order's current state. `GET /api/v1/decisions/{id}` adds
+  the LLM call with its prompt and response; another account's decision is 404, and a call
+  of another account is never attached. `GET /api/v1/llm/usage?days=` (admin) sums calls,
+  failures, tokens and cost per profile and purpose; a cost is shown only when every call in
+  the row had a price ("unknown" otherwise, with the known part apart).
+- **Retention (OD12).** `PurgeDecisionLog` (every 10 minutes, with the other purges) deletes
+  decisions and LLM calls older than 400 days.
 
 ## Accounts
 

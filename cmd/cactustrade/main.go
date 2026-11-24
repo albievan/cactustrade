@@ -209,7 +209,6 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		},
 		Connectors:   map[domain.Platform]ports.OAuthConnector{domain.PlatformSaxo: saxoClient},
 		LLM:          reviewer,
-		Reviewer:     app.VerdictOnly(reviewer), // the agent tick, until step 5.5
 		Research:     broker,
 		Mailer:       mail.New(time.Now, host),
 		MailFallback: fallback.get,

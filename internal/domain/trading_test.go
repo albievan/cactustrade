@@ -71,3 +71,31 @@ func TestEligibilityByDirection(t *testing.T) {
 		t.Fatal("helpers")
 	}
 }
+
+func TestParseMicros(t *testing.T) {
+	ok := map[string]Micros{
+		"0": 0, "3": 3_000_000, "3.5": 3_500_000, "0.000001": 1, "-0.000001": -1, "15.00": 15_000_000,
+		"189.1": 189_100_000, "9223372036854": 9_223_372_036_854_000_000, "9223372036854.775807": 9_223_372_036_854_775_807,
+	}
+	for s, want := range ok {
+		got, err := ParseMicros(s)
+		if err != nil || got != want {
+			t.Errorf("ParseMicros(%q) = %d %v, want %d", s, got, err, want)
+		}
+		if err == nil && got.String() != s && s != "15.00" {
+			if back, _ := ParseMicros(got.String()); back != got {
+				t.Errorf("round trip of %q", s)
+			}
+		}
+	}
+	for _, s := range []string{"", "-", ".", "1.", ".5", "1.0000001", "1e3", " 1", "1 ", "1,000", "+1", "0x10", "9223372036855", "9223372036854.775808", "--1", "1.-5"} {
+		if _, err := ParseMicros(s); err == nil {
+			t.Errorf("ParseMicros(%q) accepted", s)
+		}
+	}
+	for _, m := range []Micros{0, 1, -1, 1_234_567, 9_223_372_036_854_775_807, -9_223_372_036_854_775_807} {
+		if back, err := ParseMicros(m.String()); err != nil || back != m {
+			t.Errorf("round trip %d: %d %v", m, back, err)
+		}
+	}
+}

@@ -193,6 +193,9 @@ type LLMCalls interface {
 	// domain.MaxLLMText, the error at 500 bytes.
 	Add(ctx context.Context, c domain.LLMCall) error
 	Get(ctx context.Context, id string) (domain.LLMCall, error)
+	// Usage sums the calls made at or after since per profile and purpose, ordered by
+	// profile id and purpose.
+	Usage(ctx context.Context, since time.Time) ([]domain.LLMUsage, error)
 	// DeleteBefore removes calls made before t and returns how many.
 	DeleteBefore(ctx context.Context, t time.Time) (int64, error)
 }

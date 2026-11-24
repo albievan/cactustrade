@@ -35,15 +35,23 @@ type agentTC struct {
 // simulated eToro account with $10 000, in the NYSE session.
 func newAgentTC(t *testing.T) *agentTC {
 	t.Helper()
+	return newAgentTCWith(t, func(*app.Deps) {})
+}
+
+// newAgentTCWith is newAgentTC with the service's dependencies changed by edit.
+func newAgentTCWith(t *testing.T, edit func(*app.Deps)) *agentTC {
+	t.Helper()
 	st := fakes.NewStore()
 	clk := &fakes.Clock{T: time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)}
 	sec := &fakes.SecretStore{Now: clk.Now}
 	b := &fakes.SimBroker{Now: clk.Now, Cash: 10_000_00}
-	svc, err := app.New(app.Deps{
+	deps := app.Deps{
 		Store: st, Secrets: sec, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: clk,
 		Broker: b, Market: &fakes.Broker{}, Calendar: nyseOpen{},
 		Sleep: func(ctx context.Context, d time.Duration) error { clk.Advance(d); return ctx.Err() },
-	}, app.Config{Version: "9.9.9"})
+	}
+	edit(&deps)
+	svc, err := app.New(deps, app.Config{Version: "9.9.9"})
 	if err != nil {
 		t.Fatal(err)
 	}

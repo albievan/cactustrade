@@ -220,7 +220,7 @@ func (s *Service) scan(ctx context.Context, v domain.AccountView) (ScanResult, e
 			case len(onList) >= watchlistCap:
 				r.Outcome, r.Summary = domain.ReviewSkipped, c.Playbook+" passed, but the watchlist is full ("+strconv.Itoa(watchlistCap)+")"
 			default:
-				if rc, ok := s.llmCheck(ctx, it.llm, *c, bars); ok {
+				if rc, ok := s.llmCheck(ctx, v.ID, it.llm, *c, bars); ok {
 					r.Checks = append(r.Checks, rc)
 					if !rc.Pass {
 						r.Outcome, r.Summary = domain.ReviewSkipped, c.Playbook+" passed, but the LLM reviewer said no: "+rc.Detail
@@ -268,8 +268,10 @@ func (s *Service) reviewerFor(ctx context.Context, profileID string) (domain.LLM
 
 // llmCheck asks the theme's (or the default) reviewer about a candidate before the scanner
 // adds it to the watchlist. ok is false when reviewing is off. Any failure is a "no"
-// (fail closed); the reviewer can only agree or refuse, never add anything.
-func (s *Service) llmCheck(ctx context.Context, profileID string, c domain.Candidate, bars []domain.Candle) (domain.ReviewCheck, bool) {
+// (fail closed); the reviewer can only agree or refuse, never add anything. The call is
+// logged as purpose "scanner" (PLAN 5.5); a failed log write is only logged, as nothing is
+// traded here.
+func (s *Service) llmCheck(ctx context.Context, accountID, profileID string, c domain.Candidate, bars []domain.Candle) (domain.ReviewCheck, bool) {
 	if s.d.LLM == nil {
 		return domain.ReviewCheck{}, false
 	}
@@ -295,8 +297,14 @@ func (s *Service) llmCheck(ctx context.Context, profileID string, c domain.Candi
 	}
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	// the call's trace is logged from step 5.5 on (purpose "scanner")
-	v, _, err := s.d.LLM.Review(rctx, pr.LLMConfig, key, ports.ReviewInput{Candidate: c, RecentCandles: recent})
+	start := s.d.Clock.Now()
+	v, call, err := s.d.LLM.Review(rctx, pr.LLMConfig, key, ports.ReviewInput{Candidate: c, RecentCandles: recent})
+	if err != nil && call.Error == "" {
+		call.Error = err.Error()
+	}
+	if lerr := s.logCall(ctx, &call, accountID, domain.LLMPurposeScanner, pr, start); lerr != nil {
+		s.d.Log.WarnContext(ctx, "scanner: logging the LLM call failed", "account", accountID, "profile", pr.ID, "err", lerr)
+	}
 	if err != nil {
 		return domain.ReviewCheck{Rule: rule, Detail: "no usable answer: " + err.Error()}, true
 	}

@@ -248,28 +248,6 @@ func TestMigrateLLMSetup(t *testing.T) {
 	}
 }
 
-// TestVerdictOnly: the agent tick's adapter returns the traced reviewer's verdict and error
-// and drops the trace; nil stays nil.
-func TestVerdictOnly(t *testing.T) {
-	if VerdictOnly(nil) != nil {
-		t.Fatal("nil reviewer wrapped")
-	}
-	for _, tt := range []struct {
-		name string
-		r    *fakeReviewer
-	}{
-		{"verdict", &fakeReviewer{v: domain.Verdict{Kind: domain.VerdictReduce, SizeBp: 2_500, Reason: "r"}}},
-		{"error", &fakeReviewer{err: errors.New("HTTP 500")}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			v, err := VerdictOnly(tt.r).Review(context.Background(), domain.LLMConfig{Provider: "openai", Model: "m"}, "k", ports.ReviewInput{})
-			if v != tt.r.v || !errors.Is(err, tt.r.err) || (tt.r.err == nil) != (err == nil) || tt.r.calls != 1 || tt.r.gotKey != "k" {
-				t.Fatalf("VerdictOnly = %+v %v", v, err)
-			}
-		})
-	}
-}
-
 // TestLLMProfilePricesStored: a profile's prices survive the settings round trip, invalid
 // prices are refused, and profiles stored before prices existed read as unknown (0).
 func TestLLMProfilePricesStored(t *testing.T) {

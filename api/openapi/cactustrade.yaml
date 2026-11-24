@@ -1047,6 +1047,46 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/decisions:
+    get:
+      tags: [agent]
+      operationId: listDecisions
+      summary: The account's decision log, newest first (viewer; one entry per candidate the agent handled)
+      parameters:
+        - $ref: "#/components/parameters/AccountIdQuery"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: before, in: query, description: "only decisions made before this time (the next page: the last row's time)", schema: { type: string, format: date-time } }
+        - { name: outcome, in: query, description: "pending, rejected_reviewer, rejected_cost, rejected_risk, ordered or order_failed (absent = any)", schema: { type: string, maxLength: 24 } }
+      responses:
+        "200":
+          description: Decisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Decision" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/decisions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    get:
+      tags: [agent]
+      operationId: getDecision
+      summary: One decision with the LLM call that reviewed it, prompt and response included (viewer; never a key)
+      parameters:
+        - $ref: "#/components/parameters/AccountIdQuery"
+      responses:
+        "200":
+          description: The decision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DecisionDetail" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /api/v1/themes:
     get:
       tags: [research]
@@ -1299,6 +1339,22 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/llm/usage:
+    get:
+      tags: [llm]
+      operationId: getLlmUsage
+      summary: LLM calls of the last days per profile and purpose, with tokens and cost (admin)
+      parameters:
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 400, default: 30 } }
+      responses:
+        "200":
+          description: Usage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmUsage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
   /api/v1/audit:
     get:
       tags: [audit]
@@ -1709,8 +1765,10 @@ components:
         note: { type: string }
     LlmProfile:
       type: object
-      required: [id, name, provider, model, baseUrl, timeoutSeconds, keySet]
+      required: [id, name, provider, model, baseUrl, timeoutSeconds, keySet, inputPricePerMTok, outputPricePerMTok]
       properties:
+        inputPricePerMTok: { $ref: "#/components/schemas/LlmPrice" }
+        outputPricePerMTok: { $ref: "#/components/schemas/LlmPrice" }
         id: { type: string }
         name: { type: string }
         provider: { type: string }
@@ -1718,10 +1776,16 @@ components:
         baseUrl: { type: string, description: "empty = the provider's address" }
         timeoutSeconds: { type: integer }
         keySet: { type: boolean }
+    LlmPrice:
+      type: string
+      pattern: '^([0-9]{1,7}(\.[0-9]{1,6})?)?$'
+      description: "What the provider charges in USD per million tokens, as entered by the admin (OD13: no built-in price table). \"\" or \"0\" = unknown, and then every call's cost is unknown. At most 1000000."
     LlmProfileInput:
       type: object
-      required: [name, provider, model, baseUrl, timeoutSeconds]
+      required: [name, provider, model, baseUrl, timeoutSeconds, inputPricePerMTok, outputPricePerMTok]
       properties:
+        inputPricePerMTok: { $ref: "#/components/schemas/LlmPrice" }
+        outputPricePerMTok: { $ref: "#/components/schemas/LlmPrice" }
         name: { type: string, maxLength: 80, description: "empty = provider and model" }
         provider: { type: string, maxLength: 32 }
         model: { type: string, maxLength: 200 }
@@ -1764,6 +1828,11 @@ components:
         reason: { type: string }
         error: { type: string }
         latencyMs: { type: integer, format: int64 }
+        model: { type: string, description: "the model that answered (the one asked for when there was no answer)" }
+        inputTokens: { type: integer, format: int64 }
+        outputTokens: { type: integer, format: int64 }
+        costUsd: { $ref: "#/components/schemas/UsdCost" }
+        callId: { type: string, description: "the logged call (purpose test); absent when it could not be logged" }
     Platform:
       type: string
       enum: [etoro, trading212, saxo, tiger]
@@ -2171,3 +2240,86 @@ components:
         createdAt: { type: string, format: date-time }
         sentAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    UsdCost:
+      type: string
+      pattern: '^[0-9]+(\.[0-9]{1,6})?$'
+      description: US dollars to the micro-dollar (absent = unknown, OD13)
+    Decision:
+      type: object
+      description: One candidate the agent handled (PLAN 5.5)
+      required: [id, accountId, at, instrumentId, symbol, direction, playbook, signalReason, entry, stopLoss, suggestedSizeCents, regimeProbs, verdict, sizeBp, verdictReason, llmCallId, riskAllowed, riskSizeCents, riskReason, outcome, orderRequestId, orderState]
+      properties:
+        id: { type: string }
+        accountId: { type: string }
+        at: { type: string, format: date-time }
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string }
+        direction: { type: string, description: "long or short" }
+        playbook: { type: string }
+        signalReason: { type: string }
+        entry: { $ref: "#/components/schemas/Decimal" }
+        stopLoss: { $ref: "#/components/schemas/Decimal" }
+        takeProfit: { $ref: "#/components/schemas/Decimal" }
+        suggestedSizeCents: { $ref: "#/components/schemas/Cents" }
+        regimeProbs:
+          type: object
+          description: the regime model's probabilities (regime → 0..1)
+          additionalProperties: { type: number, format: double }
+        verdict: { type: string, description: "approve, reduce, reject or empty (not reviewed: reviewing off, or ended before the review)" }
+        sizeBp: { type: integer, description: "the size the reviewer left, in basis points of the proposed size" }
+        verdictReason: { type: string }
+        llmCallId: { type: string, description: "the logged reviewer call (empty = none)" }
+        riskAllowed: { type: boolean }
+        riskSizeCents: { $ref: "#/components/schemas/Cents" }
+        riskReason: { type: string, description: "the risk engine's answer, or why the candidate ended before or after it" }
+        outcome: { type: string, description: "pending, rejected_reviewer, rejected_cost, rejected_risk, ordered or order_failed" }
+        orderRequestId: { type: string, description: "the order's x-request-id (empty = no order)" }
+        orderState: { type: string, description: "the order's state now (empty = no order)" }
+    LlmCall:
+      type: object
+      description: One call to an LLM reviewer as sent and received (never a key or a header)
+      required: [id, purpose, profileId, provider, model, prompt, response, inputTokens, outputTokens, latencyMs, error, at]
+      properties:
+        id: { type: string }
+        purpose: { type: string, description: "agent, scanner or test" }
+        profileId: { type: string }
+        provider: { type: string }
+        model: { type: string, description: "the model that answered" }
+        prompt: { type: string, description: "the request body as sent (cut at 32 KiB)" }
+        response: { type: string, description: "the raw response body (cut at 32 KiB)" }
+        inputTokens: { type: integer, format: int64 }
+        outputTokens: { type: integer, format: int64 }
+        latencyMs: { type: integer, format: int64 }
+        costUsd: { $ref: "#/components/schemas/UsdCost" }
+        error: { type: string }
+        at: { type: string, format: date-time }
+    DecisionDetail:
+      type: object
+      required: [decision]
+      properties:
+        decision: { $ref: "#/components/schemas/Decision" }
+        call: { $ref: "#/components/schemas/LlmCall" }
+    LlmUsageRow:
+      type: object
+      required: [profileId, profileName, purpose, calls, failed, inputTokens, outputTokens, knownCostUsd, costUnknownCalls]
+      properties:
+        profileId: { type: string }
+        profileName: { type: string, description: "empty when the profile was deleted" }
+        purpose: { type: string, description: "agent, scanner or test (empty in the total)" }
+        calls: { type: integer, format: int64 }
+        failed: { type: integer, format: int64 }
+        inputTokens: { type: integer, format: int64 }
+        outputTokens: { type: integer, format: int64 }
+        knownCostUsd: { $ref: "#/components/schemas/UsdCost" }
+        costUnknownCalls: { type: integer, format: int64, description: "calls without a price (their cost is unknown; knownCostUsd leaves them out)" }
+        costUsd: { $ref: "#/components/schemas/UsdCost" }
+    LlmUsage:
+      type: object
+      required: [days, since, rows, total]
+      properties:
+        days: { type: integer }
+        since: { type: string, format: date-time }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/LlmUsageRow" }
+        total: { $ref: "#/components/schemas/LlmUsageRow" }

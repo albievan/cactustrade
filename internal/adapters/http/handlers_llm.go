@@ -11,13 +11,24 @@ func toLlmProfile(p app.LLMProfileView) LlmProfile {
 	return LlmProfile{
 		Id: p.ID, Name: p.Name, Provider: string(p.Provider), Model: p.Model, BaseUrl: p.BaseURL,
 		TimeoutSeconds: p.TimeoutSeconds, KeySet: p.KeySet,
+		InputPricePerMTok: price(p.InputPrice), OutputPricePerMTok: price(p.OutputPrice),
 	}
 }
 
-func fromLlmProfileInput(id string, in LlmProfileInput) domain.LLMProfile {
+// fromLlmProfileInput converts the request; the prices arrive as decimal strings (USD per
+// million tokens) and are stored as micros (OD13).
+func fromLlmProfileInput(id string, in LlmProfileInput) (domain.LLMProfile, error) {
+	ip, err := parsePrice("inputPricePerMTok", in.InputPricePerMTok)
+	if err != nil {
+		return domain.LLMProfile{}, err
+	}
+	op, err := parsePrice("outputPricePerMTok", in.OutputPricePerMTok)
+	if err != nil {
+		return domain.LLMProfile{}, err
+	}
 	return domain.LLMProfile{ID: id, Name: in.Name, LLMConfig: domain.LLMConfig{
 		Provider: domain.LLMProviderID(in.Provider), Model: in.Model, BaseURL: in.BaseUrl, TimeoutSeconds: in.TimeoutSeconds,
-	}}
+	}, InputPrice: ip, OutputPrice: op}, nil
 }
 
 func toLlmSetup(st app.LLMSetup) LlmSetup {
@@ -65,7 +76,12 @@ func (s *Server) CreateLlmProfile(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	p, err := s.svc.SaveLLMProfile(r.Context(), state(r).principal, fromLlmProfileInput("", req), req.ApiKey)
+	in, err := fromLlmProfileInput("", req)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	p, err := s.svc.SaveLLMProfile(r.Context(), state(r).principal, in, req.ApiKey)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -79,7 +95,12 @@ func (s *Server) UpdateLlmProfile(w http.ResponseWriter, r *http.Request, id str
 	if !decode(w, r, &req) {
 		return
 	}
-	p, err := s.svc.SaveLLMProfile(r.Context(), state(r).principal, fromLlmProfileInput(id, req), req.ApiKey)
+	in, err := fromLlmProfileInput(id, req)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	p, err := s.svc.SaveLLMProfile(r.Context(), state(r).principal, in, req.ApiKey)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -127,7 +148,16 @@ func (s *Server) TestLlmProfile(w http.ResponseWriter, r *http.Request, id strin
 		s.fail(w, r, err)
 		return
 	}
-	out := LlmTestResult{Ok: res.OK, LatencyMs: res.Latency.Milliseconds()}
+	out := LlmTestResult{
+		Ok: res.OK, LatencyMs: res.Latency.Milliseconds(), InputTokens: ptr(res.InputTokens), OutputTokens: ptr(res.OutputTokens),
+		CostUsd: usd(res.Cost),
+	}
+	if res.Model != "" {
+		out.Model = ptr(res.Model)
+	}
+	if res.CallID != "" {
+		out.CallId = ptr(res.CallID)
+	}
 	if res.OK {
 		v := LlmTestResultVerdict(res.Verdict.Kind)
 		out.Verdict, out.SizeMultiplier, out.Reason = &v, ptr(float32(res.Verdict.SizeBp)/float32(domain.FullSize)), ptr(res.Verdict.Reason)

@@ -19,6 +19,7 @@ import { Email } from "./pages/Email";
 import { ResetPassword } from "./pages/ResetPassword";
 import { Overview } from "./pages/Overview";
 import { Orders } from "./pages/Orders";
+import { DecisionLog } from "./pages/DecisionLog";
 
 export function App() {
   const { me, loading } = useSession();
@@ -40,6 +41,7 @@ export function App() {
         <Route path="overview" element={<Overview />} />
         <Route path="watchlist" element={<Watchlist />} />
         <Route path="orders" element={<Orders />} />
+        <Route path="decisions" element={<DecisionLog />} />
         <Route path="accounts" element={<Accounts />} />
         <Route path="themes" element={<Themes />} />
         <Route path="credentials" element={<Navigate to="/accounts" replace />} />

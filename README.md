@@ -11,12 +11,15 @@ Kubernetes using the same `deploy.sh` as the other cactus apps.
 > implies that it is profitable. It runs in **demo mode by default**. Real money needs a
 > deliberate, gated switch, and you use it entirely at your own risk (see `LICENSE`).
 
-**Status: phases 1–2 done, phase 3 done except its live check (3.6), phase 4 done except the owner's live demo run (4.17), of 7.** Sign-in,
+**Status: phases 1–2 done, phase 3 done except its live check (3.6), phases 4 and 5 done except the owner's live runs (4.17, 5.8), of 7.** Sign-in,
 roles, API keys, the encrypted write-only credential store, deployment, the eToro client,
 market sessions (LSE, NYSE/NASDAQ, ASX), watchlists, the regime model, playbooks and
 walk-forward backtester (`cactustrade backtest --instrument ID`), and now **demo execution**:
 the risk engine, the agent (entries at each 5-minute bar close), the supervisor (exits), the
-kill switch, reconciliation with eToro and the Orders page. **Demo accounts only:** a real-money
+kill switch, reconciliation with eToro and the Orders page, plus the **decision log** (every
+idea the agent had, what the LLM reviewer and the risk engine said, and the order it led to,
+with the reviewer's prompt and answer) and the LLM usage and cost per profile, from prices you
+enter (unknown without them). **Demo accounts only:** a real-money
 account is refused in five places until the phase-7 gate. The execution code has been tested
 against a simulated eToro account; it has **not yet run against eToro's demo** (PLAN 4.17,
 the owner's run) and several eToro behaviours are still unverified
@@ -49,6 +52,9 @@ not a forecast and not advice. See [`docs/PLAN.md`](docs/PLAN.md).
   (depguard enforces this). It fails closed, exits always work, and orders are idempotent
   through request ids stored before they are sent. Start-up reconciles with eToro before
   anything trades.
+- **No order without its reason.** Each candidate's decision (and the LLM call that reviewed
+  it) is stored before the order row; if that write fails, nothing is sent. Decisions and LLM
+  calls, prompts and answers included, are kept 400 days.
 
 The full list is in [`CLAUDE.md` §2](CLAUDE.md).
 

@@ -1,15 +1,22 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, errorText, type LlmProfile, type LlmProfileInput, type LlmSetup, type LlmTestResult } from "../lib/api";
+import { api, errorText, type LlmProfile, type LlmProfileInput, type LlmSetup, type LlmTestResult, type LlmUsage, type LlmUsageRow } from "../lib/api";
 import { useSession } from "../lib/session";
 import { InfoCard } from "../components/InfoCard";
 
-const blank: LlmProfileInput = { name: "", provider: "anthropic", model: "", baseUrl: "", timeoutSeconds: 0 };
+const blank: LlmProfileInput = { name: "", provider: "anthropic", model: "", baseUrl: "", timeoutSeconds: 0, inputPricePerMTok: "", outputPricePerMTok: "" };
+
+// prices says what a profile costs per million tokens, or that it is unknown (OD13).
+export function prices(p: { inputPricePerMTok: string; outputPricePerMTok: string }): string {
+  if (!p.inputPricePerMTok || !p.outputPricePerMTok) return "prices unknown";
+  return `$${p.inputPricePerMTok} in / $${p.outputPricePerMTok} out per M tokens`;
+}
 
 // The LLM reviewer: what it is, several provider/model profiles (each with its own key), the
 // default one, and a test per profile. Themes can pick their own profile.
 export function LlmReviewer() {
   const { can, me } = useSession();
   const admin = can("settings.write") && me?.via === "session";
+  const seesUsage = can("settings.write");
   const [setup, setSetup] = useState<LlmSetup | null>(null);
   const [editing, setEditing] = useState<LlmProfile | "new" | null>(null);
   const [tests, setTests] = useState<Record<string, LlmTestResult>>({});
@@ -113,6 +120,7 @@ export function LlmReviewer() {
                   <span className="badge text-bg-light border">{label(p.provider)}</span>
                   {p.keySet ? <span className="badge text-bg-light border"><i className="bi bi-key me-1" />key set</span>
                     : <span className="badge text-bg-warning">no key</span>}
+                  <span className="badge text-bg-light border"><i className="bi bi-currency-dollar me-1" />{prices(p)}</span>
                 </div>
                 <code className="small d-block text-break mt-2">{p.model || (p.provider === "anthropic" ? setup.defaultAnthropicModel : "")}</code>
                 {tests[p.id] && <TestResult r={tests[p.id]} />}
@@ -121,7 +129,73 @@ export function LlmReviewer() {
           </div>
         ))}
       </div>
+      {seesUsage && <UsageCard setup={setup} />}
     </>
+  );
+}
+
+const periods = [7, 30, 90, 400];
+
+// usageCost shows a usage row's cost: exact when every call had a price, else what is known
+// and how many calls are unpriced (OD13: unknown is shown as unknown, never as 0).
+export function usageCost(r: LlmUsageRow): string {
+  if (r.costUsd !== undefined) return "$" + r.costUsd;
+  if (r.costUnknownCalls === r.calls) return "unknown";
+  return `at least $${r.knownCostUsd} (${r.costUnknownCalls} unpriced)`;
+}
+
+// UsageCard: the LLM calls of the last days per profile and purpose (admin).
+function UsageCard({ setup }: { setup: LlmSetup }) {
+  const [days, setDays] = useState(30);
+  const [usage, setUsage] = useState<LlmUsage | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api.llmUsage(days).then((u) => { setUsage(u); setError(""); }).catch((e) => setError(errorText(e)));
+  }, [days]);
+  const name = (r: LlmUsageRow) => r.profileName || (setup.profiles.find((p) => p.id === r.profileId)?.name ?? "deleted profile");
+  return (
+    <div className="card mt-4">
+      <div className="card-header d-flex align-items-center gap-2">
+        <h2 className="h5 mb-0 flex-grow-1">Usage</h2>
+        <label className="visually-hidden" htmlFor="usageDays">Period</label>
+        <select id="usageDays" className="form-select form-select-sm w-auto" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+          {periods.map((d) => <option key={d} value={d}>last {d} days</option>)}
+        </select>
+      </div>
+      <div className="card-body">
+        {error && <div className="alert alert-danger" role="alert">{error}</div>}
+        {usage && usage.rows.length === 0 && <p className="text-secondary mb-0">No LLM calls in the last {usage.days} days.</p>}
+        {usage && usage.rows.length > 0 && (
+          <div className="table-responsive">
+            <table className="table table-sm align-middle mb-2">
+              <thead>
+                <tr>
+                  <th>Profile</th><th>Purpose</th><th className="text-end">Calls</th><th className="text-end">Failed</th>
+                  <th className="text-end">Input tokens</th><th className="text-end">Output tokens</th><th className="text-end">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usage.rows.map((r) => (
+                  <tr key={r.profileId + "/" + r.purpose}>
+                    <td>{name(r)}</td><td>{r.purpose}</td><td className="text-end">{r.calls}</td><td className="text-end">{r.failed}</td>
+                    <td className="text-end">{r.inputTokens.toLocaleString()}</td><td className="text-end">{r.outputTokens.toLocaleString()}</td>
+                    <td className="text-end">{usageCost(r)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="fw-semibold">
+                  <td colSpan={2}>Total</td><td className="text-end">{usage.total.calls}</td><td className="text-end">{usage.total.failed}</td>
+                  <td className="text-end">{usage.total.inputTokens.toLocaleString()}</td><td className="text-end">{usage.total.outputTokens.toLocaleString()}</td>
+                  <td className="text-end" data-testid="usage-total-cost">{usageCost(usage.total)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+        <div className="form-text">Agent reviews, scanner checks and tests from this page. A cost is known only for profiles with prices.</div>
+      </div>
+    </div>
   );
 }
 
@@ -152,9 +226,24 @@ function TestResult({ r }: { r: LlmTestResult }) {
   return r.ok ? (
     <div className="alert alert-success small py-2 mt-3 mb-0" role="status">
       Answered <strong>{r.verdict}</strong>{r.verdict === "reduce" && <> to {Math.round((r.sizeMultiplier ?? 0) * 100)} %</>} in {r.latencyMs} ms: “{r.reason}”
+      <TestUsage r={r} />
     </div>
   ) : (
-    <div className="alert alert-warning small py-2 mt-3 mb-0 text-break test-error" role="alert">No usable answer ({r.latencyMs} ms): {r.error}. A real idea would be rejected.</div>
+    <div className="alert alert-warning small py-2 mt-3 mb-0 text-break test-error" role="alert">
+      No usable answer ({r.latencyMs} ms): {r.error}. A real idea would be rejected.
+      <TestUsage r={r} />
+    </div>
+  );
+}
+
+// TestUsage: the model that answered (a fallback may serve) and what the call used.
+function TestUsage({ r }: { r: LlmTestResult }) {
+  if (!r.model && r.inputTokens === undefined) return null;
+  return (
+    <div className="mt-1 text-secondary">
+      {r.model && <>Model <code>{r.model}</code> · </>}
+      {(r.inputTokens ?? 0).toLocaleString()} in / {(r.outputTokens ?? 0).toLocaleString()} out tokens · cost {r.costUsd !== undefined ? "$" + r.costUsd : "unknown"}
+    </div>
   );
 }
 
@@ -162,7 +251,11 @@ function ProfileForm({ setup, initial, id, keySet, onCancel, onSaved }: {
   setup: LlmSetup; initial: LlmProfileInput; id?: string; keySet?: boolean;
   onCancel: () => void; onSaved: (p: LlmProfile) => Promise<void>;
 }) {
-  const [p, setP] = useState<LlmProfileInput>({ name: initial.name, provider: initial.provider, model: initial.model, baseUrl: initial.baseUrl, timeoutSeconds: initial.timeoutSeconds });
+  // The prices travel with every save, so a save never resets them (they are required).
+  const [p, setP] = useState<LlmProfileInput>({
+    name: initial.name, provider: initial.provider, model: initial.model, baseUrl: initial.baseUrl, timeoutSeconds: initial.timeoutSeconds,
+    inputPricePerMTok: initial.inputPricePerMTok ?? "", outputPricePerMTok: initial.outputPricePerMTok ?? "",
+  });
   const [key, setKey] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
@@ -236,6 +329,28 @@ function ProfileForm({ setup, initial, id, keySet, onCancel, onSaved }: {
           <input id="timeout" type="number" min={0} max={600} className="form-control" value={p.timeoutSeconds} onChange={(e) => set({ timeoutSeconds: Number(e.target.value) })} />
           <span className="input-group-text">s</span>
         </div>
+      </div>
+      <div className="col-md-3">
+        <label className="form-label fw-semibold" htmlFor="inPrice">Input price</label>
+        <div className="input-group">
+          <span className="input-group-text">$</span>
+          <input id="inPrice" inputMode="decimal" className="form-control" value={p.inputPricePerMTok} placeholder="unknown"
+            onChange={(e) => set({ inputPricePerMTok: e.target.value.trim() })} />
+          <span className="input-group-text">/ M tokens</span>
+        </div>
+      </div>
+      <div className="col-md-3">
+        <label className="form-label fw-semibold" htmlFor="outPrice">Output price</label>
+        <div className="input-group">
+          <span className="input-group-text">$</span>
+          <input id="outPrice" inputMode="decimal" className="form-control" value={p.outputPricePerMTok} placeholder="unknown"
+            onChange={(e) => set({ outputPricePerMTok: e.target.value.trim() })} />
+          <span className="input-group-text">/ M tokens</span>
+        </div>
+      </div>
+      <div className="col-md-6 align-self-center">
+        <div className="form-text">What the provider charges, from its price list (up to 6 decimals). Empty = unknown: every call&apos;s
+          cost is then shown as unknown. Used only to show what the reviews cost.</div>
       </div>
       {error && <div className="col-12"><div className="alert alert-danger mb-0" role="alert">{error}</div></div>}
       <div className="col-12 d-flex gap-2">

@@ -28,5 +28,6 @@ describe("Layout", () => {
     expect(links.indexOf("Overview")).toBeLessThan(links.indexOf("Dashboard"));
     expect(links).toContain("Platform accounts");
     expect(links.indexOf("Orders")).toBeGreaterThan(links.indexOf("Dashboard")); // under Trading
+    expect(links.indexOf("Decision log")).toBe(links.indexOf("Orders") + 1);
   });
 });

@@ -282,3 +282,43 @@ func Truncate(s string, n int) string {
 	}
 	return s[:cut] + mark
 }
+
+// LLMRetentionDays is how long decisions and LLM calls (prompt and response included) are
+// kept (OD12), like equity snapshots.
+const LLMRetentionDays = 400
+
+// LLMUsage sums the LLM calls of one profile and purpose over a period.
+type LLMUsage struct {
+	ProfileID    string
+	Purpose      LLMPurpose
+	Calls        int64
+	Failed       int64 // calls with an error
+	InputTokens  int64
+	OutputTokens int64
+	// Cost sums the calls whose cost is known; CostUnknownCalls counts the others (a profile
+	// without prices, OD13). The total is known only when CostUnknownCalls is 0.
+	Cost             Micros
+	CostUnknownCalls int64
+}
+
+// CostKnown reports whether every call's cost is known.
+func (u LLMUsage) CostKnown() bool { return u.CostUnknownCalls == 0 }
+
+// Add folds o into u (saturating, so a sum never wraps).
+func (u LLMUsage) Add(o LLMUsage) LLMUsage {
+	u.Calls = satAdd(u.Calls, o.Calls)
+	u.Failed = satAdd(u.Failed, o.Failed)
+	u.InputTokens = satAdd(u.InputTokens, o.InputTokens)
+	u.OutputTokens = satAdd(u.OutputTokens, o.OutputTokens)
+	u.Cost = Micros(satAdd(int64(u.Cost), int64(o.Cost)))
+	u.CostUnknownCalls = satAdd(u.CostUnknownCalls, o.CostUnknownCalls)
+	return u
+}
+
+// satAdd adds two non-negative counts, capped at math.MaxInt64.
+func satAdd(a, b int64) int64 {
+	if b > 0 && a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
+}

@@ -57,6 +57,11 @@ export type AgentStatusResult = components["schemas"]["AgentStatusResult"];
 export type KillReport = components["schemas"]["KillReport"];
 export type Reconciliation = components["schemas"]["Reconciliation"];
 export type Order = components["schemas"]["Order"];
+export type Decision = components["schemas"]["Decision"];
+export type DecisionDetail = components["schemas"]["DecisionDetail"];
+export type LlmCall = components["schemas"]["LlmCall"];
+export type LlmUsage = components["schemas"]["LlmUsage"];
+export type LlmUsageRow = components["schemas"]["LlmUsageRow"];
 
 export class ApiError extends Error {
   constructor(
@@ -192,6 +197,15 @@ export const api = {
   resetKill: (confirm: string) => request<AgentStatusResult>("POST", "/api/v1/agent/reset", { confirm }),
   reconcileAgent: () => request<Reconciliation>("POST", "/api/v1/agent/reconcile"),
   orders: (limit = 100) => request<Order[]>("GET", `/api/v1/orders?limit=${limit}`),
+  // The decision log of the current account (PLAN 5.6): one row per candidate the agent handled.
+  decisions: (q: { limit?: number; before?: string; outcome?: string } = {}) => {
+    const p = new URLSearchParams({ limit: String(q.limit ?? 100) });
+    if (q.before) p.set("before", q.before);
+    if (q.outcome) p.set("outcome", q.outcome);
+    return request<Decision[]>("GET", `/api/v1/decisions?${p.toString()}`);
+  },
+  decision: (id: string) => request<DecisionDetail>("GET", `/api/v1/decisions/${encodeURIComponent(id)}`),
+  llmUsage: (days = 30) => request<LlmUsage>("GET", `/api/v1/llm/usage?days=${days}`),
   connectSaxo: (id: string) => request<ConnectStart>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/saxo/connect`),
   testAccount: (id: string) => request<BrokerCheck>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/test`),
   accountShares: (id: string) => request<AccountShare[]>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/shares`),

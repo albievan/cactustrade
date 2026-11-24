@@ -523,3 +523,38 @@ func RequireOrderRow(orders ports.Orders) func(context.Context, domain.OrderInte
 		return nil
 	}
 }
+
+// RequireDecision is an OnOpen hook for the agent: the account's decision log must already
+// hold a pending decision for the intent's request id, with its direction and instrument
+// (PLAN 5.5: the decision is persisted before the order row, and so before the send).
+func RequireDecision(decisions ports.Decisions, accountID string) func(context.Context, domain.OrderIntent) error {
+	return func(ctx context.Context, in domain.OrderIntent) error {
+		ds, err := decisions.List(ctx, accountID, time.Time{}, domain.DecisionPending, 10_000)
+		if err != nil {
+			return fmt.Errorf("reading the decision log: %w", err)
+		}
+		for _, d := range ds {
+			if d.OrderRequestID != in.RequestID {
+				continue
+			}
+			if d.Signal.Direction != in.Direction || d.Signal.Instrument != in.Instrument || !d.Risk.Allowed || d.Risk.Size < in.Amount {
+				return fmt.Errorf("decision %s does not match the intent %s", d.ID, in.RequestID)
+			}
+			return nil
+		}
+		return fmt.Errorf("no pending decision for request id %s", in.RequestID)
+	}
+}
+
+// AllHooks runs every OnOpen hook and joins their errors.
+func AllHooks(hooks ...func(context.Context, domain.OrderIntent) error) func(context.Context, domain.OrderIntent) error {
+	return func(ctx context.Context, in domain.OrderIntent) error {
+		var errs []error
+		for _, h := range hooks {
+			if err := h(ctx, in); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
+}

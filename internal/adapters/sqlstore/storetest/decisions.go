@@ -94,6 +94,36 @@ func runLLMCalls(t *testing.T, s ports.Store, accountID string, t0 time.Time) {
 	if _, err := r.Get(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("Get missing: %v", err)
 	}
+	// Usage: per profile and purpose, known costs summed, unknown ones counted.
+	later := domain.LLMCall{
+		ID: "call-3", AccountID: accountID, Purpose: domain.LLMPurposeAgent, ProfileID: "prof-1", Provider: "anthropic",
+		InputTokens: 10, OutputTokens: 2, CostMicros: 100, Error: "timeout", At: t0.Add(2 * time.Hour),
+	}
+	scan := domain.LLMCall{
+		ID: "call-4", AccountID: accountID, Purpose: domain.LLMPurposeScanner, ProfileID: "prof-1", Provider: "anthropic",
+		InputTokens: 7, OutputTokens: 3, CostMicros: domain.CostUnknown, At: t0.Add(3 * time.Hour),
+	}
+	for _, c := range []domain.LLMCall{later, scan} {
+		if err := r.Add(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	us, err := r.Usage(ctx, t0)
+	want := []domain.LLMUsage{
+		{ProfileID: "prof-1", Purpose: domain.LLMPurposeAgent, Calls: 2, Failed: 1, InputTokens: 1_244, OutputTokens: 58, Cost: 12_445},
+		{ProfileID: "prof-1", Purpose: domain.LLMPurposeScanner, Calls: 1, InputTokens: 7, OutputTokens: 3, CostUnknownCalls: 1},
+		{ProfileID: "prof-2", Purpose: domain.LLMPurposeTest, Calls: 1, Failed: 1, CostUnknownCalls: 1},
+	}
+	if err != nil || !reflect.DeepEqual(us, want) {
+		t.Fatalf("Usage = %+v %v\nwant %+v", us, err, want)
+	}
+	us, err = r.Usage(ctx, t0.Add(2*time.Hour))
+	if err != nil || len(us) != 2 || us[0].Calls != 1 || us[0].Cost != 100 || us[1].Purpose != domain.LLMPurposeScanner {
+		t.Fatalf("Usage since +2h = %+v %v", us, err)
+	}
+	if us, err := r.Usage(ctx, t0.Add(24*time.Hour)); err != nil || len(us) != 0 {
+		t.Fatalf("Usage of nothing = %+v %v", us, err)
+	}
 	if n, err := r.DeleteBefore(ctx, t0.Add(time.Minute)); err != nil || n != 1 {
 		t.Fatalf("DeleteBefore = %d %v", n, err)
 	}

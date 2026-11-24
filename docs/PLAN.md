@@ -590,7 +590,7 @@ Guardrails touched (CLAUDE.md §2): §2.1 no new path (allowlist test unchanged)
   locks, lease, start-up/shutdown, D20–D26); `docs/etoro-api.md` "How the app uses execution"
   and the U1–U11 table; README status and a risk note before starting the agent.
 
-## Phase 5 — LLM reviewer and decision log — `in_progress`
+## Phase 5 — LLM reviewer and decision log — `done except 5.8's owner run (needs demo + LLM keys)`
 
 ### Phase 4 review fixes (2026-11-24) — `done`
 
@@ -614,6 +614,10 @@ domain/app/fakes code changed; no contract, migration, handler, web or dependenc
 | m5 | `SetRiskLimits` read eToro's portfolio while holding the control lock, delaying a Kill. | Equity is read before the lock; the state is checked again inside it (a Kill in between makes the change fail with 409). PLAN 4.11-a's note that a Kill may wait for that read no longer applies. | `TestSetRiskLimitsDoesNotDelayAKill`. |
 
 Decisions made while fixing (recorded here):
+
+- **review-B2-owner (owner: adopt with alert, 2026-11-24).** Reconciliation keeps adopting an
+  unrecorded position that one of our own lost, abandoned or unrecorded orders explains
+  (`domain.AdoptUnrecorded`), and every adoption raises the `position.adopted` alert event.
 
 - **review-a Absence proves a close only for a position old enough** (found by the M4 simulator,
   seed 240): after a lost close answer the executor re-reads the portfolio, and a fill younger
@@ -641,7 +645,7 @@ Verification: `make check` green in the worktree (gofumpt, golangci-lint 0 issue
 `go test -race` with coverage domain 100.0 % / app 87.7 %, MariaDB `test-int`, govulncheck, contract drift,
 `pnpm -C web check`).
 
-## Phase 5 — LLM reviewer and decision log — `todo`
+### Phase 5 steps
 
 | ID | Step | Files | Acceptance | Status |
 |---|---|---|---|---|
@@ -649,10 +653,10 @@ Verification: `make check` green in the worktree (gofumpt, golangci-lint 0 issue
 | 5.2 | **Domain.** `LLMCall` (id, account, purpose agent/scanner/test, profile, provider, model served, prompt, response, input/output tokens, latency, cost micros, −1 = unknown, error, at). `LLMProfile` prices: USD per million input and output tokens as `Micros`, 0 = unknown; `Cost(in, out)` in integers. `Decision`: signal (playbook, direction, entry, stop, take-profit, suggested size, regime probabilities, reason), verdict (kind, bp, reason, call id), risk (allowed, size, reason), outcome (`rejected_reviewer`, `rejected_cost`, `rejected_risk`, `ordered`, `order_failed`), order request id. `Truncate` at 32 KiB, UTF-8 safe. | `internal/domain/{decisions.go,llm.go}` + tests | `go test ./internal/domain -run 'Decision\|LLMCost\|Truncate'`, including a property test that cost is monotonic and cannot overflow (tokens capped) | done |
 | 5.3 | **Port and adapter trace.** `Reviewer.Review` returns `(Verdict, LLMCall, error)`, and the call is filled even on error (prompt, latency, error, raw response). Anthropic: `resp.Usage.InputTokens/OutputTokens`, `resp.Model` (the fallback may serve). OpenAI-compatible: `usage.prompt_tokens/completion_tokens`, `model`. Update callers (scanner `llmCheck`, `TestLLM`). | `internal/ports/ports.go`, `internal/adapters/llm/llm.go` (+tests), `internal/app/{scanner.go,llm.go}`, fakes | `go test ./internal/adapters/llm`. For every provider the recorded request body has no `tools`, `tool_choice` or `functions` key; usage is parsed; a timeout returns a trace with an error; invalid JSON is an error with the raw response kept. | done |
 | 5.4 | **Migration 00010.** `llm_calls` (id PK, account_id `''` = system, no FK; purpose, profile_id, provider, model, prompt TEXT, response TEXT, tokens, cost_micros, latency_ms, error, at). `decisions` (id PK, account_id FK, at, instrument_id, symbol, direction, playbook, signal fields, probs TEXT JSON, llm_call_id, verdict, size_bp, verdict_reason, risk_allowed, risk_size_cents, risk_reason, outcome, order_request_id). Both dialects; repositories with `List(account, before, outcome, limit)`, `Get`, `DeleteBefore`. | `migrations/{sqlite,mariadb}/00010_decision_log.sql`, `internal/adapters/sqlstore/decisions.go`, `storetest` | `make test && make test-int`, `TestMigrationParity` | done |
-| 5.5 | **App decision log.** The agent pipeline (4.10) writes one `Decision` per candidate. It is persisted **before** the order row; a write failure means no order (fail closed). Then it is updated with the request id and outcome. Every LLM call is logged (agent, scanner, test); for agent entries a failed log write = reject. `Decisions`, `Decision` (view + account access), `LLMUsage(days)` (admin). Purge per OD12. | `internal/app/{decisions.go,agent.go,scanner.go,llm.go}` + tests | `go test -race ./internal/app -run Decision`. Every exit path of 4.10 writes exactly one decision with the right outcome; the decision exists before `Open`; store failure → no `Open`; another account's decision → 404; scanner calls logged as `scanner`. | todo |
-| 5.6 | **Contract and handlers.** `GET /api/v1/decisions?limit&before&outcome`, `GET /api/v1/decisions/{id}` (with the prompt and response), `GET /api/v1/llm/usage?days=` (admin), LLM profile schema with prices. | `api/openapi/cactustrade.yaml`, `internal/adapters/http/handlers_decisions.go` + tests | `make gen && go test ./internal/adapters/http -run 'Decision\|LLMUsage'`, contracts drift check green | todo |
-| 5.7 | **Web.** *Decision log* page under Trading: time, symbol, direction, playbook, verdict, risk, outcome, order state; outcome filter. A row expands to show signal, regime probabilities, reasons, and the prompt and response folded, with tokens, cost and latency. LLM page: price fields per profile and a usage card. | `web/src/pages/{DecisionLog.tsx,LlmReviewer.tsx}` + tests, `Layout.tsx`, `api.ts` | `pnpm -C web check` | todo |
-| 5.8 | **Docs and verification.** ARCHITECTURE and PLAN. Owner run: a demo agent with a configured reviewer produces decision rows end to end. | docs | `make check`; owner run blocked on the demo and LLM keys | todo |
+| 5.5 | **App decision log.** The agent pipeline (4.10) writes one `Decision` per candidate. It is persisted **before** the order row; a write failure means no order (fail closed). Then it is updated with the request id and outcome. Every LLM call is logged (agent, scanner, test); for agent entries a failed log write = reject. `Decisions`, `Decision` (view + account access), `LLMUsage(days)` (admin). Purge per OD12. | `internal/app/{decisions.go,agent.go,scanner.go,llm.go}` + tests | `go test -race ./internal/app -run Decision`. Every exit path of 4.10 writes exactly one decision with the right outcome; the decision exists before `Open`; store failure → no `Open`; another account's decision → 404; scanner calls logged as `scanner`. | done |
+| 5.6 | **Contract and handlers.** `GET /api/v1/decisions?limit&before&outcome`, `GET /api/v1/decisions/{id}` (with the prompt and response), `GET /api/v1/llm/usage?days=` (admin), LLM profile schema with prices. | `api/openapi/cactustrade.yaml`, `internal/adapters/http/handlers_decisions.go` + tests | `make gen && go test ./internal/adapters/http -run 'Decision\|LLMUsage'`, contracts drift check green | done |
+| 5.7 | **Web.** *Decision log* page under Trading: time, symbol, direction, playbook, verdict, risk, outcome, order state; outcome filter. A row expands to show signal, regime probabilities, reasons, and the prompt and response folded, with tokens, cost and latency. LLM page: price fields per profile and a usage card. | `web/src/pages/{DecisionLog.tsx,LlmReviewer.tsx}` + tests, `Layout.tsx`, `api.ts` | `pnpm -C web check` | done |
+| 5.8 | **Docs and verification.** ARCHITECTURE and PLAN. Owner run: a demo agent with a configured reviewer produces decision rows end to end. | docs | `make check`; owner run blocked on the demo and LLM keys | blocked: docs done; the owner's run needs the demo and LLM keys |
 
 ### Steps 5.2–5.4: decisions (2026-11-24)
 
@@ -698,6 +702,97 @@ Verification: `make check` green in the worktree (gofumpt, golangci-lint 0 issue
   descending; `before` is exclusive. The usage aggregation for `LLMUsage(days)` is left to 5.5.
   The fake store has the same repositories plus `DecisionsErr` / `LLMCallsErr` for 5.5's
   fail-closed tests.
+
+### Steps 5.5–5.8: decisions (2026-11-24)
+
+- **5.5-a The tick is on the traced reviewer.** `Deps.LLM ports.Reviewer` is the only reviewer;
+  `Deps.Reviewer`, `app.VerdictReviewer` and `app.VerdictOnly` are deleted (and their
+  wiring in `cmd/cactustrade`).
+- **5.5-b What is a candidate.** One decision per candidate that passed step 3 (the signal's
+  shape checks: right instrument, a valid direction, shorts allowed, size/entry/stop set, stop
+  on the losing side). A share that ends before that (session, open position, candles, no
+  signal, a malformed candidate) leaves no decision: it is a trace entry only, as nothing was
+  proposed that could be reviewed or sized.
+- **5.5-c Outcomes per exit path** (`app/agent.go`, `decide`; table test
+  `TestAgentTickDecisionOutcomes`): costs (either cost gate, incl. the second after the engine
+  shrank the size) → `rejected_cost`; reviewer unusable, missing, erroring, timing out,
+  rejecting, answering garbage, or its call not loggable → `rejected_reviewer` (verdict
+  `reject` with the reason); fresh portfolio/quote, session, reservations, risk-state or
+  block reads, `AssessEntry` refusal or kill → `rejected_risk`; the agent paused/stopped before
+  the send, the pending decision not storable, or `placeEntry` failing before anything left →
+  `order_failed`; anything that reached eToro (`Sends > 0`) → `ordered`, whatever eToro then
+  did (the order's own state is shown next to it). Reasons for outcomes that are not the risk
+  engine's own answer (costs, stale prices, "not sent: …") are written into `riskReason`:
+  the decision has no other free-text field and the UI shows it as "why it ended".
+- **5.5-d The request id is chosen before the decision.** The agent draws the order's request id,
+  stores the decision `pending` with it, then passes it to `placeEntry`
+  (`entryRequest.RequestID`), which stores the order row and sends. So the decision exists
+  before the order row (test `TestAgentTickDecisionBeforeOrderRow` with a store that fails an
+  order `Create` without its pending decision) and before `Open` (`fakes.RequireDecision`
+  OnOpen hook, on in every agent test). If the pending write fails: no order row, no send,
+  outcome `order_failed` (stored by a second attempt if the store recovered), trace error.
+  The final write is an `Update` (an `Add` after an `ErrConflict`), not cancelled with the
+  tick; if it fails the row stays `pending` with the request id and the tick reports it.
+- **5.5-e LLM calls.** `app.logCall` fills id, account, purpose, profile, time, cost
+  (`LLMProfile.Cost`) and, when the adapter did not, latency; it writes with
+  `context.WithoutCancel`. Agent: the call is logged before its verdict is used; a failed log
+  write is a reject. Scanner (purpose `scanner`, the account) and the admin's test (purpose
+  `test`, no account): a failed log write is a warning only. A late answer (after the time
+  limit) is logged with that error. `LLMTestResult` gains `Cost` and `CallID`.
+- **5.5-f Read use cases.** `Decisions(accountID, {Before, Outcome, Limit})` (view permission +
+  view access; limit 1–500, default 100; unknown outcome 400) joins each decision with the
+  current state of its order (same account only). `Decision(accountID, id)` adds the LLM call
+  when it is still kept and belongs to the same account. Another account's decision is 404
+  (the repository's `Get` takes the account). `LLMUsage(days)` (settings permission = admin;
+  1–400, default 30) uses the new `LLMCalls.Usage(since)` (SQL `GROUP BY profile_id, purpose`,
+  known costs summed, unknown ones counted; storetest covers both databases) and names each
+  row with the profile's current name ("" for a deleted profile). `PurgeDecisionLog` runs in
+  the existing 10-minute purge loop (`httpapi.PurgeLoop`) and deletes both tables' rows older
+  than `domain.LLMRetentionDays` = 400 (OD12).
+- **5.5-g 4.12 extended.** Each scenario's store is wrapped so an open order row stored before
+  its pending decision is a violation; `checkOpen` requires the pending decision for every
+  intent; after every tick, the decisions logged equal the candidates that passed step 3 (by
+  id), none is left `pending`, `ordered` ⇔ the named order was sent. A planted bug (the
+  pending decision removed before the order) makes it fail.
+- **5.5-h 4.13's `AgentStatusView` does not expose reservations** (only counts: open agent
+  positions and unfinished orders), so it needs no change to use `app.reservations`.
+- **5.6-a Contract.** `GET /api/v1/decisions?accountId&limit&before&outcome`,
+  `GET /api/v1/decisions/{id}?accountId` (`DecisionDetail{decision, call?}`; the call has the
+  prompt and response as stored, never a key or header), `GET /api/v1/llm/usage?days=`
+  (`LlmUsage{days, since, rows, total}`). Outcome and purpose stay plain strings (4.13-e).
+  Costs are `UsdCost` decimal strings of USD micros; **absent = unknown**. A usage row has
+  `knownCostUsd` (always) and `costUsd` (only when every call had a price), plus
+  `costUnknownCalls`; the UI shows "unknown" or "at least $x (n unpriced)", never 0.
+- **5.6-b Prices on the profile.** `LlmProfile` and `LlmProfileInput` carry
+  `inputPricePerMTok` / `outputPricePerMTok` (USD per million tokens, decimal strings, ""
+  or "0" = unknown), parsed by the new `domain.ParseMicros` and stored as micros. They are
+  **required** on input, so a save cannot drop them by omission; the web form always sends the
+  values it shows. (Profile saves are web-session-only, so there are no API-key scripts to
+  break.) This fixes the 5.4 note that saving reset prices to 0. Invalid prices are 400 with
+  the field.
+- **5.6-c The test result** gains `model` (the one that answered), `inputTokens`,
+  `outputTokens`, `costUsd` (absent = unknown) and `callId`.
+- **5.7-a Web.** New *Decision log* page under Trading (after Orders): a table (a log, like
+  Orders) with time, share, direction, playbook, verdict, risk, outcome and order state, an
+  outcome filter, a refresh button and "Older decisions" paging by `before`. The first column
+  is a compact icon button (chevron, `aria-expanded`, `aria-label`) that opens the row: the
+  signal, the regime probabilities, the risk engine's answer and the order, the reviewer's
+  verdict and reason, and the LLM call's model, tokens, cost and latency with the prompt and
+  response folded in `<details>`. The explanation is a foldable `InfoCard`. The LLM page's
+  profile cards show the prices, the profile form has two price fields, an admin sees a
+  *Usage* card (period 7/30/90/400 days) and a test shows the served model, tokens and cost.
+- **5.7-b Pagination caveat.** `before` is exclusive on the time; two decisions with exactly
+  the same microsecond on a page boundary could hide one. Accepted: one tick's decisions are
+  apart by at least the reads between them.
+- **5.8-a Docs.** ARCHITECTURE "Decision log and LLM calls (phase 5)", the port table, and the
+  executor's resend rule corrected to review M3 (opens are never resent). README status,
+  feature list and a guardrail line. No new dependency, no new eToro path, no migration
+  (00010 already had both tables).
+
+Verification (2026-11-24): `make check` green — gofumpt, golangci-lint 0 issues, vet,
+`go test -race` with coverage domain 99.9 % / app 88.0 %, MariaDB `test-int` (incl.
+`llm_calls`, `decisions`, `decision_log_cascade` and the new usage aggregation), govulncheck
+(no vulnerabilities), contract drift in sync, `pnpm -C web check` (14 files, 44 tests).
 
 ## Phase 6 — live dashboard, history, exports — `todo`
 

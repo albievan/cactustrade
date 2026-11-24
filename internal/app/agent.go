@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -66,6 +67,10 @@ type InstrumentTrace struct {
 	RequestID  string
 	Amount     domain.Cents
 	OrderState domain.OrderState
+	// DecisionID is the decision logged for the candidate ("" = no candidate); DecisionErr
+	// says why it could not be stored with its outcome.
+	DecisionID  string
+	DecisionErr string
 }
 
 func (t *InstrumentTrace) pass(step TraceStep, detail string) {
@@ -78,8 +83,8 @@ func (t *InstrumentTrace) fail(step TraceStep, format string, args ...any) bool 
 	return false
 }
 
-// AgentTrace is what one agent tick did, step by step (the decision log persists it in
-// phase 5).
+// AgentTrace is what one agent tick did, step by step. Each candidate's way through the
+// steps is also persisted as a domain.Decision (PLAN 5.5).
 type AgentTrace struct {
 	AccountID string
 	At        time.Time
@@ -236,6 +241,9 @@ func (s *Service) agentTickLocked(ctx context.Context, a domain.Account, tr *Age
 		it := InstrumentTrace{Instrument: w.Instrument.ID, Symbol: w.Instrument.Symbol, Market: w.Instrument.Market}
 		killWhy := s.consider(ctx, a, l, w.Instrument, elig[w.Instrument.ID], pf, sizing, &it)
 		tr.Instruments = append(tr.Instruments, it)
+		if it.DecisionErr != "" {
+			tr.Errors = append(tr.Errors, it.DecisionErr)
+		}
 		if it.Entered {
 			tr.Entries++
 		}
@@ -274,13 +282,14 @@ func (s *Service) agentGate(ctx context.Context, a domain.Account) string {
 }
 
 // consider takes one watchlist instrument through the entry steps and places the entry if
-// every step passes. It returns why the kill switch must be tripped ("" = it need not).
+// every step passes. Once the strategy has proposed a valid candidate, exactly one decision
+// is logged for it (PLAN 5.5). It returns why the kill switch must be tripped ("" = it need
+// not).
 func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskLimits, in domain.Instrument, el domain.Eligibility, pf domain.Portfolio, sizing domain.Cents, it *InstrumentTrace) string {
 	bctx := ports.WithAccount(ctx, a)
 	now := s.d.Clock.Now()
 	// (1) The instrument's own market is in session, and not too close to its end.
-	sess, ok := s.entrySession(in, now, l, it)
-	if !ok {
+	if _, ok := s.entrySession(in, now, l, it); !ok {
 		return ""
 	}
 	for _, p := range pf.Positions {
@@ -306,24 +315,93 @@ func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskL
 	if !ok {
 		return ""
 	}
+	dl := &decisionLog{d: domain.Decision{
+		ID: s.d.Random.ID(), AccountID: a.ID, At: now.UTC(), Signal: domain.SignalFromCandidate(c, in.Symbol),
+	}}
+	killWhy := s.decide(ctx, a, l, in, el, c, sizing, bars, pf, dl, it)
+	s.finishDecision(ctx, dl, it)
+	return killWhy
+}
+
+// decisionLog is the decision being made about one candidate. stored: it was written as
+// pending before the order row (and is updated, not added, at the end).
+type decisionLog struct {
+	d      domain.Decision
+	stored bool
+}
+
+// end sets the outcome; why is added to the risk reason when the risk engine said nothing
+// (a refusal before it, or why an allowed entry was not sent).
+func (dl *decisionLog) end(o domain.DecisionOutcome, why string) {
+	dl.d.Outcome = o
+	switch {
+	case why == "":
+	case dl.d.Risk.Reason == "":
+		dl.d.Risk.Reason = why
+	default:
+		dl.d.Risk.Reason += "; " + why
+	}
+}
+
+// lastDetail is the detail of the trace's last check.
+func lastDetail(it *InstrumentTrace) string {
+	if len(it.Checks) == 0 {
+		return ""
+	}
+	return it.Checks[len(it.Checks)-1].Detail
+}
+
+// finishDecision stores the decision with its outcome: an update of the pending row, or a
+// new row. A failed write is reported in the trace; the entry itself was already decided (a
+// decision that could not be written as pending never led to an order). The write is not
+// cancelled with ctx (a kill must not lose the record of an order already sent).
+func (s *Service) finishDecision(ctx context.Context, dl *decisionLog, it *InstrumentTrace) {
+	if dl.d.Outcome == "" || dl.d.Outcome == domain.DecisionPending {
+		dl.end(domain.DecisionOrderFailed, "the decision ended without an outcome")
+	}
+	wctx := context.WithoutCancel(ctx)
+	it.DecisionID = dl.d.ID
+	err := errors.New("not stored")
+	if !dl.stored {
+		err = s.d.Store.Decisions().Add(wctx, dl.d)
+	}
+	if dl.stored || errors.Is(err, domain.ErrConflict) {
+		err = s.d.Store.Decisions().Update(wctx, dl.d)
+	}
+	if err != nil {
+		it.DecisionErr = fmt.Sprintf("storing decision %s (%s) failed: %v", dl.d.ID, dl.d.Outcome, err)
+		s.d.Log.ErrorContext(ctx, "storing a decision failed", "account", dl.d.AccountID, "decision", dl.d.ID, "outcome", dl.d.Outcome, "err", err)
+	}
+}
+
+// decide runs steps (4)–(9) for a candidate and records each answer in dl. It returns why
+// the kill switch must be tripped ("" = it need not).
+func (s *Service) decide(ctx context.Context, a domain.Account, l domain.RiskLimits, in domain.Instrument, el domain.Eligibility, c domain.Candidate, sizing domain.Cents, bars []domain.Candle, pf domain.Portfolio, dl *decisionLog, it *InstrumentTrace) string {
+	bctx := ports.WithAccount(ctx, a)
 	size := min(c.SuggestedSize, sizing)
 	// (4) Costs below the gross gain at the take-profit (OD8).
 	if !s.costGate(bctx, c, size, c.Entry, it) {
+		dl.end(domain.DecisionRejectedCost, lastDetail(it))
 		return ""
 	}
 	// (5) The LLM reviewer, when reviewing is on (OD7): it can only shrink or reject.
-	if size, ok = s.agentReview(ctx, a, c, size, bars, pf, it); !ok {
+	size, ok := s.agentReview(ctx, a, c, size, bars, pf, dl, it)
+	if !ok {
+		dl.end(domain.DecisionRejectedReviewer, "")
 		return ""
 	}
 	// (6) Fresh cash and a fresh price; the stop must still be on the losing side.
 	fresh, q, entry, ok := s.freshPrices(bctx, c, l, it)
 	if !ok {
+		dl.end(domain.DecisionRejectedRisk, lastDetail(it))
 		return ""
 	}
 	// The steps before (bars, costs, the reviewer) may have taken a while: the decision is
 	// made at the time of the fresh figures (review M1), and the session is looked up again.
-	now = s.d.Clock.Now()
-	if sess, ok = s.sessionNow(in, now, it); !ok {
+	now := s.d.Clock.Now()
+	sess, ok := s.sessionNow(in, now, it)
+	if !ok {
+		dl.end(domain.DecisionRejectedRisk, lastDetail(it))
 		return ""
 	}
 	// (7) Our unfinished orders hold cash and block their instruments (D24), and so do fills
@@ -331,6 +409,7 @@ func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskL
 	res, err := s.reservations(ctx, a.ID, fresh, now)
 	if err != nil {
 		it.fail(StepReservations, "reading our orders failed: %v", err)
+		dl.end(domain.DecisionRejectedRisk, lastDetail(it))
 		return ""
 	}
 	it.pass(StepReservations, fmt.Sprintf("$%s reserved by %d order(s)", res.Amount, res.Count))
@@ -338,11 +417,13 @@ func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskL
 	rs, err := s.observe(ctx, a, fresh, l, now)
 	if err != nil {
 		it.fail(StepRisk, "storing the risk state failed: %v", err)
+		dl.end(domain.DecisionRejectedRisk, lastDetail(it))
 		return ""
 	}
 	blocked, err := s.isBlocked(ctx, a.ID, in.ID)
 	if err != nil {
 		it.fail(StepRisk, "reading the instrument blocks failed: %v", err)
+		dl.end(domain.DecisionRejectedRisk, lastDetail(it))
 		return ""
 	}
 	rin := res.Apply(domain.RiskInput{
@@ -352,30 +433,53 @@ func (s *Service) consider(ctx context.Context, a domain.Account, l domain.RiskL
 		Reconciled: s.Reconciled(a.ID).OK, Blocked: blocked,
 	})
 	dec := domain.AssessEntry(rin)
-	if dec.Kill {
+	if dec.Kill || !dec.Allowed {
 		it.fail(StepRisk, "%s", dec.Reason)
-		return dec.Reason
-	}
-	if !dec.Allowed {
-		it.fail(StepRisk, "%s", dec.Reason)
+		dl.d.Risk = domain.DecisionRisk{Reason: dec.Reason}
+		dl.end(domain.DecisionRejectedRisk, "")
+		if dec.Kill {
+			return dec.Reason
+		}
 		return ""
 	}
+	dl.d.Risk = domain.DecisionRisk{Allowed: true, Size: dec.Size, Reason: cmpOr(dec.Reason, fmt.Sprintf("allowed $%s of $%s requested", dec.Size, size))}
 	// The cost gate again when the engine shrank the size: fixed fees weigh more.
 	if dec.Size < size && !s.costGate(bctx, c, dec.Size, entry, it) {
+		dl.end(domain.DecisionRejectedCost, lastDetail(it))
 		return ""
 	}
 	it.pass(StepRisk, fmt.Sprintf("allowed $%s of $%s requested", dec.Size, size))
-	// (9) The executor: persisted first, then sent, then followed.
+	// (9) The executor: the decision first (pending, with the request id), then the order
+	// row, then the send (PLAN 5.5; CLAUDE.md §2.7).
 	if st := s.agentState(ctx, a.ID); st != domain.AgentRunning {
 		it.fail(StepOrder, "the agent became %s", st)
+		dl.end(domain.DecisionOrderFailed, "not sent: the agent became "+string(st))
 		return ""
 	}
+	dl.d.Outcome, dl.d.OrderRequestID = domain.DecisionPending, s.d.Random.ID()
+	if err := s.d.Store.Decisions().Add(ctx, dl.d); err != nil {
+		it.fail(StepOrder, "storing the decision failed, nothing sent: %v", err)
+		dl.d.OrderRequestID = ""
+		dl.end(domain.DecisionOrderFailed, "not sent: the decision could not be stored first")
+		return ""
+	}
+	dl.stored = true
 	o, err := s.placeEntry(ctx, a, entryRequest{
 		Direction: c.Direction, Instrument: in.ID, Amount: dec.Size, Entry: entry,
-		StopLoss: c.StopLossRate, TakeProfit: c.TakeProfitRate, PortfolioAt: fresh.AsOf,
+		StopLoss: c.StopLossRate, TakeProfit: c.TakeProfitRate, PortfolioAt: fresh.AsOf, RequestID: dl.d.OrderRequestID,
 	}, l)
 	it.RequestID, it.OrderState, it.Amount = o.RequestID, o.State, o.Amount
 	it.Entered = o.RequestID != "" && o.Sends > 0
+	dl.d.OrderRequestID = o.RequestID // "" when no order row was stored
+	if it.Entered {
+		dl.end(domain.DecisionOrdered, "")
+	} else {
+		why := "not sent"
+		if err != nil {
+			why += ": " + err.Error()
+		}
+		dl.end(domain.DecisionOrderFailed, why)
+	}
 	if err != nil {
 		it.fail(StepOrder, "%v", err)
 		return ""
@@ -477,20 +581,27 @@ func (s *Service) costGate(bctx context.Context, c domain.Candidate, size domain
 
 // agentReview runs step (5). With reviewing off the size passes unchanged. With it on, any
 // error, timeout or unusable answer is a rejection (OD7), and the verdict can only shrink
-// the size (domain.ApplyVerdict).
-func (s *Service) agentReview(ctx context.Context, a domain.Account, c domain.Candidate, size domain.Cents, bars []domain.Candle, pf domain.Portfolio, it *InstrumentTrace) (domain.Cents, bool) {
+// the size (domain.ApplyVerdict). Every call is logged (PLAN 5.5); a call that cannot be
+// logged is a rejection too.
+func (s *Service) agentReview(ctx context.Context, a domain.Account, c domain.Candidate, size domain.Cents, bars []domain.Candle, pf domain.Portfolio, dl *decisionLog, it *InstrumentTrace) (domain.Cents, bool) {
+	reject := func(format string, args ...any) (domain.Cents, bool) {
+		it.fail(StepReview, format, args...)
+		dl.d.Verdict.Kind, dl.d.Verdict.SizeBp, dl.d.Verdict.Reason = domain.VerdictReject, 0, lastDetail(it)
+		return 0, false
+	}
 	pr, key, on, err := s.reviewerFor(ctx, "")
 	switch {
 	case !on:
 		it.pass(StepReview, "reviewing is off")
+		dl.d.Verdict.Reason = "reviewing is off"
 		return size, true
 	case err != nil:
-		return 0, it.fail(StepReview, "the reviewer is unusable: %v", err)
-	case s.d.Reviewer == nil:
-		return 0, it.fail(StepReview, "reviewing is on but no reviewer is available")
+		return reject("the reviewer is unusable: %v", err)
+	case s.d.LLM == nil:
+		return reject("reviewing is on but no reviewer is available")
 	}
 	if err := pr.Validate(); err != nil {
-		return 0, it.fail(StepReview, "the reviewer's setup is invalid: %v", err)
+		return reject("the reviewer's setup is invalid: %v", err)
 	}
 	timeout := time.Duration(pr.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -507,20 +618,32 @@ func (s *Service) agentReview(ctx context.Context, a domain.Account, c domain.Ca
 	c.SuggestedSize = size
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	v, err := s.d.Reviewer.Review(rctx, pr.LLMConfig, key, ports.ReviewInput{
+	start := s.d.Clock.Now()
+	v, call, err := s.d.LLM.Review(rctx, pr.LLMConfig, key, ports.ReviewInput{
 		Candidate: c, RecentCandles: recent, Positions: slices.Clone(pf.Positions), TodayPnL: today,
 	})
 	if err == nil && rctx.Err() != nil {
 		err = rctx.Err() // an answer after the time limit is not used
 	}
+	if err != nil && call.Error == "" {
+		call.Error = err.Error()
+	}
+	if lerr := s.logCall(ctx, &call, a.ID, domain.LLMPurposeAgent, pr, start); lerr != nil {
+		return reject("%v: rejected", lerr)
+	}
+	dl.d.Verdict.LLMCallID = call.ID
 	if err != nil {
-		return 0, it.fail(StepReview, "no usable answer from %s: %v", pr.Name, err)
+		return reject("no usable answer from %s: %v", pr.Name, err)
 	}
+	cv := domain.ClampVerdict(v)
 	after := domain.ApplyVerdict(size, v)
+	dl.d.Verdict.Kind, dl.d.Verdict.SizeBp, dl.d.Verdict.Reason = cv.Kind, cv.SizeBp, cv.Reason
 	if after <= 0 {
-		return 0, it.fail(StepReview, "%s rejected it: %s", pr.Name, domain.ClampVerdict(v).Reason)
+		it.fail(StepReview, "%s rejected it: %s", pr.Name, cv.Reason)
+		dl.d.Verdict.Kind, dl.d.Verdict.SizeBp = domain.VerdictReject, 0
+		return 0, false
 	}
-	it.pass(StepReview, fmt.Sprintf("%s: %s, $%s of $%s", pr.Name, domain.ClampVerdict(v).Kind, after, size))
+	it.pass(StepReview, fmt.Sprintf("%s: %s, $%s of $%s", pr.Name, cv.Kind, after, size))
 	return after, true
 }
 

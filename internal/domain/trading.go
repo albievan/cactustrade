@@ -44,6 +44,33 @@ func (m Micros) String() string {
 	return sign + whole + "." + frac
 }
 
+// ParseMicros reads an exact decimal with at most 6 places ("189.1", "-0.000001", "3") as
+// Micros; the inverse of String. Exponents, spaces, thousands separators and values that do
+// not fit in an int64 are refused.
+func ParseMicros(s string) (Micros, error) {
+	neg := strings.HasPrefix(s, "-")
+	whole, frac, dotted := strings.Cut(strings.TrimPrefix(s, "-"), ".")
+	digits := func(x string) bool {
+		return x != "" && strings.Trim(x, "0123456789") == ""
+	}
+	if !digits(whole) || (dotted && (!digits(frac) || len(frac) > 6)) {
+		return 0, Invalid("decimal", "a number with at most 6 decimal places, e.g. 3 or 0.25")
+	}
+	w, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil || w > (1<<63-1)/1_000_000 {
+		return 0, Invalid("decimal", "too large")
+	}
+	f, _ := strconv.ParseInt((frac + "000000")[:6], 10, 64) // 6 digits: always fits
+	v := w*1_000_000 + f
+	if v < 0 { // w*1e6 + f overflowed
+		return 0, Invalid("decimal", "too large")
+	}
+	if neg {
+		v = -v
+	}
+	return Micros(v), nil
+}
+
 // InstrumentID is eToro's instrument identifier.
 type InstrumentID int64
 

@@ -59,12 +59,10 @@ type Deps struct {
 	// "unavailable". Connectors are the browser sign-ins of those that have one (Saxo).
 	Holdings   map[domain.Platform]ports.Holdings
 	Connectors map[domain.Platform]ports.OAuthConnector
-	// LLM is the traced LLM reviewer: the scanner, the admin's test and the model list
-	// (nil = not available).
-	LLM ports.Reviewer
-	// Reviewer is the agent tick's view of the reviewer (VerdictOnly(LLM)) until step 5.5
-	// moves the tick to LLM and logs its calls (nil = not available).
-	Reviewer VerdictReviewer
+	// LLM is the LLM reviewer: the agent's review of a trade, the scanner, the admin's test
+	// and the model list. Every review is logged with its trace (PLAN 5.5). nil = not
+	// available (with reviewing on, the agent then rejects every trade).
+	LLM      ports.Reviewer
 	Research ports.Research // industries and the screen for the scanner (nil = not available)
 	// Reload re-reads settings that live outside the database (credentials from the
 	// environment / secret files). Restart asks the process to restart gracefully. Both are
@@ -79,27 +77,6 @@ type Deps struct {
 	// Sleep waits for d or until ctx ends (the executor's polls and back-offs, the
 	// supervisor's loop). nil = a real timer; tests pass one that advances their fake clock.
 	Sleep func(ctx context.Context, d time.Duration) error
-}
-
-// VerdictReviewer is the reviewer as the agent tick (4.10) calls it: a verdict without the
-// call's trace. Transitional: step 5.5 moves the tick to the traced ports.Reviewer.
-type VerdictReviewer interface {
-	Review(ctx context.Context, cfg domain.LLMConfig, apiKey string, in ports.ReviewInput) (domain.Verdict, error)
-}
-
-// VerdictOnly adapts a traced reviewer to VerdictReviewer, dropping the trace (nil for nil).
-func VerdictOnly(r ports.Reviewer) VerdictReviewer {
-	if r == nil {
-		return nil
-	}
-	return verdictOnly{r}
-}
-
-type verdictOnly struct{ r ports.Reviewer }
-
-func (v verdictOnly) Review(ctx context.Context, cfg domain.LLMConfig, apiKey string, in ports.ReviewInput) (domain.Verdict, error) {
-	verdict, _, err := v.r.Review(ctx, cfg, apiKey, in)
-	return verdict, err
 }
 
 // Config holds use-case settings.

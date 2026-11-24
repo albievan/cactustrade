@@ -61,6 +61,32 @@ func (r llmCalls) Get(ctx context.Context, id string) (domain.LLMCall, error) {
 	return c, nil
 }
 
+func (r llmCalls) Usage(ctx context.Context, since time.Time) ([]domain.LLMUsage, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT profile_id, purpose, COUNT(*), "+
+		"SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), SUM(input_tokens), SUM(output_tokens), "+
+		"SUM(CASE WHEN cost_micros >= 0 THEN cost_micros ELSE 0 END), SUM(CASE WHEN cost_micros < 0 THEN 1 ELSE 0 END) "+
+		"FROM llm_calls WHERE at >= ? GROUP BY profile_id, purpose ORDER BY profile_id, purpose", us(since))
+	if err != nil {
+		return nil, fmt.Errorf("llmCalls.Usage: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []domain.LLMUsage
+	for rows.Next() {
+		var u domain.LLMUsage
+		var purpose string
+		var cost int64
+		if err := rows.Scan(&u.ProfileID, &purpose, &u.Calls, &u.Failed, &u.InputTokens, &u.OutputTokens, &cost, &u.CostUnknownCalls); err != nil {
+			return nil, fmt.Errorf("llmCalls.Usage: %w", err)
+		}
+		u.Purpose, u.Cost = domain.LLMPurpose(purpose), domain.Micros(cost)
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("llmCalls.Usage: %w", err)
+	}
+	return out, nil
+}
+
 func (r llmCalls) DeleteBefore(ctx context.Context, t time.Time) (int64, error) {
 	res, err := r.db.ExecContext(ctx, "DELETE FROM llm_calls WHERE at < ?", us(t))
 	if err != nil {

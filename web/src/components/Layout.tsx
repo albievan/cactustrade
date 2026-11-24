@@ -13,6 +13,7 @@ const sections: { title: string; items: Item[] }[] = [
     { to: "/", icon: "bi-speedometer2", label: "Dashboard", end: true },
     { to: "/watchlist", icon: "bi-binoculars", label: "Watchlist" },
     { to: "/orders", icon: "bi-receipt", label: "Orders" },
+    { to: "/decisions", icon: "bi-journal-check", label: "Decision log" },
     { to: "/risk", icon: "bi-shield-check", label: "Risk limits" },
   ] },
   { title: "Research", items: [

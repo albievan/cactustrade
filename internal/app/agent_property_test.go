@@ -131,6 +131,8 @@ type propScenario struct {
 	sent    map[string][]error
 	foreign bool
 	stats   propStats
+	// orderViolations are open orders stored before their pending decision (PLAN 5.5).
+	orderViolations []string
 }
 
 func (s *propScenario) fail(format string, args ...any) {
@@ -171,6 +173,7 @@ func runPropScenario(t *testing.T, seed uint64, ticks int) propStats {
 	}
 	ae.svc.d.Market = s
 	ae.svc.d.Broker = &propBroker{SimBroker: ae.b, s: s}
+	ae.svc.d.Store = decisionFirstStore{Store: ae.store, violations: &s.orderViolations}
 	ae.svc.evalOverride = func(id domain.InstrumentID, _ []domain.Candle) strategy.Decision {
 		if c := s.cands[id]; c != nil {
 			cp := *c
@@ -304,6 +307,7 @@ func (s *propScenario) step() {
 		ae.clock.Advance(SupervisorInterval)
 	}
 	s.checkAfterSupervisor()
+	before := len(s.decisions())
 	tr, err := ae.svc.AgentTick(ae.ctx, ae.a.ID)
 	if err != nil {
 		s.fail("agent tick: %v", err)
@@ -312,6 +316,7 @@ func (s *propScenario) step() {
 		s.stats.trips++
 	}
 	s.checkAfterTick()
+	s.checkDecisions(tr, before)
 	ae.b.PortfolioErr, s.stale, s.faulty = nil, false, false
 }
 
@@ -547,6 +552,9 @@ func (s *propScenario) checkOpen(ctx context.Context, in domain.OrderIntent) {
 	if !in.Direction.Valid() || in.StopLossRate <= 0 || in.Amount <= 0 {
 		s.fail("intent %+v is not a long or a short with a stop", in)
 	}
+	if err := fakes.RequireDecision(ae.store.Decisions(), ae.a.ID)(ctx, in); err != nil {
+		s.fail("open %s sent before its decision was logged: %v", in.RequestID, err)
+	}
 	o, err := ae.store.Orders().Get(ae.ctx, in.RequestID)
 	switch {
 	case err != nil:
@@ -723,5 +731,62 @@ func (s *propScenario) checkAfterTick() {
 	}
 	if s.foreign && !foreign {
 		s.fail("the owner's own position was closed (OD1)")
+	}
+}
+
+// decisions is the account's decision log, newest first.
+func (s *propScenario) decisions() []domain.Decision {
+	ds, err := s.ae.store.Decisions().List(s.ae.ctx, s.ae.a.ID, time.Time{}, "", 1_000_000)
+	if err != nil {
+		s.fail("decision log: %v", err)
+	}
+	return ds
+}
+
+// checkDecisions (PLAN 5.5): the tick logged exactly one decision per candidate that passed
+// the signal step, each with a final outcome; no open order row was stored before its
+// decision; an ordered decision names an order that was sent, and any other carries no sent
+// order.
+func (s *propScenario) checkDecisions(tr AgentTrace, before int) {
+	s.t.Helper()
+	ae := s.ae
+	if len(s.orderViolations) > 0 {
+		s.fail("order rows stored before their decision: %s", strings.Join(s.orderViolations, "; "))
+	}
+	all := s.decisions()
+	fresh := all[:len(all)-before]
+	want := map[string]bool{}
+	for _, it := range tr.Instruments {
+		signalled := slices.ContainsFunc(it.Checks, func(c TraceCheck) bool { return c.Step == StepSignal && c.Pass })
+		if signalled != (it.DecisionID != "") {
+			s.fail("instrument %s: candidate %v but decision %q", it.Symbol, signalled, it.DecisionID)
+		}
+		if it.DecisionID != "" {
+			want[it.DecisionID] = true
+		}
+	}
+	if len(fresh) != len(want) {
+		s.fail("%d decisions logged for %d candidates", len(fresh), len(want))
+	}
+	for _, d := range fresh {
+		if !want[d.ID] {
+			s.fail("decision %s is not one of this tick's candidates", d.ID)
+		}
+		var sent bool
+		if d.OrderRequestID != "" {
+			o, err := ae.store.Orders().Get(ae.ctx, d.OrderRequestID)
+			if err != nil || o.AccountID != ae.a.ID || o.Kind != domain.OrderOpen {
+				s.fail("decision %s names order %s: %+v %v", d.ID, d.OrderRequestID, o, err)
+			}
+			sent = o.Sends > 0
+		}
+		switch {
+		case d.Outcome == domain.DecisionPending || !d.Outcome.Valid():
+			s.fail("decision %s ended %q", d.ID, d.Outcome)
+		case d.Outcome == domain.DecisionOrdered && (!sent || !d.Risk.Allowed):
+			s.fail("decision %s ordered without a sent order (%s)", d.ID, d.OrderRequestID)
+		case d.Outcome != domain.DecisionOrdered && sent:
+			s.fail("decision %s is %s but its order %s was sent", d.ID, d.Outcome, d.OrderRequestID)
+		}
 	}
 }

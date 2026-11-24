@@ -421,10 +421,13 @@ type LLMTestResult struct {
 	Error   string
 	Latency time.Duration
 	// Model is the model that answered (or was asked, without an answer); the token counts
-	// are the provider's.
+	// are the provider's. Cost is in USD micros (domain.CostUnknown without prices); CallID
+	// is the logged call ("" when logging it failed).
 	Model        string
 	InputTokens  int64
 	OutputTokens int64
+	Cost         domain.Micros
+	CallID       string
 }
 
 // sampleReview is the made-up trade the test sends (nothing is traded).
@@ -466,9 +469,20 @@ func (s *Service) TestLLM(ctx context.Context, p Principal, profileID string) (L
 		return LLMTestResult{}, domain.Invalid("apiKey", pr.Name+" has no API key yet")
 	}
 	start := s.d.Clock.Now()
-	// the call's trace is logged from step 5.5 on (purpose "test")
 	v, call, err := s.d.LLM.Review(ctx, pr.LLMConfig, key, sampleReview)
-	res := LLMTestResult{Latency: s.d.Clock.Now().Sub(start), Model: call.Model, InputTokens: call.InputTokens, OutputTokens: call.OutputTokens}
+	latency := s.d.Clock.Now().Sub(start)
+	if err != nil && call.Error == "" {
+		call.Error = err.Error()
+	}
+	// Logged as purpose "test", for no account (PLAN 5.5); a failed write is only logged.
+	if lerr := s.logCall(ctx, &call, "", domain.LLMPurposeTest, pr, start); lerr != nil {
+		s.d.Log.WarnContext(ctx, "LLM test: logging the call failed", "profile", pr.ID, "err", lerr)
+		call.ID = ""
+	}
+	res := LLMTestResult{
+		Latency: latency, Model: call.Model, InputTokens: call.InputTokens, OutputTokens: call.OutputTokens,
+		Cost: call.CostMicros, CallID: call.ID,
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return LLMTestResult{}, ctx.Err() // the caller went away
