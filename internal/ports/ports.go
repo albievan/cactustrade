@@ -199,6 +199,9 @@ type LLMCalls interface {
 	// Usage sums the calls made at or after since per profile and purpose, ordered by
 	// profile id and purpose.
 	Usage(ctx context.Context, since time.Time) ([]domain.LLMUsage, error)
+	// UsageFor sums the calls of the given accounts made in [from, to) into one figure
+	// (ProfileID and Purpose empty; R30 statements). No ids = nothing.
+	UsageFor(ctx context.Context, accountIDs []string, from, to time.Time) (domain.LLMUsage, error)
 	// DeleteBefore removes calls made before t and returns how many.
 	DeleteBefore(ctx context.Context, t time.Time) (int64, error)
 }
@@ -301,6 +304,28 @@ type AgentLeases interface {
 	Get(ctx context.Context, accountID string) (domain.AgentLease, error) // ErrNotFound
 }
 
+// StatementSchedules stores the trading-statement e-mail schedules (R30). A schedule goes
+// with its owner.
+type StatementSchedules interface {
+	// Create stores a validated schedule: ErrConflict when the id exists, ErrNotFound when
+	// the owner does not.
+	Create(ctx context.Context, s domain.StatementSchedule) error
+	Get(ctx context.Context, id string) (domain.StatementSchedule, error)
+	// List returns the owner's schedules ("" = every schedule), oldest first.
+	List(ctx context.Context, ownerID string) ([]domain.StatementSchedule, error)
+	// Update replaces what the owner edits (period, accounts, recipients, includes, enabled,
+	// LastPeriod, UpdatedAt); ErrNotFound when there is none.
+	Update(ctx context.Context, s domain.StatementSchedule) error
+	Delete(ctx context.Context, id string) error
+	// MarkPeriod records that period key was handled at at (with lastErr, "" = sent), only
+	// if the stored LastPeriod still equals prev: otherwise ErrConflict and nothing changes
+	// (another process handled it first). Unknown id: ErrNotFound.
+	MarkPeriod(ctx context.Context, id, prev, key string, at time.Time, lastErr string) error
+	// MarkManual records a "Send now" at at, only if the stored ManualSentAt is still prev
+	// (else ErrConflict: a concurrent "Send now" won).
+	MarkManual(ctx context.Context, id string, prev, at time.Time) error
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -327,6 +352,7 @@ type Store interface {
 	Decisions() Decisions
 	Trades() Trades
 	RealGates() RealGates
+	StatementSchedules() StatementSchedules
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
@@ -509,6 +535,12 @@ type EventBus interface {
 	Publish(e Event)
 	// Subscribe returns a channel of events and a cancel function that closes it.
 	Subscribe(buffer int) (<-chan Event, func())
+}
+
+// StatementRenderer turns a built trading statement into a document (R30: a PDF). It only
+// formats what it is given: no I/O, no network, no clock (the statement carries its times).
+type StatementRenderer interface {
+	Render(ctx context.Context, s domain.Statement) ([]byte, error)
 }
 
 // Mailer delivers one message through the given server. A nil error means the server

@@ -84,7 +84,10 @@ func classify(method, path, pattern string) rateClass {
 	case pattern == "GET /api/v1/history/export/{file}",
 		// R27: the watchlist file and auto-assign's proposals (one eToro screen per theme
 		// industry) are heavy reads too.
-		pattern == "GET /api/v1/watchlist/export", pattern == "GET /api/v1/watchlist/theme-proposals":
+		pattern == "GET /api/v1/watchlist/export", pattern == "GET /api/v1/watchlist/theme-proposals",
+		// R30: a statement preview reads a period of records and renders a PDF; "send now"
+		// renders several and e-mails them.
+		pattern == "GET /api/v1/statements/preview.pdf", pattern == "POST /api/v1/statements/schedules/{id}/send-now":
 		return classExport
 	case method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions:
 		return classRead

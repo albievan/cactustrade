@@ -350,6 +350,16 @@ e-mailed about (trades, watchlist changes, alerts) under **Your account**; the s
 receives password-reset links ("Forgot password?" on the sign-in page). Mail waits in an outbox
 and is retried; the outbox is on the E-mail page.
 
+**Trading statements** (*Setup → System → Trading statements*): schedules that e-mail a PDF
+statement daily (Monday to Friday, 22:30 UTC), weekly (Saturday 06:00 UTC) or monthly (the
+1st, 06:00 UTC) to up to 10 addresses — the combined statement of the accounts you own and,
+as you choose, one per account and one per exchange, attached to one e-mail per recipient.
+Each statement opens with a summary written from its figures (no LLM) and shows equity per
+currency (never added across currencies), cactusTrade's closed trades, open positions at the
+end, drawdown, risk events, agent activity and LLM use. *Preview* downloads a PDF without
+e-mailing it; *Send now* e-mails the last complete period. Each period is sent once, also
+across restarts. Statements describe past records only.
+
 ## API
 
 The API is OpenAPI-first ([`api/openapi/cactustrade.yaml`](api/openapi/cactustrade.yaml)).

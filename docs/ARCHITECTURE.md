@@ -47,7 +47,9 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `Reviewer` | `adapters/llm` (Anthropic SDK; OpenAI-compatible for the others); profiles (with the admin's prices, OD13) in settings, keys `llm.<id>.api_key`. `Review` returns the verdict and the call's trace (request body as sent, raw response, served model, tokens, latency), filled even on error, never with the key |
 | `LLMCalls`, `Decisions` (repository) | `sqlstore` (migration 00010): every LLM call (agent, scanner, test) and the decision log (one row per candidate the agent handled); both kept 400 days (OD12); `LLMCalls.Usage` sums them per profile and purpose |
 | `Trades` (repository) | `sqlstore` (`trades`, migration 00011): eToro's closed trades per account (read-only sync, PK account + position id), flagged `ours` when cactusTrade opened the position; kept as long as the account (OD16) |
-| `Mailer` | `adapters/mail` (net/smtp: STARTTLS required / implicit TLS / plain to localhost; header-injection checks); `Outbox` and `PasswordResets` repositories |
+| `Mailer` | `adapters/mail` (net/smtp: STARTTLS required / implicit TLS / plain to localhost; header-injection checks; MIME multipart/mixed with attachments, R30); `Outbox` (with `outbox_attachments`, migration 00013) and `PasswordResets` repositories |
+| `StatementRenderer` | `adapters/pdf` (R30): a built `domain.Statement` as an A4 PDF with `codeberg.org/go-pdf/fpdf`; standard fonts (Windows-1252), the logo as vector shapes, no I/O (depguard) |
+| `StatementSchedules` (repository) | `sqlstore` (`statement_schedules`, migration 00013): per user; `MarkPeriod` is a compare-and-set on the last period sent |
 
 The `Broker` port has no money-movement operation. Its `Open` takes a `domain.OrderIntent`,
 which has no leverage or settlement field: its direction picks one of the adapter's two
@@ -245,6 +247,38 @@ unchanged), and nothing an order path decides reads them.
   they do not predict future results." `TestNoProfitabilityClaims` (`cmd/cactustrade`) scans
   `web/src`, `README.md`, `docs/` and `api/openapi` for banned phrases; each allowed line is
   listed in the test with its reason.
+
+### Trading statements (R30)
+
+A **view** like the history: built from stored records (trades, equity snapshots, agent
+positions, orders, decisions, events, LLM calls) plus, for view-only platforms, their
+holdings read when it is made. No eToro path; nothing an order path decides reads it.
+
+```
+ schedule (period, accounts, recipients, includes)      statementsLoop (cmd, every 5 min)
+        │                                                       │
+        ▼                                                       ▼
+ app.SendDueStatements: LastCompleteWindow(period, now) > LastPeriod ?
+   → statementInputs (per account: trades, snapshots, positions open at the end, activity)
+   → domain.BuildStatement (combined | per account | per exchange; summary, no LLM)
+   → ports.StatementRenderer (adapters/pdf) → one outbox mail per recipient, PDFs attached,
+     id = sha256(schedule, period, recipient) → MarkPeriod (compare-and-set)
+```
+
+- **Periods** are whole risk days (22:00 UTC): daily (sent 22:30 UTC, Monday to Friday risk
+  days), weekly (Monday to Friday, sent Saturday 06:00 UTC), monthly (calendar month, sent the
+  1st 06:00 UTC). UTC throughout, so daylight saving time never moves a boundary.
+- **Once per period.** The outbox refuses a second mail with the same id, and the period is
+  recorded with a compare-and-set after the mails are queued: a restart, a lost record or a
+  second process sends nothing twice. After a long stop only the newest period is sent. A
+  new or re-enabled schedule starts with the next period.
+- **Who.** A web session only (recipients are typed addresses). Accounts on a schedule: the
+  owner's own (an admin: any account the admin can see), re-checked at every send. A
+  schedule is managed by its owner or an admin; anyone else gets 404.
+- **Statement figures** come from `domain.BuildStatement` only: trades of positions
+  cactusTrade opened (others counted apart), equity per currency (never summed across
+  currencies), unknown fees apart, a deterministic summary paragraph; the same records give
+  the same statement.
 
 ## Accounts
 

@@ -149,6 +149,7 @@ type Store struct {
 	exec     execState
 	log      logState
 	trades   map[string]map[int64]domain.Trade // account → position id
+	stmts    map[string]domain.StatementSchedule
 	PingErr  error
 	// OrdersErr makes every Orders write (Create, Update) fail, e.g. to prove that nothing is
 	// sent when the order row cannot be persisted.
@@ -322,6 +323,11 @@ func (r users) Delete(_ context.Context, id string) error {
 		}
 	}
 	delete(r.s.users, id)
+	for k, x := range r.s.stmts { // schedules go with their owner
+		if x.OwnerID == id {
+			delete(r.s.stmts, k)
+		}
+	}
 	return nil
 }
 

@@ -771,4 +771,5 @@ func Run(t *testing.T, s ports.Store) {
 	runDecisionLog(t, s, admin.ID, t0)
 	runTrades(t, s, admin.ID, t0)
 	runRealGates(t, s, admin.ID, t0)
+	runStatements(t, s, t0)
 }

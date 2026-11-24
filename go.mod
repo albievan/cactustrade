@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.26.11
 
 require (
+	codeberg.org/go-pdf/fpdf v0.12.0
 	filippo.io/age v1.3.2
 	github.com/anthropics/anthropic-sdk-go/v2 v2.13.0
 	github.com/coder/websocket v1.8.15

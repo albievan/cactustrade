@@ -47,6 +47,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/llm"
 	"github.com/albievan/cactustrade/internal/adapters/logctx"
 	"github.com/albievan/cactustrade/internal/adapters/mail"
+	"github.com/albievan/cactustrade/internal/adapters/pdf"
 	"github.com/albievan/cactustrade/internal/adapters/saxo"
 	"github.com/albievan/cactustrade/internal/adapters/secretstore"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
@@ -270,6 +271,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		LLM:          reviewer,
 		Research:     broker,
 		Mailer:       mail.New(time.Now, host),
+		Statements:   pdf.New(),
 		Bus:          bus,
 		MailFallback: fallback.get,
 		Reload: func(ctx context.Context) error {
@@ -354,6 +356,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	go scannerLoop(ctx, svc, cal, 15*time.Minute)
 	go equityLoop(ctx, svc, time.Minute, 15*time.Minute)
 	go mailLoop(ctx, svc, log, 15*time.Second)
+	go statementsLoop(ctx, svc, log, 2*time.Minute, 5*time.Minute) // R30
 	// Trading (PLAN 4.14): start-up reconciliation → OD5 resume → supervisor → agent, and the
 	// read-only trade-history loop (6.10). The web server is up meanwhile, so the kill switch
 	// works from the first second.

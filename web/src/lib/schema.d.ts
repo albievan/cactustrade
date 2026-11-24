@@ -1651,6 +1651,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/statements/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's trading-statement schedules (an admin sees every user's), the accounts the caller may put on one, and whether mail can go out (web UI) */
+        get: operations["listStatementSchedules"];
+        put?: never;
+        /**
+         * Add a statement schedule owned by the caller (web UI; audited)
+         * @description Accounts must be ones the caller owns (an admin: accounts the admin can see); no
+         *     accounts = every such account when the statement is made. 1 to 10 recipients, any
+         *     address. The first scheduled e-mail is for the next period that closes; "Send now"
+         *     sends the last complete one.
+         */
+        post: operations["createStatementSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/statements/schedules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Change a statement schedule (its owner or an admin, web UI; audited) */
+        put: operations["updateStatementSchedule"];
+        post?: never;
+        /** Delete a statement schedule (its owner or an admin, web UI; audited) */
+        delete: operations["deleteStatementSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/statements/schedules/{id}/send-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * E-mail the statements of the schedule's last complete period now (its owner or an admin, web UI; audited; once a minute)
+         * @description Counts as an export for the rate limits.
+         */
+        post: operations["sendStatementNow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/statements/preview.pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download one trading statement as a PDF without e-mailing it (web UI)
+         * @description The combined statement of every account the caller may put on a schedule (with
+         *     `scheduleId`: that schedule's accounts), one of them (`scope=account`, `accountId`)
+         *     or one exchange across them (`scope=exchange`, `exchange`). The period of kind `period` that holds the risk day `from`; without
+         *     `from` the last complete one. Counts as an export for the rate limits.
+         */
+        get: operations["previewStatement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -3186,6 +3275,86 @@ export interface components {
         LiveNotice: {
             /** @description resync: behind; bye: signed_out, no_access, unavailable (the check could not be made), lifetime or shutdown */
             reason: string;
+        };
+        /**
+         * @description daily: one risk day (sent 22:30 UTC, Monday to Friday); weekly: Monday to Friday (sent Saturday 06:00 UTC); monthly: a calendar month (sent the 1st, 06:00 UTC)
+         * @enum {string}
+         */
+        StatementPeriod: "daily" | "weekly" | "monthly";
+        /** @enum {string} */
+        StatementScope: "combined" | "account" | "exchange";
+        StatementAccountRef: {
+            id: string;
+            name: string;
+            platform: components["schemas"]["Platform"];
+            mode: components["schemas"]["TradingMode"];
+        };
+        StatementScheduleInput: {
+            period: components["schemas"]["StatementPeriod"];
+            /** @description The accounts (none = every account the owner may put on a schedule) */
+            accountIds: string[];
+            /** @description 1 to 10 e-mail addresses */
+            recipients: string[];
+            /** @description the combined statement of every account and exchange */
+            includeCombined: boolean;
+            /** @description one statement per account */
+            includeAccounts: boolean;
+            /** @description one statement per exchange with trades or positions */
+            includeExchanges: boolean;
+            enabled: boolean;
+        };
+        StatementSchedule: {
+            id: string;
+            ownerId: string;
+            ownerName: string;
+            period: components["schemas"]["StatementPeriod"];
+            accountIds: string[];
+            /** @description The accounts the statements cover now */
+            accounts: components["schemas"]["StatementAccountRef"][];
+            recipients: string[];
+            includeCombined: boolean;
+            includeAccounts: boolean;
+            includeExchanges: boolean;
+            enabled: boolean;
+            /** @description the newest period handled (e.g. 2026-11-24, 2026-W48, 2026-11) */
+            lastPeriod: string;
+            /**
+             * Format: date-time
+             * @description when a scheduled statement was last sent (absent = never)
+             */
+            lastSentAt?: string;
+            /** @description why the last scheduled send failed (empty = it did not) */
+            lastError: string;
+            /**
+             * Format: date-time
+             * @description absent when switched off
+             */
+            nextSendAt?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        StatementsPage: {
+            schedules: components["schemas"]["StatementSchedule"][];
+            /** @description The accounts the caller may put on a schedule */
+            accounts: components["schemas"]["StatementAccountRef"][];
+            /** @description a mail server is set up (else e-mails wait in the outbox) */
+            mailServer: boolean;
+            /** @description the caller may set one up (E-mail page) */
+            canFixMail: boolean;
+        };
+        StatementSendResult: {
+            /** @description the period's key */
+            period: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            title: string;
+            /** @description e-mails queued */
+            recipients: number;
+            files: string[];
         };
     };
     responses: {
@@ -5741,6 +5910,172 @@ export interface operations {
             400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
+        };
+    };
+    listStatementSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The statements section */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatementsPage"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    createStatementSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatementScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatementSchedule"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    updateStatementSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatementScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatementSchedule"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    deleteStatementSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    sendStatementNow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued in the outbox */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatementSendResult"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    previewStatement: {
+        parameters: {
+            query: {
+                period: components["schemas"]["StatementPeriod"];
+                /** @description a risk day in the period, YYYY-MM-DD (absent = the last complete period) */
+                from?: string;
+                scope?: components["schemas"]["StatementScope"];
+                accountId?: string;
+                exchange?: "LSE" | "NYSE" | "ASX" | "Other";
+                /** @description only that schedule's accounts (its owner or an admin) */
+                scheduleId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The PDF (sent as an attachment, never cached) */
+            200: {
+                headers: {
+                    /** @description attachment with the file name */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
         };
     };
     listAudit: {

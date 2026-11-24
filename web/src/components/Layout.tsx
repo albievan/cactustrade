@@ -27,11 +27,12 @@ const sections: { title: string; items: Item[] }[] = [
     { to: "/real-trading", icon: "bi-exclamation-octagon", label: "Real trading" },
     { to: "/email", icon: "bi-envelope", label: "E-mail", perm: "settings.write" },
     { to: "/api-keys", icon: "bi-plug", label: "API keys" },
+    // Trading statements for everyone (R30); the admin actions on the page stay admin only.
+    { to: "/system", icon: "bi-gear", label: "System" },
   ] },
   { title: "Admin", items: [
     { to: "/users", icon: "bi-people", label: "Users", perm: "users.manage" },
     { to: "/audit", icon: "bi-journal-text", label: "Audit log", perm: "audit.view" },
-    { to: "/system", icon: "bi-gear", label: "System", perm: "settings.write" },
   ] },
 ];
 

@@ -124,6 +124,23 @@ linters:
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/tiger", desc: "each platform's client stands alone" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/trading212", desc: "each platform's client stands alone" }
             - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
+        # The statement renderer (R30) only lays out the figures it is given: no broker, no
+        # database, no mail, no network, no use case.
+        pdf:
+          files: ["**/internal/adapters/pdf/**"]
+          list-mode: lax
+          deny:
+            - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/etoro", desc: "the renderer never reaches a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/trading212", desc: "the renderer never reaches a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/saxo", desc: "the renderer never reaches a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/tiger", desc: "the renderer never reaches a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/llm", desc: "statements are built without an LLM" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/sqlstore", desc: "the renderer reads nothing" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/mail", desc: "the renderer sends nothing" }
+            - { pkg: "database/sql", desc: "the renderer does no I/O" }
+            - { pkg: "net/http", desc: "the renderer does no I/O (no image or font fetch)" }
+            - { pkg: "net$", desc: "the renderer does no I/O" }
         tiger:
           files: ["**/internal/adapters/tiger/**"]
           list-mode: lax
