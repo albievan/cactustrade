@@ -493,6 +493,41 @@ type Reviewer interface {
 	Models(ctx context.Context, cfg domain.LLMConfig, apiKey string) ([]string, error)
 }
 
+// ResearchTheme is one of the account's themes as web research sees it.
+type ResearchTheme struct {
+	Name     string
+	Keywords []string
+}
+
+// ResearchRequest is everything web research is told (PLAN R29). It holds no credentials,
+// no account figures and nothing about orders or positions.
+type ResearchRequest struct {
+	Date      time.Time       // today, so the model looks for current information
+	Themes    []ResearchTheme // the account's enabled themes
+	Exchanges []string        // the exchanges allowed (domain.ResearchExchanges)
+	Watchlist []string        // symbols already on the watchlist or proposed (not to repeat)
+	Max       int             // at most this many shares
+}
+
+// ResearchResult is what web research returned after the strict parse
+// (domain.ParseResearchAnswer): the shares that passed, and the ones refused with why.
+type ResearchResult struct {
+	Picks   []domain.ResearchPick
+	Refused []domain.ResearchRefusal
+}
+
+// Researcher is an LLM with its provider's built-in web search as its only tool (PLAN R29).
+// It has no broker, no other tool and no credential but its own key; it only returns data,
+// which the caller checks again and sends through the watchlist's eligibility path. Nothing
+// is traded because of it.
+type Researcher interface {
+	// Research asks for up to req.Max shares and returns the call's trace on every path
+	// (like Reviewer.Review; never the key). A provider without a built-in web search is an
+	// error before any request. An answer that is not the expected JSON is an error and
+	// nothing of it is used.
+	Research(ctx context.Context, cfg domain.LLMConfig, apiKey string, req ResearchRequest) (ResearchResult, domain.LLMCall, error)
+}
+
 // Event is something that happened, pushed to the dashboard and the decision log.
 type Event struct {
 	Type string

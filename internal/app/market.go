@@ -191,8 +191,23 @@ func (s *Service) AddToWatchlist(ctx context.Context, p Principal, id domain.Ins
 	return s.addToWatchlist(ctx, v, p.Username, id)
 }
 
-// addToWatchlist is shared by the UI and the scanner.
+// addToWatchlist is shared by the UI and the import: the eligibility path, then an audit
+// entry and a "watchlist.added" event.
 func (s *Service) addToWatchlist(ctx context.Context, v domain.AccountView, actor string, id domain.InstrumentID) (domain.WatchItem, error) {
+	w, err := s.checkAndAddToWatchlist(ctx, v, actor, id)
+	if err != nil {
+		return domain.WatchItem{}, err
+	}
+	s.audit(ctx, Principal{Username: actor}, "watchlist.add", v.ID+"/"+strconv.FormatInt(int64(id), 10), w.Instrument.Symbol)
+	s.emitFor(ctx, v.ID, actor, "watchlist.added", domain.SeverityInfo, w.Instrument.Symbol+" added to the watchlist of "+v.Name, w.Instrument.Name+" ("+string(w.Instrument.Market)+")")
+	return w, nil
+}
+
+// checkAndAddToWatchlist is the one eligibility path every share takes onto a watchlist (by
+// hand, import, web research): eToro's instrument, a share on LSE, NYSE/NASDAQ or the ASX,
+// eToro's eligibility at leverage 1 (cached either way), then the watchlist row. It neither
+// audits nor emits; its callers do.
+func (s *Service) checkAndAddToWatchlist(ctx context.Context, v domain.AccountView, actor string, id domain.InstrumentID) (domain.WatchItem, error) {
 	if err := s.needBroker(); err != nil {
 		return domain.WatchItem{}, err
 	}
@@ -237,8 +252,6 @@ func (s *Service) addToWatchlist(ctx context.Context, v domain.AccountView, acto
 		}
 		return domain.WatchItem{}, fmt.Errorf("app.AddToWatchlist: %w", err)
 	}
-	s.audit(ctx, Principal{Username: actor}, "watchlist.add", v.ID+"/"+strconv.FormatInt(int64(id), 10), in.Symbol)
-	s.emitFor(ctx, v.ID, actor, "watchlist.added", domain.SeverityInfo, in.Symbol+" added to the watchlist of "+v.Name, in.Name+" ("+string(in.Market)+")")
 	return domain.WatchItem{Instrument: in, Eligibility: el, AddedBy: actor, AddedAt: now}, nil
 }
 

@@ -41,7 +41,9 @@ func toLlmSetup(st app.LLMSetup) LlmSetup {
 		out.Profiles = append(out.Profiles, toLlmProfile(p))
 	}
 	for _, p := range domain.LLMProviders {
-		out.Providers = append(out.Providers, LlmProvider{Id: string(p.ID), Label: p.Label, DefaultBaseUrl: p.DefaultBaseURL, KeyRequired: p.KeyRequired, Note: p.Note})
+		out.Providers = append(out.Providers, LlmProvider{
+			Id: string(p.ID), Label: p.Label, DefaultBaseUrl: p.DefaultBaseURL, KeyRequired: p.KeyRequired, Note: p.Note, WebSearch: p.WebSearch,
+		})
 	}
 	return out
 }

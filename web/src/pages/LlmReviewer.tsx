@@ -3,6 +3,7 @@ import { api, errorText, type LlmProfile, type LlmProfileInput, type LlmSetup, t
 import { useSession } from "../lib/session";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
+import { ResearchSettings } from "../components/ResearchSettings";
 
 const blank: LlmProfileInput = { name: "", provider: "anthropic", model: "", baseUrl: "", timeoutSeconds: 0, inputPricePerMTok: "", outputPricePerMTok: "" };
 
@@ -123,6 +124,9 @@ export function LlmReviewer() {
                 </div>
                 <div className="d-flex flex-wrap align-items-center gap-2 small">
                   <span className="badge text-bg-light border">{label(p.provider)}</span>
+                  {setup.providers.find((x) => x.id === p.provider)?.webSearch && (
+                    <span className="badge text-bg-light border" title="Can be the web research profile"><i className="bi bi-globe2 me-1" />web search</span>
+                  )}
                   {p.keySet ? <span className="badge text-bg-light border"><i className="bi bi-key me-1" />key set</span>
                     : <span className="badge text-bg-warning">no key</span>}
                   <span className="badge text-bg-light border"><i className="bi bi-currency-dollar me-1" />{prices(p)}</span>
@@ -134,6 +138,7 @@ export function LlmReviewer() {
           </div>
         ))}
       </div>
+      <div className="mt-4"><ResearchSettings setup={setup} admin={admin} /></div>
       {seesUsage && <UsageCard setup={setup} />}
     </>
   );

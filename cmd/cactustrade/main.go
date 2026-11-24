@@ -272,9 +272,12 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Holdings: map[domain.Platform]ports.Holdings{
 			domain.PlatformTrading212: t212, domain.PlatformSaxo: saxoClient, domain.PlatformTiger: tigerClient,
 		},
-		Connectors:   map[domain.Platform]ports.OAuthConnector{domain.PlatformSaxo: saxoClient},
-		LLM:          reviewer,
-		Research:     broker,
+		Connectors: map[domain.Platform]ports.OAuthConnector{domain.PlatformSaxo: saxoClient},
+		LLM:        reviewer,
+		Research:   broker,
+		// Web research (PLAN R29): the same LLM client, with its provider's web search as
+		// its only tool; it returns data only and has no broker.
+		Researcher:   reviewer,
 		Mailer:       mail.New(time.Now, host),
 		Bus:          bus,
 		MailFallback: fallback.get,
@@ -359,6 +362,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	go stream.Run(ctx)
 	go scannerLoop(ctx, svc, cal, app.ScanTick) // each account by its autonomy (R28)
 	go equityLoop(ctx, svc, time.Minute, 15*time.Minute)
+	go researchLoop(ctx, svc, 5*time.Minute)
 	go mailLoop(ctx, svc, log, 15*time.Second)
 	// Trading (PLAN 4.14): start-up reconciliation → OD5 resume → supervisor → agent, and the
 	// read-only trade-history loop (6.10). The web server is up meanwhile, so the kill switch
@@ -426,6 +430,22 @@ func scannerLoop(ctx context.Context, svc *app.Service, cal *calendar.Calendar, 
 			if slices.ContainsFunc(domain.Markets, func(m domain.Market) bool { return cal.IsOpen(m, now) }) {
 				svc.ScanAll(ctx)
 			}
+		}
+	}
+}
+
+// researchLoop asks every interval whether an account's daily web research is due (the hour
+// before a market opens, once a day; PLAN R29). It never trades: research only proposes or
+// adds watchlist shares through eToro's eligibility check.
+func researchLoop(ctx context.Context, svc *app.Service, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			svc.ResearchAll(ctx)
 		}
 	}
 }

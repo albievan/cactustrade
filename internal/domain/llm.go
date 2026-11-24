@@ -22,14 +22,18 @@ type LLMProvider struct {
 	// Anthropic uses its own Messages API; every other provider speaks the OpenAI-compatible
 	// chat-completions API.
 	Anthropic bool
+	// WebSearch: the provider has a built-in web search that web research (PLAN R29) can use
+	// as its only tool: Anthropic's web search server tool, OpenRouter's "web" plugin. Every
+	// other provider is "research not supported".
+	WebSearch bool
 }
 
 // LLMProviders is the list on the LLM reviewer page.
 var LLMProviders = []LLMProvider{
-	{ID: "anthropic", Label: "Anthropic (Claude)", KeyRequired: true, Anthropic: true, Note: "Claude Opus 5.5 by default; structured output and a server-side fallback model on refusals."},
+	{ID: "anthropic", Label: "Anthropic (Claude)", KeyRequired: true, Anthropic: true, WebSearch: true, Note: "Claude Opus 5.5 by default; structured output and a server-side fallback model on refusals."},
 	{ID: "openai", Label: "OpenAI", DefaultBaseURL: "https://api.openai.com/v1", KeyRequired: true},
 	{ID: "deepseek", Label: "DeepSeek", DefaultBaseURL: "https://api.deepseek.com/v1", KeyRequired: true},
-	{ID: "openrouter", Label: "OpenRouter", DefaultBaseURL: "https://openrouter.ai/api/v1", KeyRequired: true, Note: "One key for many models; model ids look like vendor/model."},
+	{ID: "openrouter", Label: "OpenRouter", DefaultBaseURL: "https://openrouter.ai/api/v1", KeyRequired: true, WebSearch: true, Note: "One key for many models; model ids look like vendor/model."},
 	{ID: "kimi", Label: "Kimi (Moonshot AI)", DefaultBaseURL: "https://api.moonshot.ai/v1", KeyRequired: true},
 	{ID: "gemini", Label: "Google Gemini", DefaultBaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", KeyRequired: true, Note: "Gemini's OpenAI-compatible endpoint."},
 	{ID: "grok", Label: "Grok (xAI)", DefaultBaseURL: "https://api.x.ai/v1", KeyRequired: true},
@@ -253,11 +257,13 @@ const (
 	LLMPurposeAgent   LLMPurpose = "agent"   // the agent's review of a trade (4.10 step 5)
 	LLMPurposeScanner LLMPurpose = "scanner" // the scanner's check before the watchlist
 	LLMPurposeTest    LLMPurpose = "test"    // the admin's test on the LLM page
+	// LLMPurposeResearch is web research for the watchlist (PLAN R29).
+	LLMPurposeResearch LLMPurpose = "research"
 )
 
 // Valid reports whether u is a known purpose.
 func (u LLMPurpose) Valid() bool {
-	return u == LLMPurposeAgent || u == LLMPurposeScanner || u == LLMPurposeTest
+	return u == LLMPurposeAgent || u == LLMPurposeScanner || u == LLMPurposeTest || u == LLMPurposeResearch
 }
 
 // MaxLLMText bounds a stored prompt or response (32 KiB); longer ones are cut by Truncate.

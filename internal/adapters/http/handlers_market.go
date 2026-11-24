@@ -34,7 +34,10 @@ func toWatchItem(w domain.WatchItem) WatchItem {
 	if !w.Eligibility.CheckedAt.IsZero() {
 		el.CheckedAt = ptr(w.Eligibility.CheckedAt)
 	}
-	return WatchItem{Instrument: toInstrument(w.Instrument), Eligibility: el, AddedBy: w.AddedBy, AddedAt: w.AddedAt}
+	return WatchItem{
+		Instrument: toInstrument(w.Instrument), Eligibility: el, AddedBy: w.AddedBy, AddedAt: w.AddedAt,
+		Origin: WatchItemOrigin(domain.WatchOrigin(w.AddedBy)),
+	}
 }
 
 // TestBrokerConnection calls eToro once with the current account's keys.

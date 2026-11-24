@@ -65,7 +65,7 @@ func toAgentStyle(v app.AgentStyleView) AgentStyle {
 	out := AgentStyle{
 		Aggressiveness: StyleLevel(v.Aggressiveness), EffectiveAggressiveness: StyleLevel(v.Effective), Autonomy: StyleLevel(v.Autonomy),
 		Policy: AutonomyPolicy{
-			ResearchMode: AutonomyPolicyResearchMode(v.Policy.Research), ScanEveryMinutes: int(v.Policy.ScanEvery / time.Minute),
+			ResearchMode: ResearchMode(v.Policy.Research), ScanEveryMinutes: int(v.Policy.ScanEvery / time.Minute),
 			OwnerSharesOnly: v.Policy.OwnerSharesOnly, AutoAssignThemes: v.Policy.AutoAssignThemes, PruneStale: v.Policy.PruneStale,
 			AutoStart: v.Policy.AutoStart, AdaptAggressiveness: v.Policy.AdaptAggressiveness,
 		},

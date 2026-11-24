@@ -65,6 +65,9 @@ type Deps struct {
 	// available (with reviewing on, the agent then rejects every trade).
 	LLM      ports.Reviewer
 	Research ports.Research // industries and the screen for the scanner (nil = not available)
+	// Researcher is web research for the watchlist (PLAN R29): an LLM whose only tool is its
+	// provider's built-in web search. It only returns data; nil = not available.
+	Researcher ports.Researcher
 	// Reload re-reads settings that live outside the database (credentials from the
 	// environment / secret files). Restart asks the process to restart gracefully. Both are
 	// supplied by cmd/cactustrade; nil = not supported.
@@ -120,6 +123,8 @@ type Service struct {
 	health *healthLog
 	// gates latches the disarms asked for in this process (PLAN 7.13).
 	gates *gateLatch
+	// research serialises web research's stored state and marks running runs (PLAN R29).
+	research *researchLocks
 }
 
 // New builds the service.
@@ -140,7 +145,7 @@ func New(d Deps, cfg Config) (*Service, error) {
 	if d.Sleep == nil {
 		d.Sleep = sleepCtx
 	}
-	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch()}, nil
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch(), research: newResearchLocks()}, nil
 }
 
 // sleepCtx waits for d with a real timer, or until ctx ends.

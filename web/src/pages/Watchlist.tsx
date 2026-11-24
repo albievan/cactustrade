@@ -7,6 +7,7 @@ import { useSession } from "../lib/session";
 import { useMode, useRefreshMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { ProblemAlert } from "../components/ProblemAlert";
+import { ResearchCard } from "../components/ResearchCard";
 
 const QUOTE_REFRESH_MS = 15_000; // 4 calls a minute: well inside eToro's market-data quota
 const MAX_FILE_BYTES = 1 << 20; // the server refuses bigger files too (R27)
@@ -82,6 +83,7 @@ export function Watchlist() {
       </p>
       <ProblemAlert error={error} />
       {admin && <AddInstrument onAdded={load} />}
+      {accountId && <ResearchCard accountId={accountId} onChanged={load} />}
       <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
         {items.length > 0 && <ThemeFilter themes={themes} filter={filter} onChange={setFilter} />}
         {canEdit && (
@@ -126,7 +128,7 @@ export function Watchlist() {
                 const q = quotes[w.instrument.instrumentId];
                 return (
                   <tr key={w.instrument.instrumentId}>
-                    <td className="fw-semibold">{w.instrument.symbol}</td>
+                    <td><span className="fw-semibold">{w.instrument.symbol}</span> <OriginBadge item={w} /></td>
                     <td>{w.instrument.name}</td>
                     <td><ExchangeBadge market={w.instrument.market} /></td>
                     <td className="text-end">{q?.bid ?? "—"}</td>
@@ -178,6 +180,19 @@ function ThemeFilter({ themes, filter, onChange }: { themes: Theme[]; filter: Fi
       {chip("No theme", { kind: "none" }, filter.kind === "none")}
     </div>
   );
+}
+
+// ORIGINS says who put a share on the watchlist, from the server's origin (R29).
+const ORIGINS: Record<WatchItem["origin"], { label: string; cls: string }> = {
+  user: { label: "you", cls: "text-bg-light border" },
+  scanner: { label: "scanner", cls: "text-bg-secondary" },
+  research: { label: "research", cls: "text-bg-info" },
+};
+
+function OriginBadge({ item }: { item: WatchItem }) {
+  const o = ORIGINS[item.origin] ?? ORIGINS.user;
+  const who = item.origin === "user" ? item.addedBy : item.origin === "research" ? "web research" : "the scanner";
+  return <span className={`badge ${o.cls}`} title={`Added by ${who} on ${new Date(item.addedAt).toLocaleDateString()}`}>{o.label}</span>;
 }
 
 function ExchangeBadge({ market }: { market?: string }) {

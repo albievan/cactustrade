@@ -91,6 +91,12 @@ export type ThemeAssignment = components["schemas"]["ThemeAssignment"];
 export type ThemeProposal = components["schemas"]["ThemeProposal"];
 export type ThemeProposals = components["schemas"]["ThemeProposals"];
 export type WatchlistImportResult = components["schemas"]["WatchlistImportResult"];
+export type ResearchView = components["schemas"]["ResearchView"];
+export type ResearchRun = components["schemas"]["ResearchRun"];
+export type ResearchProposal = components["schemas"]["ResearchProposal"];
+export type ResearchAddedShare = components["schemas"]["ResearchAddedShare"];
+export type ResearchConfig = components["schemas"]["ResearchConfig"];
+export type ResearchSetup = components["schemas"]["ResearchSetup"];
 
 // forAccount is "?accountId=…" for a named account, "" for the current one.
 function forAccount(accountId?: string): string {
@@ -274,6 +280,13 @@ export const api = {
   assignThemes: (assignments: ThemeAssignment[]) =>
     request<{ changedThemes: number }>("POST", "/api/v1/watchlist/theme-assignments", { assignments }),
   themeProposals: () => request<ThemeProposals>("GET", "/api/v1/watchlist/theme-proposals"),
+  // Web research (R29): the card, "Research now", proposals, and the settings on the LLM page.
+  research: () => request<ResearchView>("GET", "/api/v1/research"),
+  runResearch: () => request<ResearchRun>("POST", "/api/v1/research/run"),
+  acceptResearchProposal: (id: string) => request<ResearchAddedShare>("POST", `/api/v1/research/proposals/${encodeURIComponent(id)}/accept`),
+  dismissResearchProposal: (id: string) => request<void>("DELETE", `/api/v1/research/proposals/${encodeURIComponent(id)}`),
+  researchSettings: () => request<ResearchSetup>("GET", "/api/v1/llm/research"),
+  setResearchSettings: (c: ResearchConfig) => request<ResearchSetup>("PUT", "/api/v1/llm/research", c),
   importWatchlist: (file: unknown) => request<WatchlistImportResult>("POST", "/api/v1/watchlist/import", file),
   killAgent: (reason: string) => request<KillReport>("POST", "/api/v1/agent/kill", { reason }),
   resetKill: (confirm: string) => request<AgentStatusResult>("POST", "/api/v1/agent/reset", { confirm }),
