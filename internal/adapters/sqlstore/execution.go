@@ -175,6 +175,12 @@ func (r orders) List(ctx context.Context, accountID string, limit int) ([]domain
 		accountID, max(limit, 0))
 }
 
+// ListSince returns the account's orders created at or after since, oldest first.
+func (r orders) ListSince(ctx context.Context, accountID string, since time.Time) ([]domain.Order, error) {
+	return r.list(ctx, "ListSince", "SELECT "+orderCols+" FROM orders WHERE account_id = ? AND created_at >= ? ORDER BY created_at, request_id",
+		accountID, us(since))
+}
+
 // ---- agent positions -------------------------------------------------------------------
 
 type agentPositions struct{ db *sql.DB }
@@ -229,21 +235,31 @@ func (r agentPositions) Update(ctx context.Context, p domain.AgentPosition) erro
 }
 
 func (r agentPositions) ListOpen(ctx context.Context, accountID string) ([]domain.AgentPosition, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT "+agentPosCols+" FROM agent_positions WHERE account_id = ? AND closed_at = 0 ORDER BY opened_at, position_id", accountID)
+	return r.list(ctx, "ListOpen", "SELECT "+agentPosCols+" FROM agent_positions WHERE account_id = ? AND closed_at = 0 ORDER BY opened_at, position_id", accountID)
+}
+
+// ListSince returns the account's positions opened at or after since, oldest first.
+func (r agentPositions) ListSince(ctx context.Context, accountID string, since time.Time) ([]domain.AgentPosition, error) {
+	return r.list(ctx, "ListSince", "SELECT "+agentPosCols+" FROM agent_positions WHERE account_id = ? AND opened_at >= ? ORDER BY opened_at, position_id",
+		accountID, us(since))
+}
+
+func (r agentPositions) list(ctx context.Context, op, q string, args ...any) ([]domain.AgentPosition, error) {
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("agentPositions.ListOpen: %w", err)
+		return nil, fmt.Errorf("agentPositions.%s: %w", op, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []domain.AgentPosition
 	for rows.Next() {
 		p, err := scanAgentPos(rows)
 		if err != nil {
-			return nil, fmt.Errorf("agentPositions.ListOpen: %w", err)
+			return nil, fmt.Errorf("agentPositions.%s: %w", op, err)
 		}
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("agentPositions.ListOpen: %w", err)
+		return nil, fmt.Errorf("agentPositions.%s: %w", op, err)
 	}
 	return out, nil
 }

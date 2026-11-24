@@ -115,6 +115,8 @@ type Service struct {
 	// health is the bookkeeping behind TradingHealth (PLAN 7.5): supervisor ticks and passes,
 	// LLM call counts.
 	health *healthLog
+	// gates latches the disarms asked for in this process (PLAN 7.13).
+	gates *gateLatch
 }
 
 // New builds the service.
@@ -135,7 +137,7 @@ func New(d Deps, cfg Config) (*Service, error) {
 	if d.Sleep == nil {
 		d.Sleep = sleepCtx
 	}
-	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog()}, nil
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch()}, nil
 }
 
 // sleepCtx waits for d with a real timer, or until ctx ends.

@@ -87,6 +87,101 @@ func (l RiskLimits) Validate() error {
 	return nil
 }
 
+// DefaultRealRiskLimits are the defaults of a real-money account (OD25, PLAN 7.11): stricter
+// than demo, no trading budget and no shorts until the owner sets them.
+var DefaultRealRiskLimits = RiskLimits{
+	DailyLoss: 100, Drawdown: 500, MaxPosition: 1000, MaxOpenPositions: 4,
+	NoEntryBeforeClose: 30 * time.Minute, FlattenBeforeClose: 10 * time.Minute,
+	MaxPortfolioAge: 5 * time.Second, MaxQuoteAge: 30 * time.Second, MaxShort: 0,
+}
+
+// DefaultLimitsFor is the default limits of an account in mode m (real: DefaultRealRiskLimits;
+// anything else: DefaultRiskLimits).
+func DefaultLimitsFor(m TradingMode) RiskLimits {
+	if m == ModeReal {
+		return DefaultRealRiskLimits
+	}
+	return DefaultRiskLimits
+}
+
+// LimitCeilings are the most permissive values a set of limits may take on top of Validate.
+// TradingBudget 0 means no cap on the budget (the budget is still capped by equity).
+type LimitCeilings struct {
+	TradingBudget    Cents
+	DailyLoss        BasisPoints
+	Drawdown         BasisPoints
+	MaxPosition      BasisPoints // a real account must also have one (0 = off is refused)
+	MaxOpenPositions int
+	MaxShort         BasisPoints
+}
+
+// RealCeilings are the ceilings of a real-money account (OD25): daily loss 2 %, drawdown
+// 10 %, one position at most 20 % of equity, at most 8 positions, shorts at most 25 % of
+// the budget (D19). No budget cap unless the deployment sets one (WithBudgetCap).
+var RealCeilings = LimitCeilings{DailyLoss: 200, Drawdown: 1000, MaxPosition: 2000, MaxOpenPositions: 8, MaxShort: HardMaxShort}
+
+// WithBudgetCap returns c with the trading budget capped at budget (0 = no cap): the
+// optional deployment cap on a real account's budget (OD25).
+func (c LimitCeilings) WithBudgetCap(budget Cents) LimitCeilings {
+	c.TradingBudget = budget
+	return c
+}
+
+// ValidateFor checks limits for an account in mode m: Validate, and for a real-money account
+// also RealCeilings (OD25).
+func (l RiskLimits) ValidateFor(m TradingMode) error {
+	if m != ModeReal {
+		return l.Validate()
+	}
+	return l.ValidateWithin(RealCeilings)
+}
+
+// ValidateWithin checks limits with Validate and then against the ceilings c: every field
+// over its ceiling is refused, and a position cap is required (0 = off is above any ceiling).
+func (l RiskLimits) ValidateWithin(c LimitCeilings) error {
+	if err := l.Validate(); err != nil {
+		return err
+	}
+	switch {
+	case c.TradingBudget > 0 && l.TradingBudget > c.TradingBudget:
+		return Invalid("tradingBudgetCents", fmt.Sprintf("must not exceed $%s on a real-money account (deployment cap)", c.TradingBudget))
+	case l.DailyLoss > c.DailyLoss:
+		return Invalid("dailyLossBp", fmt.Sprintf("must be at most %d on a real-money account", c.DailyLoss))
+	case l.Drawdown > c.Drawdown:
+		return Invalid("drawdownBp", fmt.Sprintf("must be at most %d on a real-money account", c.Drawdown))
+	case l.MaxPosition <= 0 || l.MaxPosition > c.MaxPosition:
+		return Invalid("maxPositionBp", fmt.Sprintf("must be 1-%d on a real-money account (no position without a cap)", c.MaxPosition))
+	case l.MaxOpenPositions > c.MaxOpenPositions:
+		return Invalid("maxOpenPositions", fmt.Sprintf("must be at most %d on a real-money account", c.MaxOpenPositions))
+	case l.MaxShort > c.MaxShort:
+		return Invalid("maxShortBp", fmt.Sprintf("must be at most %d on a real-money account", c.MaxShort))
+	}
+	return nil
+}
+
+// RaisesAny reports whether next is more permissive than old in any field: a larger budget,
+// daily loss, drawdown, position cap (or the cap switched off), position count, short
+// share, portfolio or quote age, or a shorter no-entry or flatten window. On an armed
+// real-money account any such change disarms the gate (OD24, PLAN 7.11).
+func RaisesAny(old, next RiskLimits) bool {
+	posCap := func(bp BasisPoints) BasisPoints { // 0 = off = no cap at all
+		if bp <= 0 {
+			return BasisPoints(1 << 62)
+		}
+		return bp
+	}
+	return next.TradingBudget > old.TradingBudget ||
+		next.DailyLoss > old.DailyLoss ||
+		next.Drawdown > old.Drawdown ||
+		posCap(next.MaxPosition) > posCap(old.MaxPosition) ||
+		next.MaxOpenPositions > old.MaxOpenPositions ||
+		next.MaxShort > old.MaxShort ||
+		next.MaxPortfolioAge > old.MaxPortfolioAge ||
+		next.MaxQuoteAge > old.MaxQuoteAge ||
+		next.NoEntryBeforeClose < old.NoEntryBeforeClose ||
+		next.FlattenBeforeClose < old.FlattenBeforeClose
+}
+
 // EligibilityMaxAge is how old an eligibility check may be when an entry is decided: older
 // answers are refused (eToro can withdraw a share's real/long or CFD/short offer).
 const EligibilityMaxAge = 24 * time.Hour

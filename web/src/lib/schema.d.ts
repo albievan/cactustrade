@@ -533,6 +533,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/accounts/{accountId}/real-gate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * The real-trading gate of a real-money account, its checklist and the demo evidence (view access)
+         * @description The checklist the server applies when arming (PLAN 7.10), without the typed phrase:
+         *     the real account (eToro, real, keys, reconciled, not killed, agent stopped, limits within
+         *     the real-money ceilings), the linked demo account (same owner), the demo evidence (20
+         *     qualifying risk days in the last 60, the latest at most 7 days old) and the arming user
+         *     (an admin who owns the account, in a web session). `enabled` is false in this build:
+         *     arming is always refused until the owner's written consent (PLAN 7.18).
+         */
+        get: operations["getRealGate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/{accountId}/real-gate/arm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask to arm real trading (admin who owns the account, web session only, password and phrase) — refused in this build
+         * @description Checks, in order: the mode.switch permission (admin), a web session (never an API key),
+         *     ownership of the account, the caller's password (counted like a sign-in: a wrong one
+         *     is 403, too many attempts 429), the phrase `ENABLE REAL TRADING <account name>` (422
+         *     when wrong), then the checklist (409 naming the failing checks). With every check
+         *     passing this build answers 403 "Real trading is not enabled in this build": real
+         *     trading needs the owner's written consent (PLAN 7.18). Nothing is ever stored as
+         *     armed. Every refusal after the password is audited.
+         */
+        post: operations["armRealGate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/{accountId}/real-gate/disarm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disarm real trading now (trade access and agent.kill; web session or API key; never rate limited)
+         * @description Idempotent: a gate that is not armed stays locked (200). A running or paused agent is
+         *     stopped (no new entries); nothing is cancelled or closed, so exits continue. Audited,
+         *     with a danger event and an e-mail to the admins and the owner.
+         */
+        post: operations["disarmRealGate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/oauth/saxo/callback": {
         parameters: {
             query?: never;
@@ -1596,6 +1675,12 @@ export interface components {
             /** Format: date-time */
             now: string;
             account?: components["schemas"]["Account"];
+            /** @description the accounts the caller can see whose real trading is armed (the banner on every page); always empty in this build */
+            realArmed?: components["schemas"]["RealArmedAccount"][];
+        };
+        RealArmedAccount: {
+            id: string;
+            name: string;
         };
         SystemHealth: {
             ok: boolean;
@@ -2223,6 +2308,78 @@ export interface components {
             at?: string;
             /** @description why not OK (empty when OK) */
             reason: string;
+        };
+        RealGate: {
+            accountId: string;
+            /** @enum {string} */
+            state: "locked" | "armed";
+            /** @description the linked demo account of the latest arming */
+            demoAccountId?: string;
+            /** Format: date-time */
+            armedAt?: string;
+            /** @description user id */
+            armedBy?: string;
+            /** Format: date-time */
+            expiresAt?: string;
+            /** @description qualifying demo days recorded when armed */
+            evidenceDays: number;
+            /** Format: date-time */
+            disarmedAt?: string;
+            /** @description user id; absent with disarmedAt = the system */
+            disarmedBy?: string;
+            disarmReason?: string;
+            /** Format: int64 */
+            version: number;
+        };
+        GateCheck: {
+            /** @enum {string} */
+            name: "real_account" | "real_keys" | "real_reconciled" | "real_not_killed" | "real_agent_stopped" | "real_limits" | "demo_account" | "demo_evidence" | "arming_user" | "confirm_phrase";
+            pass: boolean;
+            detail: string;
+        };
+        GateEvidence: {
+            /** @description the qualifying risk days (YYYY-MM-DD, named after the day a 22:00 UTC risk day ends), oldest first */
+            days: string[];
+            count: number;
+            /** @description YYYY-MM-DD */
+            first?: string;
+            /** @description YYYY-MM-DD */
+            last?: string;
+        };
+        EvidenceRule: {
+            minDays: number;
+            windowDays: number;
+            maxAgeDays: number;
+        };
+        RealGateStatus: {
+            account: components["schemas"]["Account"];
+            gate: components["schemas"]["RealGate"];
+            /** @description armed and in force now */
+            armed: boolean;
+            /** @description this build may arm real trading at all (false until the owner's written consent) */
+            enabled: boolean;
+            /** @description the demo account the checklist is for; absent = none */
+            demoAccountId?: string;
+            /** @description the owner's eToro demo accounts the caller can see */
+            demoCandidates: components["schemas"]["Account"][];
+            checks: components["schemas"]["GateCheck"][];
+            evidence: components["schemas"]["GateEvidence"];
+            rule: components["schemas"]["EvidenceRule"];
+            /** @description what to type to arm */
+            phrase: string;
+            /** @description the caller may submit an arm request (the server still checks everything) */
+            canArm: boolean;
+            canDisarm: boolean;
+        };
+        ArmRealRequest: {
+            demoAccountId: string;
+            /** @description ENABLE REAL TRADING <account name> */
+            confirm: string;
+            /** @description the caller's current password (never logged or stored) */
+            password: string;
+        };
+        DisarmRealRequest: {
+            reason?: string;
         };
         ForceCloseRequest: {
             /** @description the caller's current password (never logged or stored) */
@@ -3670,6 +3827,100 @@ export interface operations {
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
+        };
+    };
+    getRealGate: {
+        parameters: {
+            query?: {
+                /** @description the demo account the checklist is for (default: the one last armed with, else the owner's first) */
+                demoAccountId?: string;
+            };
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The gate and its checklist */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealGateStatus"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+        };
+    };
+    armRealGate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArmRealRequest"];
+            };
+        };
+        responses: {
+            /** @description Armed (never in this build) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealGate"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+        };
+    };
+    disarmRealGate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisarmRealRequest"];
+            };
+        };
+        responses: {
+            /** @description The gate afterwards (locked) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealGate"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            500: components["responses"]["Problem"];
         };
     };
     saxoCallback: {

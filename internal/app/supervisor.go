@@ -75,6 +75,7 @@ func (s *Service) superviseTick(ctx context.Context, wg *sync.WaitGroup) {
 		return
 	}
 	s.health.tick(s.d.Clock.Now())
+	s.sweepRealGates(ctx, as) // expired gates and gates older than a restore (OD24)
 	for _, a := range as {
 		if !s.supervisable(ctx, a) {
 			continue
@@ -391,6 +392,7 @@ func (s *Service) tripLocked(ctx context.Context, a domain.Account, p Principal,
 		s.publishAgentState(a.ID, domain.AgentKilled) // latched in memory all the same
 	}
 	s.rt.cancelEntries(a.ID)
+	s.disarmIfArmed(ctx, a, p, domain.DisarmKill+": "+why) // OD24
 	if already && err == nil {
 		return true, nil
 	}

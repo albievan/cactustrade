@@ -19,6 +19,9 @@ type SystemStatus struct {
 	StartedAt  time.Time
 	Now        time.Time
 	Account    *domain.AccountView // the caller's current account; nil when there is none
+	// RealArmed lists the accounts the caller can see whose real trading is armed (the
+	// banner on every page, OD27). Always empty in this build.
+	RealArmed []RealArmedAccount
 }
 
 // Now is the service's clock, for adapters that must measure against the same time the use
@@ -51,6 +54,11 @@ func (s *Service) Status(ctx context.Context, p Principal) (SystemStatus, error)
 	case !errors.Is(err, domain.ErrNotFound):
 		return SystemStatus{}, err
 	}
+	vs, err := s.Accounts(ctx, p)
+	if err != nil {
+		return SystemStatus{}, err
+	}
+	st.RealArmed = s.realArmed(ctx, vs)
 	return st, nil
 }
 

@@ -1,0 +1,543 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/albievan/cactustrade/internal/domain"
+)
+
+// The real-mode gate (PLAN 7.13): its status, arming (always refused in this build:
+// domain.RealTradingEnabled is false until the owner's written consent, PLAN 7.18), disarming
+// and the automatic disarms (OD24). Nothing here lifts a real-mode refusal (S1–S11): an armed
+// gate is only ever stored by armLocked, which ArmReal reaches only once CanArm allows it.
+
+// RealGateView is a real-money account's gate as the Real trading page shows it.
+type RealGateView struct {
+	Account domain.AccountView
+	// Gate is the stored gate (a never-armed account's reads locked); Armed says whether it
+	// is in force now (stored armed, not expired, armed after the latest restore and not
+	// disarmed since in this process).
+	Gate  domain.RealGate
+	Armed bool
+	// DemoAccountID is the demo account the checks and the evidence are for ("" = none);
+	// DemoCandidates the eToro demo accounts of the same owner the caller can see (OD21).
+	DemoAccountID  string
+	DemoCandidates []domain.AccountView
+	// Checks is the arming checklist without the typed phrase (shown as Phrase).
+	Checks   []domain.GateCheck
+	Evidence domain.GateEvidence
+	Rule     domain.EvidenceRule
+	Phrase   string
+	// Enabled is domain.RealTradingEnabled: false in this build (arming is always refused).
+	Enabled bool
+	// CanArm: the caller may submit an arm request (admin, owner, web session); the server
+	// still runs every check then. CanDisarm: the caller may disarm (trade access, kill
+	// permission; a web session or an API key, OD23).
+	CanArm    bool
+	CanDisarm bool
+}
+
+// gateLatch remembers, per account, the latest disarm asked for in this process: a gate
+// armed before it is not in force even if the disarm could not be stored (fail closed, as
+// the kill latch, review m3).
+type gateLatch struct {
+	mu sync.Mutex
+	at map[string]time.Time
+}
+
+func newGateLatch() *gateLatch { return &gateLatch{at: map[string]time.Time{}} }
+
+func (l *gateLatch) latch(accountID string, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if at.After(l.at[accountID]) {
+		l.at[accountID] = at
+	}
+}
+
+func (l *gateLatch) since(accountID string) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.at[accountID]
+}
+
+// isRealAccount reports whether the account is an eToro real-money account (the only kind
+// with a gate).
+func isRealAccount(a domain.Account) bool { return a.Tradable() && a.Mode == domain.ModeReal }
+
+// restoredAt is the time of the latest restore (zero = never). An unreadable value is
+// returned as an error: the caller treats every gate as not in force (fail closed).
+func (s *Service) restoredAt(ctx context.Context) (time.Time, error) {
+	v, err := s.d.Store.Settings().Get(ctx, domain.SettingRestoreAt)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		return time.Time{}, nil
+	case err != nil:
+		return time.Time{}, err
+	}
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("the restore time %q is unreadable: %w", v, err)
+	}
+	return t, nil
+}
+
+// storedGate is the account's stored gate, locked when there is none.
+func (s *Service) storedGate(ctx context.Context, accountID string) (domain.RealGate, error) {
+	g, err := s.d.Store.RealGates().Get(ctx, accountID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.LockedGate(accountID), nil
+	}
+	return g, err
+}
+
+// gateLive says whether the gate is in force now and, when it is stored armed but not in
+// force, why (the reason to record when it is disarmed). Any read error is "not in force".
+func (s *Service) gateLive(ctx context.Context, g domain.RealGate) (bool, string) {
+	if g.State != domain.GateArmed {
+		return false, ""
+	}
+	restored, err := s.restoredAt(ctx)
+	if err != nil {
+		s.d.Log.WarnContext(ctx, "real gate: the restore time cannot be read; treating the gate as disarmed", "err", err)
+		return false, DisarmUnreadableRestore
+	}
+	live, why := g.Live(s.d.Clock.Now().UTC(), restored)
+	if live && !s.gates.since(g.AccountID).Before(g.ArmedAt) {
+		return false, "disarmed in this process"
+	}
+	return live, why
+}
+
+// DisarmUnreadableRestore is the reason recorded when the restore time cannot be read.
+const DisarmUnreadableRestore = "the time of the latest restore cannot be read"
+
+// realGateArmed reports whether the account's gate is in force now (read only: nothing is
+// stored). Read errors and non-real accounts are "not armed".
+func (s *Service) realGateArmed(ctx context.Context, a domain.Account) bool {
+	if !isRealAccount(a) {
+		return false
+	}
+	g, err := s.storedGate(ctx, a.ID)
+	if err != nil {
+		return false
+	}
+	live, _ := s.gateLive(ctx, g)
+	return live
+}
+
+// RealArmedAccount names an account whose real trading is armed (the banner, OD27).
+type RealArmedAccount struct {
+	ID, Name string
+}
+
+// realArmed lists the accounts in vs whose gate is in force now.
+func (s *Service) realArmed(ctx context.Context, vs []domain.AccountView) []RealArmedAccount {
+	var out []RealArmedAccount
+	for _, v := range vs {
+		if s.realGateArmed(ctx, v.Account) {
+			out = append(out, RealArmedAccount{ID: v.ID, Name: v.Name})
+		}
+	}
+	return out
+}
+
+// realAccount resolves a real-money account for the gate use cases.
+func (s *Service) realAccount(ctx context.Context, p Principal, accountID string, need domain.AccountAccess) (domain.AccountView, error) {
+	if accountID == "" {
+		return domain.AccountView{}, domain.Invalid("accountId", "required")
+	}
+	v, err := s.account(ctx, p, accountID, need)
+	if err != nil {
+		return domain.AccountView{}, err
+	}
+	if !isRealAccount(v.Account) {
+		return domain.AccountView{}, domain.Invalid("accountId", v.Name+" is not a real-money account: only those have a real-trading gate")
+	}
+	return v, nil
+}
+
+// RealGateStatus is a real-money account's gate, its arming checklist and the demo evidence
+// (view access). demoAccountID chooses the demo account the checklist is for ("" = the one
+// the gate was last armed with, else the first of the owner's demo accounts the caller can
+// see). It only reads; a gate found expired or older than a restore is disarmed.
+func (s *Service) RealGateStatus(ctx context.Context, p Principal, accountID, demoAccountID string) (RealGateView, error) {
+	if err := s.authorize(p, domain.PermView); err != nil {
+		return RealGateView{}, err
+	}
+	v, err := s.realAccount(ctx, p, accountID, domain.AccessView)
+	if err != nil {
+		return RealGateView{}, err
+	}
+	g, err := s.storedGate(ctx, v.ID)
+	if err != nil {
+		return RealGateView{}, fmt.Errorf("app.RealGateStatus: %w", err)
+	}
+	out := RealGateView{Account: v, Rule: domain.DefaultEvidenceRule, Phrase: domain.ArmPhrase(v.Name), Enabled: domain.RealTradingEnabled}
+	var why string
+	out.Armed, why = s.gateLive(ctx, g)
+	if g.State == domain.GateArmed && !out.Armed {
+		g = s.expireGate(ctx, v.Account, why, g)
+	}
+	out.Gate = g
+	vs, err := s.Accounts(ctx, p)
+	if err != nil {
+		return RealGateView{}, err
+	}
+	for _, c := range vs {
+		if c.Tradable() && c.Mode == domain.ModeDemo && c.OwnerID == v.OwnerID {
+			out.DemoCandidates = append(out.DemoCandidates, c)
+		}
+	}
+	pick := func(id string) *domain.Account {
+		i := slices.IndexFunc(out.DemoCandidates, func(c domain.AccountView) bool { return c.ID == id })
+		if i < 0 {
+			return nil
+		}
+		return &out.DemoCandidates[i].Account
+	}
+	var demo *domain.Account
+	switch {
+	case demoAccountID != "":
+		demo = pick(demoAccountID)
+	case pick(g.DemoAccountID) != nil:
+		demo = pick(g.DemoAccountID)
+	case len(out.DemoCandidates) > 0:
+		demo = &out.DemoCandidates[0].Account
+	}
+	in, err := s.gateInput(ctx, p, v.Account, demo, "")
+	if err != nil {
+		return RealGateView{}, fmt.Errorf("app.RealGateStatus: %w", err)
+	}
+	if demo != nil {
+		out.DemoAccountID = demo.ID
+	}
+	out.Evidence = in.Evidence
+	for _, c := range domain.GateChecks(in) {
+		if c.Name == domain.CheckPhrase {
+			continue
+		}
+		out.Checks = append(out.Checks, c)
+		if c.Name == domain.CheckArmingUser {
+			out.CanArm = c.Pass
+		}
+	}
+	out.CanDisarm = p.Can(domain.PermKillSwitch) && v.Access.AtLeast(domain.AccessTrade)
+	return out, nil
+}
+
+// gateInput gathers the checklist's input for the real account a, the demo account (nil =
+// none) and the caller.
+func (s *Service) gateInput(ctx context.Context, p Principal, a domain.Account, demo *domain.Account, confirm string) (domain.GateInput, error) {
+	now := s.d.Clock.Now().UTC()
+	killed, kerr := s.isKilled(ctx, a.ID)
+	in := domain.GateInput{
+		Real: a, RealKeys: s.hasKeys(ctx, a), Reconciled: s.Reconciled(a.ID).OK, Killed: killed || kerr != nil,
+		Agent: s.agentState(ctx, a.ID), Limits: s.riskLimitsFor(ctx, a), Demo: demo,
+		Today: domain.RiskDay(now), Rule: domain.DefaultEvidenceRule,
+		User: domain.GateUser{ID: p.UserID, Role: p.Role, Session: p.Via == ViaSession}, Confirm: confirm,
+	}
+	if demo != nil {
+		ev, err := s.demoEvidence(ctx, demo.ID, now, in.Rule)
+		if err != nil {
+			return domain.GateInput{}, err
+		}
+		in.Evidence = ev
+	}
+	return in, nil
+}
+
+// demoEvidence folds the demo account's last WindowDays completed risk days into the
+// qualifying days (OD19, OD20): one decision per day (read a day at a time, newest first),
+// the orders and the agent positions of the window.
+func (s *Service) demoEvidence(ctx context.Context, demoID string, now time.Time, rule domain.EvidenceRule) (domain.GateEvidence, error) {
+	todayStart := domain.RiskDayStart(now)
+	since := todayStart.AddDate(0, 0, -rule.WindowDays)
+	var days []domain.RiskDate
+	before := todayStart // today's risk day never counts
+	for range rule.WindowDays + 1 {
+		ds, err := s.d.Store.Decisions().List(ctx, demoID, before, "", 1)
+		if err != nil {
+			return domain.GateEvidence{}, fmt.Errorf("reading the demo decisions: %w", err)
+		}
+		if len(ds) == 0 || ds[0].At.Before(since) {
+			break
+		}
+		days = append(days, domain.RiskDay(ds[0].At))
+		before = domain.RiskDayStart(ds[0].At)
+	}
+	orders, err := s.d.Store.Orders().ListSince(ctx, demoID, since)
+	if err != nil {
+		return domain.GateEvidence{}, fmt.Errorf("reading the demo orders: %w", err)
+	}
+	positions, err := s.d.Store.AgentPositions().ListSince(ctx, demoID, since)
+	if err != nil {
+		return domain.GateEvidence{}, fmt.Errorf("reading the demo positions: %w", err)
+	}
+	return domain.QualifyingDays(domain.FoldDayFacts(days, orders, positions), domain.RiskDay(now), rule), nil
+}
+
+// ArmReal asks to arm real trading on a real-money account (PLAN 7.13): the mode.switch
+// permission (admin), a web session, the account's owner, the caller's password (checked by
+// the bounded hasher; the HTTP adapter counts it with the sign-in limiter), the typed phrase
+// "ENABLE REAL TRADING <account name>" (422 when wrong), the checklist, then CanArm. In this
+// build CanArm always refuses (domain.ErrRealModeGated: a *domain.GateRefusal naming the
+// failing checks, else domain.ErrRealTradingDisabled), so nothing is ever stored as armed.
+// Every refusal after the password is audited as real.arm_refused with the failing checks.
+func (s *Service) ArmReal(ctx context.Context, p Principal, accountID, demoAccountID, confirm, password string) (domain.RealGate, error) {
+	if err := s.authorize(p, domain.PermSwitchMode); err != nil {
+		return domain.RealGate{}, err
+	}
+	if p.Via != ViaSession {
+		return domain.RealGate{}, fmt.Errorf("arming real trading needs a web session, not an API key: %w", domain.ErrForbidden)
+	}
+	v, err := s.realAccount(ctx, p, accountID, domain.AccessOwner)
+	if err != nil {
+		return domain.RealGate{}, err
+	}
+	if err := s.checkPassword(ctx, p, password, v.ID, "real.arm_refused"); err != nil {
+		return domain.RealGate{}, err
+	}
+	if strings.TrimSpace(confirm) != domain.ArmPhrase(v.Name) {
+		s.audit(ctx, p, "real.arm_refused", v.ID, "wrong phrase")
+		return domain.RealGate{}, domain.Invalid("confirm", fmt.Sprintf("type %q to confirm", domain.ArmPhrase(v.Name)))
+	}
+	var demo *domain.Account
+	if vs, err := s.Accounts(ctx, p); err != nil {
+		return domain.RealGate{}, err
+	} else if i := slices.IndexFunc(vs, func(x domain.AccountView) bool { return x.ID == demoAccountID }); i >= 0 {
+		demo = &vs[i].Account
+	}
+	in, err := s.gateInput(ctx, p, v.Account, demo, confirm)
+	if err != nil {
+		return domain.RealGate{}, fmt.Errorf("app.ArmReal: %w", err)
+	}
+	if err := domain.CanArm(domain.GateChecks(in)); err != nil {
+		detail := "real trading is not enabled in this build"
+		if gr, ok := errors.AsType[*domain.GateRefusal](err); ok {
+			names := make([]string, 0, len(gr.Failed))
+			for _, c := range gr.Failed {
+				names = append(names, c.Name)
+			}
+			detail = "failed checks: " + strings.Join(names, ", ")
+		}
+		s.audit(ctx, p, "real.arm_refused", v.ID, detail)
+		return domain.RealGate{}, fmt.Errorf("app.ArmReal: %w", err)
+	}
+	if demo == nil { // CanArm needs the demo check to pass: never reached
+		return domain.RealGate{}, fmt.Errorf("app.ArmReal: no demo account: %w", domain.ErrRealModeGated)
+	}
+	locks := s.rt.agent(v.ID)
+	locks.ctl.Lock()
+	defer locks.ctl.Unlock()
+	return s.armLocked(ctx, p, v.Account, demo.ID, in.Evidence)
+}
+
+// armLocked stores the account's gate armed with the evidence of the demo account, audits
+// real.arm, raises a danger event and e-mails the admins and the owner. The caller holds the
+// account's control lock and has passed CanArm: ArmReal is its only caller outside tests, so
+// in this build nothing reaches it.
+func (s *Service) armLocked(ctx context.Context, p Principal, a domain.Account, demoID string, ev domain.GateEvidence) (domain.RealGate, error) {
+	now := s.d.Clock.Now().UTC()
+	var g domain.RealGate
+	err := s.putGate(ctx, a.ID, func(cur domain.RealGate) (domain.RealGate, bool) {
+		return cur.Arm(demoID, p.UserID, ev, now), true
+	}, &g)
+	if err != nil {
+		return domain.RealGate{}, fmt.Errorf("app.armLocked: %w", err)
+	}
+	detail := fmt.Sprintf("linked demo account %s, %d qualifying days (%s to %s), expires %s",
+		demoID, ev.Count, ev.First, ev.Last, g.ExpiresAt.Format(time.RFC3339))
+	s.audit(ctx, p, "real.arm", a.ID, detail)
+	title := "REAL MONEY: real trading armed on " + a.Name
+	body := "Real trading was armed by " + p.Username + ": " + detail + ". Disarm it at any time on the Real trading page."
+	s.emitFor(ctx, a.ID, p.Username, "real.armed", domain.SeverityDanger, title, body)
+	s.mailGateChange(ctx, a, p.Username, title, body)
+	return g, nil
+}
+
+// putGate applies change to the account's stored gate and stores it, re-reading and
+// re-applying on a version conflict (at most 3 times). change returns false to store
+// nothing (out is then the stored gate).
+func (s *Service) putGate(ctx context.Context, accountID string, change func(domain.RealGate) (domain.RealGate, bool), out *domain.RealGate) error {
+	for range 3 {
+		cur, err := s.storedGate(ctx, accountID)
+		if err != nil {
+			return err
+		}
+		next, ok := change(cur)
+		if !ok {
+			*out = cur
+			return nil
+		}
+		stored, err := s.d.Store.RealGates().Put(ctx, next)
+		if errors.Is(err, domain.ErrConflict) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		*out = stored
+		return nil
+	}
+	return fmt.Errorf("the gate kept changing: %w", domain.ErrConflict)
+}
+
+// maxDisarmReasonInput bounds the reason a user types when disarming.
+const maxDisarmReasonInput = 200
+
+// DisarmReal disarms real trading on a real-money account now (OD23): trade access and the
+// agent.kill permission, from a web session or an API key. Idempotent (a locked gate stays
+// locked, 200). The agent goes to stopped when running or paused (entries stop); nothing is
+// cancelled or closed (exits continue, a close in flight is never touched). Never rate
+// limited (D32). Audited, with a danger event and an e-mail to the admins and the owner.
+func (s *Service) DisarmReal(ctx context.Context, p Principal, accountID, reason string) (domain.RealGate, error) {
+	if err := s.authorize(p, domain.PermKillSwitch); err != nil {
+		return domain.RealGate{}, err
+	}
+	v, err := s.realAccount(ctx, p, accountID, domain.AccessTrade)
+	if err != nil {
+		return domain.RealGate{}, err
+	}
+	why := "disarmed by " + p.Username
+	if r := strings.TrimSpace(reason); r != "" {
+		why += ": " + truncate(r, maxDisarmReasonInput)
+	}
+	// Like the kill, a disarm runs to the end once authorized (a closed tab must not stop it).
+	ctx = context.WithoutCancel(ctx)
+	locks := s.rt.agent(v.ID)
+	locks.ctl.Lock()
+	defer locks.ctl.Unlock()
+	g, err := s.disarmLocked(ctx, v.Account, p, why)
+	if err != nil {
+		return g, fmt.Errorf("app.DisarmReal: %w", err)
+	}
+	return g, nil
+}
+
+// disarmLocked disarms the account's gate for why: latched in memory first (a gate armed
+// before it is not in force even if the write fails), then stored if it was armed, then the
+// agent is moved to stopped when running or paused. Only a change is audited, announced and
+// e-mailed. The caller holds the account's control lock. p is the user (Principal{} = the
+// system).
+func (s *Service) disarmLocked(ctx context.Context, a domain.Account, p Principal, why string) (domain.RealGate, error) {
+	now := s.d.Clock.Now().UTC()
+	s.gates.latch(a.ID, now)
+	s.rt.cancelEntries(a.ID) // no entry pipeline keeps running on a gate being disarmed
+	var g domain.RealGate
+	changed := false
+	err := s.putGate(ctx, a.ID, func(cur domain.RealGate) (domain.RealGate, bool) {
+		if cur.State != domain.GateArmed {
+			return cur, false
+		}
+		changed = true
+		return cur.Disarm(p.UserID, why, now), true
+	}, &g)
+	if st := s.agentState(ctx, a.ID); st == domain.AgentRunning || st == domain.AgentPaused {
+		if serr := s.setAgentState(ctx, a.ID, domain.AgentStopped); serr != nil {
+			err = errors.Join(err, fmt.Errorf("stopping the agent: %w", serr))
+		} else {
+			s.audit(ctx, p, "agent.stop", a.ID, "from "+string(st)+": real trading disarmed")
+		}
+	}
+	if err != nil {
+		s.audit(ctx, p, "real.disarm_failed", a.ID, why)
+		return domain.LockedGate(a.ID), err
+	}
+	if !changed {
+		return g, nil
+	}
+	s.audit(ctx, p, "real.disarm", a.ID, why)
+	title := "Real trading disarmed on " + a.Name
+	body := why + ". New entries stop; positions due are still closed. Arming again needs the full checklist."
+	s.emitFor(ctx, a.ID, p.Username, "real.disarmed", domain.SeverityDanger, title, body)
+	s.mailGateChange(ctx, a, p.Username, title, body)
+	return g, nil
+}
+
+// disarmIfArmed is the automatic disarm (OD24) for a real-money account whose gate is armed:
+// a kill-switch trip, a key change, a raised limit. The caller holds the account's control
+// lock. Errors are logged (the in-memory latch holds the disarm all the same).
+func (s *Service) disarmIfArmed(ctx context.Context, a domain.Account, p Principal, why string) {
+	if !isRealAccount(a) {
+		return
+	}
+	if g, err := s.storedGate(ctx, a.ID); err == nil && g.State != domain.GateArmed {
+		return
+	}
+	if _, err := s.disarmLocked(ctx, a, p, why); err != nil {
+		s.d.Log.ErrorContext(ctx, "real gate: the automatic disarm could not be stored", "account", a.ID, "reason", why, "err", err)
+	}
+}
+
+// expireGate disarms a gate found stored armed but no longer in force (expired, older than a
+// restore, OD24) when the account's control lock is free now; otherwise the next sweep does
+// (it is not in force meanwhile). It returns the gate as stored afterwards.
+func (s *Service) expireGate(ctx context.Context, a domain.Account, why string, g domain.RealGate) domain.RealGate {
+	locks := s.rt.agent(a.ID)
+	if !locks.ctl.TryLock() {
+		return g
+	}
+	defer locks.ctl.Unlock()
+	out, err := s.disarmLocked(ctx, a, Principal{}, why)
+	if err != nil {
+		s.d.Log.ErrorContext(ctx, "real gate: the expired gate could not be disarmed", "account", a.ID, "reason", why, "err", err)
+		return g
+	}
+	return out
+}
+
+// sweepRealGates disarms every stored-armed gate that is no longer in force (expiry, a
+// restore). The supervisor loop runs it on every tick.
+func (s *Service) sweepRealGates(ctx context.Context, as []domain.Account) {
+	for _, a := range as {
+		if !isRealAccount(a) {
+			continue
+		}
+		g, err := s.storedGate(ctx, a.ID)
+		if err != nil || g.State != domain.GateArmed {
+			continue
+		}
+		if live, why := s.gateLive(ctx, g); !live {
+			s.expireGate(ctx, a, why, g)
+		}
+	}
+}
+
+// mailGateChange e-mails an arming or disarming to every admin and to the account's owner
+// who has an e-mail address, whatever their notification choices, unless the event's own
+// alert e-mail (emitFor → notify) already went to them.
+func (s *Service) mailGateChange(ctx context.Context, a domain.Account, actor, title, body string) {
+	users, err := s.d.Store.Users().List(ctx)
+	if err != nil {
+		s.d.Log.WarnContext(ctx, "real gate: listing users for the e-mail failed", "err", err)
+		return
+	}
+	notified := map[string]bool{a.OwnerID: true}
+	if shares, err := s.d.Store.Accounts().Shares(ctx, a.ID); err == nil {
+		for _, sh := range shares {
+			notified[sh.UserID] = true
+		}
+	}
+	if actor == "" {
+		actor = "system"
+	}
+	for _, u := range users {
+		if u.Disabled || u.Email == "" || (u.Role != domain.RoleAdmin && u.ID != a.OwnerID) {
+			continue
+		}
+		if notified[u.ID] && s.notifyPrefs(ctx, u.ID)[domain.NotifyAlerts] {
+			continue // the event's alert e-mail reached them
+		}
+		s.enqueue(ctx, u.Email, "[cactusTrade] "+title, title+"\n\n"+body+"\n\nWhen: "+
+			s.d.Clock.Now().UTC().Format("Mon 2 Jan 2006 15:04 MST")+"\nBy: "+actor+
+			"\n\nYou get this because you are an administrator or the account's owner.\n"+
+			"cactusTrade is software, not financial advice — trading can lose money.")
+	}
+}

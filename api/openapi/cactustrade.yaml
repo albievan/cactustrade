@@ -637,6 +637,93 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/real-gate:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    get:
+      tags: [accounts]
+      operationId: getRealGate
+      summary: The real-trading gate of a real-money account, its checklist and the demo evidence (view access)
+      description: |
+        The checklist the server applies when arming (PLAN 7.10), without the typed phrase:
+        the real account (eToro, real, keys, reconciled, not killed, agent stopped, limits within
+        the real-money ceilings), the linked demo account (same owner), the demo evidence (20
+        qualifying risk days in the last 60, the latest at most 7 days old) and the arming user
+        (an admin who owns the account, in a web session). `enabled` is false in this build:
+        arming is always refused until the owner's written consent (PLAN 7.18).
+      parameters:
+        - { name: demoAccountId, in: query, required: false, schema: { type: string, maxLength: 64 }, description: "the demo account the checklist is for (default: the one last armed with, else the owner's first)" }
+      responses:
+        "200":
+          description: The gate and its checklist
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealGateStatus" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/real-gate/arm:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [accounts]
+      operationId: armRealGate
+      summary: Ask to arm real trading (admin who owns the account, web session only, password and phrase) — refused in this build
+      description: |
+        Checks, in order: the mode.switch permission (admin), a web session (never an API key),
+        ownership of the account, the caller's password (counted like a sign-in: a wrong one
+        is 403, too many attempts 429), the phrase `ENABLE REAL TRADING <account name>` (422
+        when wrong), then the checklist (409 naming the failing checks). With every check
+        passing this build answers 403 "Real trading is not enabled in this build": real
+        trading needs the owner's written consent (PLAN 7.18). Nothing is ever stored as
+        armed. Every refusal after the password is audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ArmRealRequest" }
+      responses:
+        "200":
+          description: Armed (never in this build)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealGate" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/real-gate/disarm:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [accounts]
+      operationId: disarmRealGate
+      summary: Disarm real trading now (trade access and agent.kill; web session or API key; never rate limited)
+      description: |
+        Idempotent: a gate that is not armed stays locked (200). A running or paused agent is
+        stopped (no new entries); nothing is cancelled or closed, so exits continue. Audited,
+        with a danger event and an e-mail to the admins and the owner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisarmRealRequest" }
+      responses:
+        "200":
+          description: The gate afterwards (locked)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealGate" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "500": { $ref: "#/components/responses/Problem" }
   /api/v1/oauth/saxo/callback:
     get:
       tags: [accounts]
@@ -1836,6 +1923,16 @@ components:
         startedAt: { type: string, format: date-time }
         now: { type: string, format: date-time }
         account: { $ref: "#/components/schemas/Account" }
+        realArmed:
+          type: array
+          description: "the accounts the caller can see whose real trading is armed (the banner on every page); always empty in this build"
+          items: { $ref: "#/components/schemas/RealArmedAccount" }
+    RealArmedAccount:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
     SystemHealth:
       type: object
       required: [ok, at, startedAt, agentLoop, accounts, problems]
@@ -2502,6 +2599,77 @@ components:
         ok: { type: boolean, description: "eToro and our records agree; entries need it" }
         at: { type: string, format: date-time, description: "absent = not reconciled since the start" }
         reason: { type: string, description: "why not OK (empty when OK)" }
+    RealGate:
+      type: object
+      required: [accountId, state, evidenceDays, version]
+      properties:
+        accountId: { type: string }
+        state: { type: string, enum: [locked, armed] }
+        demoAccountId: { type: string, description: "the linked demo account of the latest arming" }
+        armedAt: { type: string, format: date-time }
+        armedBy: { type: string, description: "user id" }
+        expiresAt: { type: string, format: date-time }
+        evidenceDays: { type: integer, description: "qualifying demo days recorded when armed" }
+        disarmedAt: { type: string, format: date-time }
+        disarmedBy: { type: string, description: "user id; absent with disarmedAt = the system" }
+        disarmReason: { type: string }
+        version: { type: integer, format: int64 }
+    GateCheck:
+      type: object
+      required: [name, pass, detail]
+      properties:
+        name:
+          type: string
+          enum: [real_account, real_keys, real_reconciled, real_not_killed, real_agent_stopped, real_limits, demo_account, demo_evidence, arming_user, confirm_phrase]
+        pass: { type: boolean }
+        detail: { type: string }
+    GateEvidence:
+      type: object
+      required: [days, count]
+      properties:
+        days: { type: array, items: { type: string }, description: "the qualifying risk days (YYYY-MM-DD, named after the day a 22:00 UTC risk day ends), oldest first" }
+        count: { type: integer }
+        first: { type: string, description: "YYYY-MM-DD" }
+        last: { type: string, description: "YYYY-MM-DD" }
+    EvidenceRule:
+      type: object
+      required: [minDays, windowDays, maxAgeDays]
+      properties:
+        minDays: { type: integer }
+        windowDays: { type: integer }
+        maxAgeDays: { type: integer }
+    RealGateStatus:
+      type: object
+      required: [account, gate, armed, enabled, demoCandidates, checks, evidence, rule, phrase, canArm, canDisarm]
+      properties:
+        account: { $ref: "#/components/schemas/Account" }
+        gate: { $ref: "#/components/schemas/RealGate" }
+        armed: { type: boolean, description: "armed and in force now" }
+        enabled: { type: boolean, description: "this build may arm real trading at all (false until the owner's written consent)" }
+        demoAccountId: { type: string, description: "the demo account the checklist is for; absent = none" }
+        demoCandidates:
+          type: array
+          description: "the owner's eToro demo accounts the caller can see"
+          items: { $ref: "#/components/schemas/Account" }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/GateCheck" }
+        evidence: { $ref: "#/components/schemas/GateEvidence" }
+        rule: { $ref: "#/components/schemas/EvidenceRule" }
+        phrase: { type: string, description: "what to type to arm" }
+        canArm: { type: boolean, description: "the caller may submit an arm request (the server still checks everything)" }
+        canDisarm: { type: boolean }
+    ArmRealRequest:
+      type: object
+      required: [demoAccountId, confirm, password]
+      properties:
+        demoAccountId: { type: string, maxLength: 64 }
+        confirm: { type: string, maxLength: 200, description: "ENABLE REAL TRADING <account name>" }
+        password: { type: string, maxLength: 256, description: "the caller's current password (never logged or stored)" }
+    DisarmRealRequest:
+      type: object
+      properties:
+        reason: { type: string, maxLength: 200 }
     ForceCloseRequest:
       type: object
       required: [password]

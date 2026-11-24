@@ -74,6 +74,10 @@ export type AgentCard = components["schemas"]["AgentCard"];
 export type ForceClosePlan = components["schemas"]["ForceClosePlan"];
 export type ForceCloseReport = components["schemas"]["ForceCloseReport"];
 export type WatchlistCount = components["schemas"]["WatchlistCount"];
+export type RealGate = components["schemas"]["RealGate"];
+export type RealGateStatus = components["schemas"]["RealGateStatus"];
+export type GateCheck = components["schemas"]["GateCheck"];
+export type RealArmedAccount = components["schemas"]["RealArmedAccount"];
 
 // forAccount is "?accountId=…" for a named account, "" for the current one.
 function forAccount(accountId?: string): string {
@@ -238,6 +242,14 @@ export const api = {
     request<ForceCloseReport>("POST", "/api/v1/agent/force-close" + forAccount(accountId), { password }),
   forceCloseAllPreview: () => request<ForceClosePlan[]>("GET", "/api/v1/agent/force-close-all"),
   forceCloseAll: (password: string) => request<ForceCloseReport[]>("POST", "/api/v1/agent/force-close-all", { password }),
+  // The real-trading gate (PLAN 7.14). Arming is refused by this build; disarming always works.
+  realGate: (accountId: string, demoAccountId?: string) =>
+    request<RealGateStatus>("GET", `/api/v1/accounts/${encodeURIComponent(accountId)}/real-gate` +
+      (demoAccountId ? `?demoAccountId=${encodeURIComponent(demoAccountId)}` : "")),
+  armRealGate: (accountId: string, demoAccountId: string, confirm: string, password: string) =>
+    request<RealGate>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/real-gate/arm`, { demoAccountId, confirm, password }),
+  disarmRealGate: (accountId: string, reason?: string) =>
+    request<RealGate>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/real-gate/disarm`, reason ? { reason } : {}),
   watchlistCounts: () => request<WatchlistCount[]>("GET", "/api/v1/watchlist/counts"),
   killAgent: (reason: string) => request<KillReport>("POST", "/api/v1/agent/kill", { reason }),
   resetKill: (confirm: string) => request<AgentStatusResult>("POST", "/api/v1/agent/reset", { confirm }),

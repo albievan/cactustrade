@@ -64,6 +64,8 @@ body[data-mode=demo] .app-head { box-shadow: inset 0 3px 0 var(--demo); }
 body[data-mode=real] .app-head { background: var(--real); color: #fff; border-bottom-color: var(--real); }
 body[data-mode=real] .app-head .brand, body[data-mode=real] .app-head .brand .name b, body[data-mode=real] .app-head .btn { color: #fff; border-color: rgba(255,255,255,.6); }
 body[data-mode=real] .shell { outline: 4px solid var(--real); outline-offset: -4px; }
+/* PLAN 7.15 (OD27): real trading armed on any visible account — on every page, never dismissible. */
+.real-banner { background: var(--real); color: #fff; text-align: center; font-weight: 800; font-size: .95rem; padding: .45rem; letter-spacing: .04em; border-bottom: 2px solid #fff; }
 .real-strip { background: var(--real); color: #fff; text-align: center; font-weight: 700; font-size: .85rem; padding: .3rem; letter-spacing: .03em; }
 .shell { display: grid; grid-template-columns: var(--side-w) 1fr; min-height: calc(100vh - var(--head-h)); }
 .side { background: var(--side); border-right: 1px solid var(--border); padding: .9rem .6rem; position: sticky; top: var(--head-h);

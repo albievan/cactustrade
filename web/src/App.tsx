@@ -21,6 +21,7 @@ import { Overview } from "./pages/Overview";
 import { Orders } from "./pages/Orders";
 import { DecisionLog } from "./pages/DecisionLog";
 import { History } from "./pages/History";
+import { RealTrading } from "./pages/RealTrading";
 
 export function App() {
   const { me, loading } = useSession();
@@ -45,6 +46,7 @@ export function App() {
         <Route path="decisions" element={<DecisionLog />} />
         <Route path="history" element={<History />} />
         <Route path="accounts" element={<Accounts />} />
+        <Route path="real-trading" element={<RealTrading />} />
         <Route path="themes" element={<Themes />} />
         <Route path="credentials" element={<Navigate to="/accounts" replace />} />
         <Route path="users" element={<Users />} />

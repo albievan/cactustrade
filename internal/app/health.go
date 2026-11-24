@@ -44,8 +44,8 @@ type AccountHealth struct {
 	LeaseHeld bool
 	// Orders counts our non-final orders by state (every non-final state is present).
 	Orders map[domain.OrderState]int
-	// RealGateArmed: real trading is armed for the account (PLAN 7.12; always false until the
-	// gate exists and the owner's consent, 7.18).
+	// RealGateArmed: real trading is armed for the account and in force (PLAN 7.13; always
+	// false in this build, which cannot arm: 7.18).
 	RealGateArmed bool
 	// Problem says why the account is unhealthy ("" = healthy).
 	Problem string
@@ -234,6 +234,7 @@ func (s *Service) accountHealth(ctx context.Context, a domain.Account, now, firs
 		AccountID: a.ID, Mode: accountMode(a), Supervised: s.supervisable(ctx, a),
 		AgentState: s.agentState(ctx, a.ID), Reconciled: s.Reconciled(a.ID).OK,
 		LastPass: pr.last, LastCleanPass: pr.lastClean, Orders: map[domain.OrderState]int{},
+		RealGateArmed: s.realGateArmed(ctx, a),
 	}
 	var problems []string
 	killed, err := s.isKilled(ctx, a.ID)

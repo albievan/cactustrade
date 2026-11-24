@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/albievan/cactustrade/internal/domain"
 )
 
 // ErrNotSQLite is returned by the SQLite-only backup operations on a MariaDB store (MariaDB is
@@ -104,4 +106,4 @@ func (s *Store) PrepareRestored(ctx context.Context, at time.Time) error {
 }
 
 // RestoreAtSetting is the settings key holding the time of the latest restore (RFC 3339, UTC).
-const RestoreAtSetting = "restore.at"
+const RestoreAtSetting = domain.SettingRestoreAt

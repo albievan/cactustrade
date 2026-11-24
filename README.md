@@ -178,6 +178,18 @@ present, else the app's own image; the identity is passed over stdin, never as a
 argument or variable inside a container. With `--ssh-access`, copy the backup to the host and
 run `--restore` there.
 
+## Real money
+
+> **Real trading is not enabled in this build.** A real-money account can be added and shown,
+> and its *Real trading* page (Setup) shows the checklist the server would apply before arming
+> it: 20 qualifying demo trading days in the last 60 on a linked demo account, an admin who
+> owns the account, the password, the phrase `ENABLE REAL TRADING <account name>`, limits
+> within the real-money ceilings. Every arming is refused until the owner's written consent
+> (PLAN 7.18); cactusTrade never sends an order, a close or a cancel for a real-money account.
+> Anyone with trade access can **disarm** at any time (also with an API key); a kill-switch
+> trip, a key change, raising a limit, a restore and 30 days each disarm by themselves. Trading
+> real money can lose it; demo results describe the past and do not predict real ones.
+
 ## eToro API keys
 
 1. In eToro: **Settings → Trading → API Key Management → Create New Key**.
@@ -193,9 +205,8 @@ run `--restore` there.
      variants that name a file. Credentials set this way are read-only in the UI.
 
 Even if a key allows more (transfers, copy trading…), cactusTrade cannot use those endpoints:
-the client contains only the allowlisted paths. Real-money keys stay unused until the real-mode
-gate in phase 7: at least 20 demo trading days, admin, a typed confirmation phrase, and a
-banner on every page.
+the client contains only the allowlisted paths. Real-money keys are used for reads only; orders
+stay refused until the real-mode gate can be armed (see *Real money* above).
 
 ## Trading 212 accounts (view-only)
 

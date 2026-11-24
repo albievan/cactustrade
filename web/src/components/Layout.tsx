@@ -4,6 +4,7 @@ import { useSession } from "../lib/session";
 import { useMode } from "../lib/mode";
 import { EventsBell } from "./EventsBell";
 import { AccountSwitcher } from "./AccountSwitcher";
+import { RealBanner } from "./RealBanner";
 
 interface Item { to: string; icon: string; label: string; perm?: string; end?: boolean }
 
@@ -23,6 +24,7 @@ const sections: { title: string; items: Item[] }[] = [
   { title: "Setup", items: [
     { to: "/accounts", icon: "bi-wallet2", label: "Platform accounts" },
     { to: "/llm", icon: "bi-robot", label: "LLM reviewer" },
+    { to: "/real-trading", icon: "bi-exclamation-octagon", label: "Real trading" },
     { to: "/email", icon: "bi-envelope", label: "E-mail", perm: "settings.write" },
     { to: "/api-keys", icon: "bi-plug", label: "API keys" },
   ] },
@@ -64,6 +66,7 @@ export function Layout() {
         </div>
         <button className="btn btn-sm btn-outline-secondary" onClick={() => void signOut()} title="Sign out" aria-label="Sign out"><i className="bi bi-box-arrow-right" /></button>
       </header>
+      <RealBanner />
       {real && <div className="real-strip">REAL MONEY — orders use your live eToro account</div>}
       <div className="shell">
         <nav className={"side" + (navOpen ? " open" : "")} aria-label="Menu" onClick={() => setNavOpen(false)}>
