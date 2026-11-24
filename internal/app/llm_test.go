@@ -307,3 +307,32 @@ func TestTestLLMTimesOutBeforeTheServer(t *testing.T) {
 		t.Fatalf("test = %+v %v", res, err)
 	}
 }
+
+// TestConsoleTestLLM: the console test finds a profile by name (any case) or id, or the
+// default one, and runs the same test as the page.
+func TestConsoleTestLLM(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	r := &fakeReviewer{v: domain.Verdict{Kind: domain.VerdictApprove, SizeBp: domain.FullSize, Reason: "ok"}}
+	e.svc.d.LLM = r
+	key := "sk-console-1234"
+	pr, err := e.svc.SaveLLMProfile(ctx, e.admin, domain.LLMProfile{Name: "Gemini", LLMConfig: domain.LLMConfig{Provider: "deepseek", Model: "m"}}, &key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"gemini", pr.ID} {
+		name, res, err := e.svc.ConsoleTestLLM(ctx, q)
+		if err != nil || name != "Gemini" || !res.OK || r.gotKey != key {
+			t.Fatalf("%q: %s %+v %v", q, name, res, err)
+		}
+	}
+	if _, _, err := e.svc.ConsoleTestLLM(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("unknown profile: %v", err)
+	}
+	if _, err := e.svc.SetLLMSettings(ctx, e.admin, domain.LLMSettings{Enabled: true, Active: pr.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if name, _, err := e.svc.ConsoleTestLLM(ctx, ""); err != nil || name != "Gemini" {
+		t.Fatalf("default: %s %v", name, err)
+	}
+}

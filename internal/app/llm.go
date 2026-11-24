@@ -466,10 +466,32 @@ var sampleReview = ports.ReviewInput{
 	RecentCandles: []domain.Candle{{Close: 98_900_000}, {Close: 99_200_000}, {Close: 99_100_000}, {Close: 99_600_000}, {Close: 100_000_000}},
 }
 
-// TestLLM asks a stored profile to review a made-up trade (admin). A provider failure is a
-// result (OK=false), not an error.
 // testLLMTimeout bounds the admin's test call (well under the HTTP write timeout).
 var testLLMTimeout = 45 * time.Second
+
+// ConsoleTestLLM runs the profile test for the operator at the deployment's console (the
+// `cactustrade llm-test` command): someone who can read the master key anyway. profile is
+// a profile id or name ("" = the default profile). It returns the profile's name too.
+func (s *Service) ConsoleTestLLM(ctx context.Context, profile string) (string, LLMTestResult, error) {
+	st, ps, err := s.loadLLM(ctx)
+	if err != nil {
+		return "", LLMTestResult{}, fmt.Errorf("app.ConsoleTestLLM: %w", err)
+	}
+	want := strings.TrimSpace(profile)
+	if want == "" {
+		want = st.Active
+	}
+	i := slices.IndexFunc(ps, func(x domain.LLMProfile) bool { return x.ID == want || strings.EqualFold(x.Name, want) })
+	if i < 0 {
+		return "", LLMTestResult{}, fmt.Errorf("LLM profile %q: %w", want, domain.ErrNotFound)
+	}
+	console := Principal{UserID: "console", Username: "console", Role: domain.RoleAdmin}
+	res, err := s.TestLLM(ctx, console, ps[i].ID)
+	return ps[i].Name, res, err
+}
+
+// TestLLM asks a stored profile to review a made-up trade (admin). A provider failure is a
+// result (OK=false), not an error.
 
 func (s *Service) TestLLM(ctx context.Context, p Principal, profileID string) (LLMTestResult, error) {
 	if err := s.authorize(p, domain.PermManageSettings); err != nil {

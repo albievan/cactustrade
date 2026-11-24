@@ -6,6 +6,7 @@
 //	cactustrade healthcheck         exit 0 when the local server is healthy (containers)
 //	cactustrade migrate status|up|down-to N
 //	cactustrade backtest --instrument ID   walk-forward backtest on eToro candles (read-only)
+//	cactustrade llm-test [--profile NAME]   test an LLM reviewer profile (one made-up review)
 //	cactustrade backup --out FILE           encrypted standalone backup (age; PLAN 7.6a)
 //	cactustrade restore --in FILE --yes     restore a standalone backup (server stopped)
 //	cactustrade encrypt | decrypt           age filter for deploy.sh's MariaDB dumps (7.6b)
@@ -87,6 +88,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return migrate(ctx, args, getenv, out)
 	case "backtest":
 		return backtestCmd(ctx, args, getenv, out)
+	case "llm-test":
+		return llmTestCmd(ctx, args, getenv, out)
 	case "backup":
 		return backupCmd(ctx, args, getenv, out, time.Now)
 	case "restore":
