@@ -86,7 +86,7 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]Reconciliation, error) {
 		}
 		r, err := s.Reconcile(ctx, a.ID)
 		if err != nil {
-			s.d.Log.WarnContext(ctx, "reconciliation failed", "account", a.ID, "err", err)
+			s.d.Log.WarnContext(ports.WithAccount(ctx, a), "reconciliation failed", "account", a.ID, "err", err)
 			r = s.Reconciled(a.ID)
 		}
 		out = append(out, r)
@@ -122,6 +122,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID string) (Reconciliati
 	if !a.Tradable() {
 		return Reconciliation{}, fmt.Errorf("app.Reconcile: %s: %w", a.Name, domain.ErrViewOnly)
 	}
+	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
 	if s.d.Broker == nil {
 		return s.setReconciled(ctx, a, false, "the eToro client is not configured"), nil
 	}

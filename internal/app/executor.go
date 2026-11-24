@@ -169,6 +169,7 @@ func (s *Service) mayMutate(ctx context.Context, a domain.Account) error {
 	case !a.Tradable():
 		return fmt.Errorf("%s: %w", a.Name, domain.ErrViewOnly)
 	case a.Mode != domain.ModeDemo:
+		s.d.Log.WarnContext(ports.WithAccount(ctx, a), "account change refused: real mode is gated")
 		return fmt.Errorf("%s: %w", a.Name, domain.ErrRealModeGated)
 	case s.d.Broker == nil:
 		return fmt.Errorf("the eToro client is not configured: %w", domain.ErrUnavailable)
@@ -237,6 +238,8 @@ func (s *Service) move(ctx context.Context, o domain.Order, to domain.OrderState
 	if err := s.d.Store.Orders().Update(ctx, o, next); err != nil {
 		return o, fmt.Errorf("storing order %s (%s → %s): %w", o.RequestID, o.State, to, err)
 	}
+	s.d.Log.InfoContext(ctx, "order", "account_id", next.AccountID, "mode", string(next.Mode), "request", next.RequestID, "kind", string(next.Kind),
+		"from", string(o.State), "to", string(next.State), "reason", next.Reason)
 	s.publishOrder(next)
 	return next, nil
 }
@@ -246,6 +249,7 @@ func (s *Service) createOrder(ctx context.Context, o domain.Order) error {
 	if err := s.d.Store.Orders().Create(ctx, o); err != nil {
 		return err
 	}
+	s.d.Log.InfoContext(ctx, "order", "account_id", o.AccountID, "mode", string(o.Mode), "request", o.RequestID, "kind", string(o.Kind), "to", string(o.State))
 	s.publishOrder(o)
 	return nil
 }
@@ -290,6 +294,7 @@ func (s *Service) orderEvent(ctx context.Context, a domain.Account, kind string,
 // order row is stored first (state created, then sent). The returned order is its latest
 // stored version; an error means it was not (or not knowingly) placed.
 func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryRequest, l domain.RiskLimits) (domain.Order, error) {
+	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
 	if err := s.mayMutate(ctx, a); err != nil {
 		return domain.Order{}, fmt.Errorf("executor.placeEntry: %w", err)
 	}
@@ -599,6 +604,7 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 // portfolio read: still open → the same request id is sent again (at most MaxSends). Works
 // while the kill switch is on.
 func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain.AgentPosition, why string, polls []time.Duration) (domain.Order, error) {
+	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
 	if err := s.mayMutate(ctx, a); err != nil {
 		return domain.Order{}, fmt.Errorf("executor.closePosition: %w", err)
 	}
@@ -805,6 +811,7 @@ func (s *Service) markClosed(ctx context.Context, a domain.Account, ap domain.Ag
 // cancelOrder asks eToro to cancel a pending open order of ours, with its own stored
 // request id. The target's own state follows from its next lookup.
 func (s *Service) cancelOrder(ctx context.Context, a domain.Account, target domain.Order, why string) (domain.Order, error) {
+	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
 	if err := s.mayMutate(ctx, a); err != nil {
 		return domain.Order{}, fmt.Errorf("executor.cancelOrder: %w", err)
 	}

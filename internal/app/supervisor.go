@@ -77,14 +77,15 @@ func (s *Service) superviseTick(ctx context.Context, wg *sync.WaitGroup) {
 		}
 		wg.Go(func() {
 			defer s.rt.release(a.ID)
-			cctx, cancel := context.WithTimeout(ctx, superviseTimeout)
+			actx := ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
+			cctx, cancel := context.WithTimeout(actx, superviseTimeout)
 			defer cancel()
 			rep, err := s.Supervise(cctx, a.ID)
 			switch {
 			case err != nil:
-				s.d.Log.ErrorContext(ctx, "supervisor pass failed", "account", a.ID, "err", err)
+				s.d.Log.ErrorContext(actx, "supervisor pass failed", "account", a.ID, "err", err)
 			case len(rep.Errors) > 0:
-				s.d.Log.WarnContext(ctx, "supervisor pass had errors", "account", a.ID, "errors", rep.Errors)
+				s.d.Log.WarnContext(actx, "supervisor pass had errors", "account", a.ID, "errors", rep.Errors)
 			}
 		})
 	}
@@ -118,15 +119,17 @@ func (s *Service) Supervise(ctx context.Context, accountID string) (SupervisorRe
 	if err != nil {
 		return rep, fmt.Errorf("app.Supervise: %w", err)
 	}
+	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
 	switch {
 	case !a.Tradable():
 		rep.Skipped = "view-only account"
-		return rep, nil
 	case a.Mode != domain.ModeDemo:
 		rep.Skipped = "real mode is gated (phase 7)"
-		return rep, nil
 	case s.d.Broker == nil:
 		rep.Skipped = "the eToro client is not configured"
+	}
+	if rep.Skipped != "" {
+		s.d.Log.DebugContext(ctx, "supervisor pass skipped", "reason", rep.Skipped)
 		return rep, nil
 	}
 	if rep.Skipped = s.leaseProblem(ctx, a.ID); rep.Skipped != "" {

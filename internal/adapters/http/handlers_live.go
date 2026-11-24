@@ -374,7 +374,7 @@ func (s *Server) reauthenticate(ctx context.Context, r *http.Request) (app.Princ
 		}
 		return s.svc.APIKeyPrincipal(ctx, strings.TrimSpace(bearer), ip)
 	}
-	c, err := r.Cookie(SessionCookie)
+	c, err := r.Cookie(s.cookieName())
 	if err != nil || c.Value == "" {
 		return app.Principal{}, domain.ErrUnauthenticated
 	}

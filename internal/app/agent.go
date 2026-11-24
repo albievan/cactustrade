@@ -129,14 +129,15 @@ func (s *Service) agentTickAll(ctx context.Context, wg *sync.WaitGroup) {
 		}
 		wg.Go(func() {
 			defer s.rt.releaseTick(a.ID)
-			cctx, cancel := context.WithTimeout(ctx, agentTickTimeout)
+			actx := ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
+			cctx, cancel := context.WithTimeout(actx, agentTickTimeout)
 			defer cancel()
 			tr, err := s.AgentTick(cctx, a.ID)
 			switch {
 			case err != nil:
-				s.d.Log.ErrorContext(ctx, "agent tick failed", "account", a.ID, "err", err)
+				s.d.Log.ErrorContext(actx, "agent tick failed", "account", a.ID, "err", err)
 			case len(tr.Errors) > 0:
-				s.d.Log.WarnContext(ctx, "agent tick had errors", "account", a.ID, "errors", tr.Errors)
+				s.d.Log.WarnContext(actx, "agent tick had errors", "account", a.ID, "errors", tr.Errors)
 			}
 		})
 	}
@@ -168,6 +169,7 @@ func (s *Service) AgentTick(ctx context.Context, accountID string) (AgentTrace, 
 	if err != nil {
 		return tr, fmt.Errorf("app.AgentTick: %w", err)
 	}
+	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
 	killWhy := s.agentTickLocked(ctx, a, &tr)
 	if killWhy != "" {
 		// Tripped outside the entry lock: Kill holds the control lock and waits for it.

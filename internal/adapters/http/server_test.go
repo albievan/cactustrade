@@ -458,3 +458,162 @@ func TestLimiterWindowAndDetail(t *testing.T) {
 		t.Fatalf("detail = %q", d)
 	}
 }
+
+// TestSecurityHeadersByRouteClass (PLAN 7.4): every route class carries the same security
+// headers; only the Swagger UI page allows 'unsafe-inline', and only for styles.
+func TestSecurityHeadersByRouteClass(t *testing.T) {
+	web := fstest.MapFS{
+		"index.html":    {Data: []byte("<html>app</html>")},
+		"api-docs.html": {Data: []byte("<html>docs</html>")},
+	}
+	x := newAgentTCServer(t, func(*app.Deps) {}, Config{MetricsToken: "mt", Web: web}, slog.New(slog.DiscardHandler))
+	redirect := httptest.NewServer(SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusPermanentRedirect)
+	})))
+	t.Cleanup(redirect.Close)
+	tests := []struct {
+		name, url string
+		hdr       []string
+		code      int
+		swagger   bool
+		api       bool
+		hsts      bool
+	}{
+		{"SPA", x.srv.URL + "/", nil, 200, false, false, true},
+		{"SPA route", x.srv.URL + "/settings/users", nil, 200, false, false, true},
+		{"API", x.srv.URL + "/api/v1/agent", nil, 200, false, true, true},
+		{"API error", x.srv.URL + "/api/v1/nope", nil, 404, false, true, true},
+		{"Swagger", x.srv.URL + "/api/docs", nil, 200, true, true, true},
+		{"SSE", x.srv.URL + "/api/v1/live", nil, 200, false, true, true},
+		{"CSV", x.srv.URL + "/api/v1/history/export/trades.csv", nil, 200, false, true, true},
+		{"metrics", x.srv.URL + "/metrics", []string{"Authorization", "Bearer mt"}, 200, false, false, true},
+		{"308 redirect", redirect.URL + "/x", nil, 308, false, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, "GET", tc.url, nil)
+			for i := 0; i+1 < len(tc.hdr); i += 2 {
+				req.Header.Set(tc.hdr[i], tc.hdr[i+1])
+			}
+			c := *x.c
+			c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+			resp, err := c.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			h := resp.Header
+			if resp.StatusCode != tc.code {
+				t.Fatalf("code %d, want %d", resp.StatusCode, tc.code)
+			}
+			for k, want := range map[string]string{
+				"X-Content-Type-Options":       "nosniff",
+				"X-Frame-Options":              "DENY",
+				"Referrer-Policy":              "no-referrer",
+				"Cross-Origin-Opener-Policy":   "same-origin",
+				"Cross-Origin-Resource-Policy": "same-origin",
+			} {
+				if got := h.Get(k); got != want {
+					t.Errorf("%s = %q, want %q", k, got, want)
+				}
+			}
+			pp := h.Get("Permissions-Policy")
+			for _, f := range []string{"camera=()", "microphone=()", "geolocation=()", "payment=()", "usb=()"} {
+				if !strings.Contains(pp, f) {
+					t.Errorf("Permissions-Policy %q lacks %s", pp, f)
+				}
+			}
+			csp := h.Get("Content-Security-Policy")
+			if !strings.Contains(csp, "frame-ancestors 'none'") || !strings.Contains(csp, "script-src 'self';") {
+				t.Errorf("CSP %q", csp)
+			}
+			if got := strings.Contains(csp, "unsafe-inline"); got != tc.swagger {
+				t.Errorf("unsafe-inline in CSP = %v (%q)", got, csp)
+			}
+			if strings.Contains(csp, "script-src 'self' 'unsafe-inline'") || strings.Contains(csp, "unsafe-eval") {
+				t.Errorf("unsafe script policy %q", csp)
+			}
+			if got := h.Get("Cache-Control") == "no-store"; tc.api && !tc.swagger && !got {
+				t.Errorf("Cache-Control = %q", h.Get("Cache-Control"))
+			}
+			if got := h.Get("Strict-Transport-Security") != ""; got != tc.hsts {
+				t.Errorf("HSTS = %v", got)
+			}
+		})
+	}
+}
+
+// TestBodyLimits (PLAN 7.4): a 2 MiB body is 413 before anything reads it (also on the never
+// throttled kill route), a JSON body over 64 KiB is 413, a normal one passes.
+func TestBodyLimits(t *testing.T) {
+	x := newAgentTC(t)
+	big := `{"reason":"` + strings.Repeat("x", 2<<20) + `"}`
+	for _, path := range []string{"/api/v1/agent/kill", "/api/v1/users", "/api/v1/auth/login", "/"} {
+		if code, m, _ := x.do("POST", path, big, x.csrfHdr()...); code != 413 || m["title"] != "Request too large" {
+			t.Fatalf("%s: 2 MiB → %d %v", path, code, m)
+		}
+	}
+	// a 2 MiB body sent without a length (chunked) is cut off at 1 MiB, not read on
+	req, _ := http.NewRequestWithContext(context.Background(), "POST", x.srv.URL+"/api/v1/agent/kill", io.MultiReader(strings.NewReader(big)))
+	req.ContentLength = -1
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", x.csrf)
+	resp, err := x.c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 413 {
+		t.Fatalf("chunked 2 MiB → %d", resp.StatusCode)
+	}
+	mid := `{"reason":"` + strings.Repeat("x", 100<<10) + `"}`
+	if code, m, _ := x.do("POST", "/api/v1/agent/kill", mid, x.csrfHdr()...); code != 413 {
+		t.Fatalf("100 KiB JSON → %d %v", code, m)
+	}
+	if code, m, _ := x.do("POST", "/api/v1/agent/kill", `{"reason":"fine"}`, x.csrfHdr()...); code != 200 {
+		t.Fatalf("normal kill → %d %v", code, m)
+	}
+}
+
+// TestHostPrefixedSessionCookie (OD32, PLAN 7.4): the session cookie is __Host- prefixed
+// (Secure, Path=/, no Domain); a cookie of the old name no longer signs in and is cleared.
+// With CookieSecure off (plain-HTTP LAN test) the old name is used: browsers refuse a
+// __Host- cookie without Secure.
+func TestHostPrefixedSessionCookie(t *testing.T) {
+	x := newTC(t, nil)
+	if _, err := x.svc.EnsureDefaultAdmin(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	code, _, h := x.do("POST", "/api/v1/auth/login", `{"username":"admin","password":"admin"}`)
+	ck := h.Get("Set-Cookie")
+	if code != 200 || !strings.HasPrefix(ck, "__Host-cactustrade_session=") || !strings.Contains(ck, "Path=/") ||
+		!strings.Contains(ck, "Secure") || strings.Contains(strings.ToLower(ck), "domain=") {
+		t.Fatalf("login %d cookie %q", code, ck)
+	}
+	token := strings.TrimPrefix(strings.SplitN(ck, ";", 2)[0], "__Host-cactustrade_session=")
+	anon := &http.Client{Transport: x.c.Transport}
+	send := func(name string) (int, string) {
+		req, _ := http.NewRequestWithContext(context.Background(), "GET", x.srv.URL+"/api/v1/auth/me", nil)
+		req.AddCookie(&http.Cookie{Name: name, Value: token})
+		resp, err := anon.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode, resp.Header.Get("Set-Cookie")
+	}
+	if code, _ := send(SessionCookie); code != 200 {
+		t.Fatalf("__Host- cookie → %d", code)
+	}
+	code, set := send(InsecureSessionCookie)
+	if code != 401 || !strings.HasPrefix(set, InsecureSessionCookie+"=;") || !strings.Contains(set, "Max-Age=0") {
+		t.Fatalf("old cookie → %d, Set-Cookie %q", code, set)
+	}
+
+	s := &Server{cfg: Config{CookieSecure: false}}
+	if s.cookieName() != InsecureSessionCookie {
+		t.Fatal("plain-HTTP mode needs the unprefixed name")
+	}
+}

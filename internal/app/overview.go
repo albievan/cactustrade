@@ -222,14 +222,14 @@ func (s *Service) RecordEquity(ctx context.Context) int {
 		case errors.Is(err, domain.ErrCredentialsMissing):
 			continue // no keys yet: nothing to record
 		case err != nil:
-			s.d.Log.WarnContext(ctx, "equity snapshot failed", "account", a.ID, "platform", string(a.OnPlatform()), "err", err)
+			s.d.Log.WarnContext(ports.WithAccount(ctx, a), "equity snapshot failed", "account", a.ID, "platform", string(a.OnPlatform()), "err", err)
 			continue
 		}
 		switch err := s.d.Store.EquitySnapshots().Add(ctx, h.Snapshot(a.ID, now)); {
 		case err == nil:
 			n++
 		case !errors.Is(err, domain.ErrConflict): // a conflict: this minute is already recorded
-			s.d.Log.WarnContext(ctx, "storing an equity snapshot failed", "account", a.ID, "err", err)
+			s.d.Log.WarnContext(ports.WithAccount(ctx, a), "storing an equity snapshot failed", "account", a.ID, "err", err)
 		}
 	}
 	before := now.Add(-domain.EquityRetentionDays * 24 * time.Hour)

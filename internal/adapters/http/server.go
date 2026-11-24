@@ -21,8 +21,23 @@ import (
 	"github.com/albievan/cactustrade/internal/app"
 )
 
-// SessionCookie is the name of the session cookie.
-const SessionCookie = "cactustrade_session"
+// SessionCookie is the session cookie's name (OD32, PLAN 7.4): the __Host- prefix makes the
+// browser accept it only with Secure, Path=/ and no Domain, so no sibling host or plain-HTTP
+// page can set or shadow it. Changing the name signed everyone out once.
+const SessionCookie = "__Host-cactustrade_session"
+
+// InsecureSessionCookie is the session cookie's name when CookieSecure is off (a plain-HTTP
+// LAN test): browsers refuse a __Host- cookie without Secure. It was also the name of every
+// session cookie before PLAN 7.4; such a cookie is cleared when seen with CookieSecure on.
+const InsecureSessionCookie = "cactustrade_session"
+
+// cookieName is the session cookie's name under the current settings.
+func (s *Server) cookieName() string {
+	if s.cfg.CookieSecure {
+		return SessionCookie
+	}
+	return InsecureSessionCookie
+}
 
 // Config holds the HTTP adapter's settings.
 type Config struct {
@@ -39,6 +54,8 @@ type Config struct {
 	OpenAPI []byte
 	// Live tunes the live stream (zero fields: PLAN 6.9's values).
 	Live LiveLimits
+	// RateLimits are the API rate limits (zero fields: OD33's values, PLAN 7.3).
+	RateLimits RateLimits
 }
 
 // Server implements ServerInterface on the use cases. It is the HTTP handler (ServeHTTP)
@@ -48,6 +65,7 @@ type Server struct {
 	log     *slog.Logger
 	cfg     Config
 	limiter *loginLimiter
+	rates   *rateLimiter
 	metrics *metrics
 	streams *liveStreams
 	handler http.Handler
@@ -66,22 +84,22 @@ func New(svc *app.Service, log *slog.Logger, cfg Config, reg *prometheus.Registr
 		reg = prometheus.NewRegistry()
 	}
 	cfg.Live = cfg.Live.withDefaults()
-	s := &Server{svc: svc, log: log, cfg: cfg, limiter: newLoginLimiter(), metrics: newMetrics(reg)}
+	s := &Server{svc: svc, log: log, cfg: cfg, limiter: newLoginLimiter(), rates: newRateLimiter(cfg.RateLimits), metrics: newMetrics(reg)}
 	s.streams = newLiveStreams(cfg.Live, s.metrics.liveStreams)
 	mux := http.NewServeMux()
 	HandlerWithOptions(s, StdHTTPServerOptions{
 		BaseRouter:       mux,
-		Middlewares:      []MiddlewareFunc{recordPattern},
+		Middlewares:      []MiddlewareFunc{s.rateLimit, recordPattern}, // the last is outermost
 		ErrorHandlerFunc: s.paramError,
 	})
 	mux.Handle("GET /metrics", s.metricsHandler(reg))
-	mux.HandleFunc("GET /api/openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle("GET /api/openapi.yaml", s.rateLimit(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
 		_, _ = w.Write(cfg.OpenAPI)
-	})
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("/api/", s.rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusNotFound, "Not found", "no such endpoint", "")
-	})
+	})))
 	web := s.webHandler()
 	mux.Handle("GET /api/docs", web) // Swagger UI page of the web bundle
 	mux.Handle("/", web)
@@ -92,11 +110,13 @@ func New(svc *app.Service, log *slog.Logger, cfg Config, reg *prometheus.Registr
 // ServeHTTP serves a request through the middleware chain.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
-// chain wraps the mux: recover → state → log/metrics → security headers → auth → CSRF.
+// chain wraps the mux: recover → state → log/metrics → security headers → body limit → auth
+// → CSRF. The rate limits (PLAN 7.3) run per route inside the mux, where the route is known.
 func (s *Server) chain(h http.Handler) http.Handler {
 	h = s.csrf(h)
 	h = s.authenticate(h)
-	h = securityHeaders(h)
+	h = limitBody(h)
+	h = SecurityHeaders(h)
 	h = s.observe(h)
 	h = withState(h)
 	return s.recoverer(h)
@@ -195,7 +215,7 @@ func (s *Server) trusted(a netip.Addr) bool {
 }
 
 // PurgeLoop removes expired sessions, old events, mail and decisions, and stale sign-in
-// limiter keys (PLAN 7.1.5) until ctx ends.
+// limiter (PLAN 7.1.5) and API rate-limit (PLAN 7.3) keys until ctx ends.
 func (s *Server) PurgeLoop(ctx context.Context, every time.Duration) {
 	svc, log := s.svc, s.log
 	t := time.NewTicker(every)
@@ -207,6 +227,9 @@ func (s *Server) PurgeLoop(ctx context.Context, every time.Duration) {
 		case <-t.C:
 			if n := s.limiter.Sweep(); n > 0 {
 				log.DebugContext(ctx, "swept the sign-in limiter", "keys", n)
+			}
+			if n := s.rates.Sweep(); n > 0 {
+				log.DebugContext(ctx, "swept the API rate limiter", "keys", n)
 			}
 			if n, err := svc.PurgeExpiredSessions(ctx); err != nil {
 				log.WarnContext(ctx, "purging sessions failed", "err", err)

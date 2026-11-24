@@ -209,7 +209,7 @@ account currency is shown as *unknown*, never converted or guessed.
 | `CACTUSTRADE_SECRETS_DIR` | — | Folder holding `db_password`, `master_key`, `metrics_token` |
 | `CACTUSTRADE_DB_HOST`, `_NAME`, `_USER`, `_PASSWORD[_FILE]` | `localhost`, `cactustrade`, `cactustrade` | MariaDB connection |
 | `CACTUSTRADE_METRICS_TOKEN[_FILE]` | — | Bearer token that `/metrics` requires, when set |
-| `CACTUSTRADE_COOKIE_SECURE` | `true` | Secure session cookie (keep it on) |
+| `CACTUSTRADE_COOKIE_SECURE` | `true` | Secure session cookie `__Host-cactustrade_session` (keep it on; `false` names it `cactustrade_session` for a plain-HTTP test) |
 | `CACTUSTRADE_TRUSTED_PROXIES` | — | CIDRs allowed to set `X-Forwarded-For` |
 | `CACTUSTRADE_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (JSON logs) |
 | `ETORO_DEMO_PUB` / `ETORO_DEMO_PK` (`_FILE`) | — | eToro demo key pair |
@@ -235,6 +235,17 @@ Swagger UI is at `/api/docs` and the contract at `/api/openapi.yaml`. Programs u
 (`Authorization: Bearer ctk_…`) created on the *API keys* page. A key's role never exceeds its
 owner's. Roles: `viewer` (read-only), `operator` (also start/stop/kill switch), `admin`.
 Health and monitoring endpoints: `/healthz`, `/readyz`, `/metrics` (Prometheus).
+
+Every `/api/` route is rate-limited per user or API key and per address: reads 600/min,
+other methods 60/min, CSV exports 10/min, live-stream connects 30/min; over a limit the
+answer is 429 with `Retry-After`. **Pause, stop and the kill switch are never rate-limited.**
+Request bodies are capped at 1 MiB (JSON bodies at 64 KiB; more is 413). Every log line about
+an account names its `account_id` and `mode` (`demo` / `real`).
+
+> **The first start after upgrading to the `__Host-` cookie (PLAN 7.4) signs everyone out
+> once.** The session cookie is now called `__Host-cactustrade_session` (the browser then
+> only accepts it over HTTPS, for the whole site, from this host only). The old
+> `cactustrade_session` cookie is no longer accepted and is cleared; sign in again.
 
 ## Development
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 )
 
 // reqState is shared by the middlewares of one request through a pointer in the context,
@@ -29,9 +30,12 @@ type reqState struct {
 
 type stateKey struct{}
 
+// withState gives the request its reqState and a place for the app to note the account the
+// request is about (ports.NoteAccount): the request's log lines name it and its mode (PLAN 7.2).
 func withState(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), stateKey{}, &reqState{})))
+		ctx := ports.WithAccountNote(context.WithValue(r.Context(), stateKey{}, &reqState{}))
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -87,6 +91,7 @@ type metrics struct {
 	requests    *prometheus.CounterVec
 	duration    *prometheus.HistogramVec
 	liveStreams prometheus.Gauge
+	rateLimited *prometheus.CounterVec
 }
 
 func newMetrics(reg *prometheus.Registry) *metrics {
@@ -101,8 +106,11 @@ func newMetrics(reg *prometheus.Registry) *metrics {
 		liveStreams: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "cactustrade_live_streams", Help: "Open live streams (GET /api/v1/live).",
 		}),
+		rateLimited: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cactustrade_http_rate_limited_total", Help: "API requests refused by the rate limits (PLAN 7.3), by class.",
+		}, []string{"class"}),
 	}
-	reg.MustRegister(m.requests, m.duration, m.liveStreams)
+	reg.MustRegister(m.requests, m.duration, m.liveStreams, m.rateLimited)
 	return m
 }
 
@@ -137,17 +145,29 @@ func (s *Server) observe(next http.Handler) http.Handler {
 	})
 }
 
+// appCSP is the Content-Security-Policy of every response but the Swagger UI page: no
+// 'unsafe-inline' anywhere (PLAN 7.4).
+const appCSP = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+
+// swaggerCSP is the Swagger UI page's policy: Swagger UI sets inline styles, so style-src
+// allows 'unsafe-inline' there (never script-src).
 const swaggerCSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
-func securityHeaders(next http.Handler) http.Handler {
+// permissionsPolicy turns off the browser features cactusTrade never uses.
+const permissionsPolicy = "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), serial=(), usb=(), browsing-topics=()"
+
+// SecurityHeaders sets the security headers on every response (the app, the API, the
+// Swagger UI, the live stream, CSV exports, /metrics and cmd's HTTP→HTTPS redirect).
+func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
-		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		h.Set("Permissions-Policy", permissionsPolicy)
+		h.Set("Content-Security-Policy", appCSP)
 		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
 		}
@@ -178,7 +198,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				}
 			}
 			st.principal = p
-		} else if c, err := r.Cookie(SessionCookie); err == nil && c.Value != "" {
+		} else if c, err := r.Cookie(s.cookieName()); err == nil && c.Value != "" {
 			p, csrf, err := s.svc.SessionPrincipal(r.Context(), c.Value, st.ip)
 			switch {
 			case err == nil:
@@ -188,6 +208,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			default:
 				s.fail(w, r, err)
 				return
+			}
+		}
+		if s.cfg.CookieSecure {
+			if c, err := r.Cookie(InsecureSessionCookie); err == nil && c.Value != "" {
+				// A session cookie from before PLAN 7.4 (no __Host- prefix): no longer
+				// accepted; the browser is told to drop it.
+				clearCookieNamed(w, InsecureSessionCookie, true)
 			}
 		}
 		next.ServeHTTP(w, r)

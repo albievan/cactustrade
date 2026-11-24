@@ -372,10 +372,10 @@ func (s *Service) ScanAll(ctx context.Context) {
 		}
 		res, err := s.scan(ctx, domain.AccountView{Account: a, Access: domain.AccessOwner})
 		if err != nil {
-			s.d.Log.WarnContext(ctx, "scanner run failed", "account", a.ID, "err", err)
+			s.d.Log.WarnContext(ports.WithAccount(ctx, a), "scanner run failed", "account", a.ID, "err", err)
 			continue
 		}
-		s.d.Log.InfoContext(ctx, "scanner run", "account", a.ID, "reviewed", res.Reviewed, "added", len(res.Added))
+		s.d.Log.InfoContext(ports.WithAccount(ctx, a), "scanner run", "account", a.ID, "reviewed", res.Reviewed, "added", len(res.Added))
 	}
 	if n, err := s.d.Store.Reviews().DeleteBefore(ctx, s.d.Clock.Now().Add(-reviewRetention)); err == nil && n > 0 {
 		s.d.Log.InfoContext(ctx, "purged old reviews", "count", n)

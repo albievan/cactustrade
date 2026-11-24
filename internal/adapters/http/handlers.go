@@ -15,16 +15,20 @@ import (
 // made the cookie expire at once whenever they disagreed (an injected clock in tests).
 func (s *Server) setCookie(w http.ResponseWriter, token string, sess domain.Session) {
 	http.SetCookie(w, &http.Cookie{
-		Name: SessionCookie, Value: token, Path: "/", Expires: sess.ExpiresAt,
+		Name: s.cookieName(), Value: token, Path: "/", Expires: sess.ExpiresAt,
 		MaxAge: max(1, int(sess.ExpiresAt.Sub(sess.CreatedAt)/time.Second)), HttpOnly: true, Secure: s.cfg.CookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
 }
 
 func (s *Server) clearCookie(w http.ResponseWriter) {
+	clearCookieNamed(w, s.cookieName(), s.cfg.CookieSecure)
+}
+
+func clearCookieNamed(w http.ResponseWriter, name string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
-		Name: SessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-		Secure: s.cfg.CookieSecure, SameSite: http.SameSiteStrictMode,
+		Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
+		Secure: secure, SameSite: http.SameSiteStrictMode,
 	})
 }
 
@@ -119,7 +123,7 @@ func perms(r domain.Role) []string {
 
 // Logout ends the session (CSRF-checked when signed in) and clears the cookie.
 func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(SessionCookie); err == nil && c.Value != "" {
+	if c, err := r.Cookie(s.cookieName()); err == nil && c.Value != "" {
 		if err := s.svc.Logout(r.Context(), c.Value); err != nil {
 			s.fail(w, r, err)
 			return

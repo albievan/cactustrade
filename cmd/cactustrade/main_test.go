@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -11,7 +12,19 @@ import (
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 )
+
+// TestLoggerNamesAccountAndMode: the server's logger adds account_id and mode to every line
+// logged with an account's context (PLAN 7.2).
+func TestLoggerNamesAccountAndMode(t *testing.T) {
+	var buf bytes.Buffer
+	log := newLoggerTo(&buf, slog.LevelInfo)
+	log.InfoContext(ports.WithAccount(context.Background(), domain.Account{ID: "acc-1", Mode: domain.ModeReal}), "x")
+	if got := buf.String(); !strings.Contains(got, `"account_id":"acc-1"`) || !strings.Contains(got, `"mode":"real"`) {
+		t.Fatalf("line = %s", got)
+	}
+}
 
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 

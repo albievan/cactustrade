@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -98,6 +99,22 @@ func TestRedirectWithoutHost(t *testing.T) {
 		redirectToHTTPS(w, r)
 		if w.code != want {
 			t.Errorf("Host %q: code = %d, want %d", host, w.code, want)
+		}
+	}
+}
+
+// TestRedirectHasSecurityHeaders (PLAN 7.4): the 308 carries the security headers.
+func TestRedirectHasSecurityHeaders(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "http://cactus.local:8443/x", nil)
+	w := httptest.NewRecorder()
+	redirectHandler().ServeHTTP(w, r)
+	h := w.Header()
+	if w.Code != http.StatusPermanentRedirect || h.Get("Location") != "https://cactus.local:8443/x" {
+		t.Fatalf("redirect %d %v", w.Code, h)
+	}
+	for _, k := range []string{"X-Content-Type-Options", "X-Frame-Options", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy", "Permissions-Policy", "Content-Security-Policy", "Referrer-Policy"} {
+		if h.Get(k) == "" {
+			t.Errorf("no %s", k)
 		}
 	}
 }

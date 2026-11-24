@@ -7,9 +7,17 @@ info:
     account (demo by default). Contract-first: handlers are generated from this file.
 
     **Authentication.** The web UI signs in with `POST /api/v1/auth/login`, which sets the
-    `cactustrade_session` cookie (HttpOnly, Secure, SameSite=Strict); every state-changing
-    request with that cookie must also send the session's CSRF token in `X-CSRF-Token`.
+    `__Host-cactustrade_session` cookie (HttpOnly, Secure, SameSite=Strict, Path=/; named
+    `cactustrade_session` only when Secure cookies are turned off for a plain-HTTP test);
+    every state-changing request with that cookie must also send the session's CSRF token
+    in `X-CSRF-Token`.
     Programs use an API key: `Authorization: Bearer ctk_<id>_<secret>` (no CSRF needed).
+
+    **Limits.** Every `/api/` route is rate-limited per user or API key and per address:
+    reads 600/min, other methods 60/min, CSV exports 10/min, live-stream connects 30/min.
+    Over a limit the answer is 429 (problem+json) with `Retry-After`. Pause, stop and the
+    kill switch are never rate-limited. A request body over 1 MiB (a JSON body over 64 KiB)
+    is refused with 413.
 
     **Roles.** `viewer` reads; `operator` also starts, stops and pulls the kill switch;
     `admin` manages users, credentials, limits and the trading mode.
@@ -1504,7 +1512,7 @@ components:
     sessionCookie:
       type: apiKey
       in: cookie
-      name: cactustrade_session
+      name: __Host-cactustrade_session
     bearerApiKey:
       type: http
       scheme: bearer

@@ -40,6 +40,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/eventbus"
 	httpapi "github.com/albievan/cactustrade/internal/adapters/http"
 	"github.com/albievan/cactustrade/internal/adapters/llm"
+	"github.com/albievan/cactustrade/internal/adapters/logctx"
 	"github.com/albievan/cactustrade/internal/adapters/mail"
 	"github.com/albievan/cactustrade/internal/adapters/saxo"
 	"github.com/albievan/cactustrade/internal/adapters/secretstore"
@@ -97,8 +98,14 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest)", cmd)
 }
 
+// newLogger writes JSON lines to stdout; every line logged with a context names the account
+// it is for and its mode (PLAN 7.2).
 func newLogger(level slog.Level) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	return newLoggerTo(os.Stdout, level)
+}
+
+func newLoggerTo(w io.Writer, level slog.Level) *slog.Logger {
+	return slog.New(logctx.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})))
 }
 
 func openStore(ctx context.Context, cfg config) (*sqlstore.Store, error) {
@@ -311,7 +318,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		// One port, both schemes: plain HTTP on the HTTPS port is redirected to HTTPS.
 		d := newDemux(ln, 10*time.Second)
 		redirect = &http.Server{
-			Handler: http.HandlerFunc(redirectToHTTPS), ReadHeaderTimeout: 10 * time.Second,
+			Handler: redirectHandler(), ReadHeaderTimeout: 10 * time.Second,
 			MaxHeaderBytes: 16 << 10, ErrorLog: srv.ErrorLog,
 		}
 		go func() { errc <- srv.ServeTLS(d.tls, "", "") }()

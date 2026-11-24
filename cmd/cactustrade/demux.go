@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	httpapi "github.com/albievan/cactustrade/internal/adapters/http"
 )
 
 // tlsHandshake is the first byte of every TLS connection (record type "handshake").
@@ -107,6 +109,12 @@ func (c *peekedConn) Read(p []byte) (int, error) { return c.r.Read(p) }
 
 // hostRE is a plain host[:port]: a DNS name, IPv4 or bracketed IPv6 address, nothing else.
 var hostRE = regexp.MustCompile(`^([A-Za-z0-9.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(:[0-9]{1,5})?$`)
+
+// redirectHandler is the plain-HTTP server's handler: the redirect with the same security
+// headers as every other response (PLAN 7.4).
+func redirectHandler() http.Handler {
+	return httpapi.SecurityHeaders(http.HandlerFunc(redirectToHTTPS))
+}
 
 // redirectToHTTPS sends plain-HTTP requests to the same host, port and path over HTTPS. The
 // target is the host the client itself asked for (validated), so it cannot be pointed at

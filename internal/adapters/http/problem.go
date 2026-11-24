@@ -11,8 +11,28 @@ import (
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-// maxBody bounds a JSON request body.
+// maxBody bounds a JSON request body (stricter than maxRequestBody: no request of the API
+// needs more).
 const maxBody = 64 << 10
+
+// maxRequestBody bounds every request body (PLAN 7.4).
+const maxRequestBody = 1 << 20
+
+// limitBody refuses a request whose declared body is over maxRequestBody (413) and caps the
+// body of every other one, so no handler can read more.
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxRequestBody {
+			w.Header().Set("Connection", "close")
+			writeProblem(w, r, http.StatusRequestEntityTooLarge, "Request too large", "the body may hold at most 1 MiB", "")
+			return
+		}
+		if r.Body != nil && r.Body != http.NoBody {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -120,6 +140,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			writeProblem(w, r, http.StatusRequestEntityTooLarge, "Request too large", "the JSON body may hold at most 64 KiB", "")
+			return false
+		}
 		writeProblem(w, r, http.StatusBadRequest, "Invalid JSON", err.Error(), "")
 		return false
 	}

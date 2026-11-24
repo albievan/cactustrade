@@ -78,6 +78,7 @@ func (s *Service) anyAccount(ctx context.Context, p Principal, id string, need d
 	if !vs[i].Access.AtLeast(need) {
 		return domain.AccountView{}, fmt.Errorf("you need %s access to %s: %w", need, vs[i].Name, domain.ErrForbidden)
 	}
+	ports.NoteAccount(ctx, vs[i].Account) // the request log names it (PLAN 7.2)
 	return vs[i], nil
 }
 
