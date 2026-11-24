@@ -31,7 +31,7 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | Port | Phase 1 implementation |
 |---|---|
 | `Users`, `Sessions`, `APIKeys`, `Secrets`, `Audit`, `Settings` (the repository) | `sqlstore` |
-| `SecretStore` | `secretstore.DB` + `secretstore.Env` overlay |
+| `SecretStore` | `secretstore.DB` (default) or `vault.Store` (`CACTUSTRADE_SECRETS=vault`, KV v2, standard library, PLAN 7.8), each under the `secretstore.Env` overlay |
 | `Cipher` | `secretstore.Cipher` (AES-256-GCM; the credential name is the AAD) |
 | `PasswordHasher` | `argon2` (argon2id, 64 MiB, t=3) |
 | `Clock`, `Random` | `system` |

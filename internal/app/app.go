@@ -74,7 +74,7 @@ type Deps struct {
 	// (CACTUSTRADE_SMTP_* and the smtp_password secret), used while none is switched on in
 	// the app; ok=false when there is none.
 	Mailer       ports.Mailer
-	MailFallback func() (server domain.SMTPSettings, password string, ok bool)
+	MailFallback func() (fallback FallbackMail, ok bool)
 	// Bus carries live events to the dashboard stream (PLAN 6.6b): every stored event, every
 	// stored order transition, agent state writes and the supervisor's portfolio reads. It is
 	// a view only: nothing decides on it, and Publish must never block (a full subscriber

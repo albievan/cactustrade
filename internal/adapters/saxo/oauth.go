@@ -43,11 +43,14 @@ func hash(s string) string {
 }
 
 // AuthorizeURL is the SIM or LIVE sign-in page for the account in ctx, with its app key as
-// client_id. Nothing is sent to Saxo.
-func (c *Client) AuthorizeURL(ctx context.Context, redirectURI, state string) (string, error) {
+// client_id and the PKCE S256 challenge (PLAN 7.1.13). Nothing is sent to Saxo.
+func (c *Client) AuthorizeURL(ctx context.Context, redirectURI, state, codeChallenge string) (string, error) {
 	acct, err := account(ctx)
 	if err != nil {
 		return "", err
+	}
+	if codeChallenge == "" {
+		return "", fmt.Errorf("saxo authorize: no PKCE code challenge: %w", domain.ErrInvalid)
 	}
 	appKey, err := c.secret(ctx, acct, domain.SaxoAppKey)
 	if err != nil {
@@ -60,21 +63,28 @@ func (c *Client) AuthorizeURL(ctx context.Context, redirectURI, state string) (s
 	auth.Path = strings.TrimRight(auth.Path, "/") + AuthorizePath
 	auth.RawQuery = url.Values{
 		"response_type": {"code"}, "client_id": {appKey}, "state": {state}, "redirect_uri": {redirectURI},
+		"code_challenge": {codeChallenge}, "code_challenge_method": {"S256"},
 	}.Encode()
 	return auth.String(), nil
 }
 
-// Exchange trades an authorization code for tokens (grant_type=authorization_code) and
-// stores the refresh token, encrypted, before the access token is used.
-func (c *Client) Exchange(ctx context.Context, code, redirectURI string) error {
+// Exchange trades an authorization code for tokens (grant_type=authorization_code, with the
+// PKCE code_verifier) and stores the refresh token, encrypted, before the access token is
+// used.
+func (c *Client) Exchange(ctx context.Context, code, redirectURI, codeVerifier string) error {
 	acct, err := account(ctx)
 	if err != nil {
 		return err
 	}
+	if !domain.ValidPKCEVerifier(codeVerifier) {
+		return fmt.Errorf("saxo token: no valid PKCE code verifier: %w", domain.ErrInvalid)
+	}
 	s := c.session(acct.ID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tr, err := c.tokenRequest(ctx, acct, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirectURI}})
+	tr, err := c.tokenRequest(ctx, acct, url.Values{
+		"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirectURI}, "code_verifier": {codeVerifier},
+	})
 	if err != nil {
 		return err
 	}

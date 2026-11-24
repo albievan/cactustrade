@@ -100,8 +100,8 @@ func TestEmailSetup(t *testing.T) {
 		t.Fatal("test without a server")
 	}
 	// the deployment's fallback is used while the in-app server is off
-	e.svc.d.MailFallback = func() (domain.SMTPSettings, string, bool) {
-		return domain.SMTPSettings{Enabled: true, Host: "mailpit", Port: 1025, TLS: "none", From: "t <t@mailpit>"}, "", true
+	e.svc.d.MailFallback = func() (FallbackMail, bool) {
+		return FallbackMail{Server: domain.SMTPSettings{Enabled: true, Host: "mailpit", Port: 1025, TLS: "none", From: "t <t@mailpit>"}}, true
 	}
 	if st, _ := e.svc.EmailSetup(ctx, e.admin); st.Fallback != "mailpit:1025 (none)" {
 		t.Fatalf("fallback = %q", st.Fallback)
@@ -224,6 +224,68 @@ func TestNotificationsAndOutbox(t *testing.T) {
 	e.svc.d.Mailer = nil
 	if n, err := e.svc.DeliverMail(ctx); n != 0 || err != nil {
 		t.Fatal("delivery without a mailer")
+	}
+}
+
+// TestPasswordResetTestMailbox is PLAN 7.1.15 (F15): a test mailbox (Mailpit) as the only
+// mail server means "password reset unavailable", in the public status and in the request,
+// which says why; a real server in the app, or the deployment's opt-in, makes it available.
+func TestPasswordResetTestMailbox(t *testing.T) {
+	mailpit := domain.SMTPSettings{Enabled: true, Host: "mailpit", Port: 1025, TLS: "none", From: "t <t@mailpit>"}
+	tests := []struct {
+		name      string
+		inApp     bool // a real server switched on in the app
+		fallback  bool
+		test      bool // the fallback is a test mailbox (no opt-in)
+		available bool
+		why       string
+	}{
+		{name: "Mailpit only", fallback: true, test: true, why: "test mailbox"},
+		{name: "Mailpit with the deployment's opt-in", fallback: true, available: true},
+		{name: "a real fallback server", fallback: true, available: true},
+		{name: "Mailpit, but a real server in the app", inApp: true, fallback: true, test: true, available: true},
+		{name: "no server at all", why: "must set up a mail server"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			e, m := withMail(t)
+			e.svc.cfg.PublicURL = "https://trader.example"
+			if tt.fallback {
+				e.svc.d.MailFallback = func() (FallbackMail, bool) { return FallbackMail{Server: mailpit, TestMailbox: tt.test}, true }
+			}
+			if tt.inApp {
+				if _, err := e.svc.SetEmailSetup(ctx, e.admin, gmail(true), sp("pw")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := e.svc.PasswordResetAvailable(ctx); got != tt.available {
+				t.Fatalf("PasswordResetAvailable = %v, want %v", got, tt.available)
+			}
+			vera := e.user(t, "vera", domain.RoleOperator)
+			if _, err := e.svc.SetMyProfile(ctx, vera, Profile{Email: "vera@example.com"}, "vera password!"); err != nil {
+				t.Fatal(err)
+			}
+			err := e.svc.RequestPasswordReset(ctx, "vera", "1.2.3.4")
+			if tt.available {
+				if err != nil {
+					t.Fatalf("request: %v", err)
+				}
+				return
+			}
+			var me *domain.MissingError
+			if !errors.Is(err, domain.ErrUnavailable) || !errors.As(err, &me) || me.What != domain.MissingEmailServer || !strings.Contains(me.Msg, tt.why) {
+				t.Fatalf("request = %v", err)
+			}
+			if out, _ := e.svc.Outbox(ctx, e.admin, 0); len(out) != 0 || m.Count() != 0 {
+				t.Fatal("a reset link was queued for a test mailbox")
+			}
+			if tt.test {
+				if st, _ := e.svc.EmailSetup(ctx, e.admin); !strings.Contains(st.Fallback, "password reset by e-mail is off") {
+					t.Fatalf("the admin is not told: %q", st.Fallback)
+				}
+			}
+		})
 	}
 }
 

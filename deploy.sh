@@ -646,6 +646,21 @@ k8s_env() {
     export CACTUSTRADE_PUBLIC_URL="https://${K8S_HTTPS_HOST}"
   fi
   export CACTUSTRADE_PUBLIC_URL="${CACTUSTRADE_PUBLIC_URL:-}" CACTUSTRADE_SMTP_HOST="${CACTUSTRADE_SMTP_HOST:-}"
+  # Network (PLAN 7.1.16): who reaches the app (the ingress controller's pods) and who may set
+  # X-Forwarded-For (their addresses; empty = nobody). Validated: they go into the manifest.
+  local ns="${K8S_INGRESS_NAMESPACE:-kube-system}" sel="${K8S_INGRESS_POD_SELECTOR:-app.kubernetes.io/name=traefik}"
+  local proxies="${K8S_TRUSTED_PROXIES:-}"
+  [[ "$ns" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || die "K8S_INGRESS_NAMESPACE must be a namespace name (got '$ns')"
+  [[ "$sel" =~ ^([A-Za-z0-9./_-]+)=([A-Za-z0-9._-]+)$ ]] ||
+    die "K8S_INGRESS_POD_SELECTOR must be one label as key=value, such as app.kubernetes.io/name=traefik (got '$sel')"
+  export K8S_INGRESS_NAMESPACE="$ns" K8S_INGRESS_POD_LABEL="${BASH_REMATCH[1]}: ${BASH_REMATCH[2]}"
+  [[ "$proxies" =~ ^[0-9A-Fa-f:.,/\ ]*$ ]] || die "K8S_TRUSTED_PROXIES must be addresses or CIDRs separated by commas (got '$proxies')"
+  export K8S_TRUSTED_PROXIES="$proxies"
+  if [[ "${K8S_HTTPS:-false}" == true && -z "$proxies" ]]; then
+    warn "K8S_TRUSTED_PROXIES is empty: X-Forwarded-For is ignored, so every client counts as the ingress"
+    warn "controller's address for the sign-in and API rate limits. Set it to the ingress controller's pod"
+    warn "addresses (docs/RUNBOOK.md, \"Trusted proxies on k3s/k8s\")."
+  fi
 }
 
 # k8s_render prints the manifest --install would apply, touching no cluster.
@@ -822,7 +837,7 @@ k8s_install() {
 
 k8s_uninstall() {
   info "removing cactusTrade workloads (volumes and secrets are kept)"
-  kc -n "$K8S_NAMESPACE" delete deploy,svc,ingress,configmap -l app.kubernetes.io/part-of=cactustrade --ignore-not-found
+  kc -n "$K8S_NAMESPACE" delete deploy,svc,ingress,configmap,networkpolicy -l app.kubernetes.io/part-of=cactustrade --ignore-not-found
   ok "uninstalled; persistent volumes and secrets kept in namespace ${K8S_NAMESPACE}"
 }
 
@@ -832,7 +847,7 @@ k8s_delete_uninstall() {
   ok "cactusTrade and all of its data were removed"
 }
 
-k8s_status() { kc -n "$K8S_NAMESPACE" get deploy,pods,svc,pvc,ingress; }
+k8s_status() { kc -n "$K8S_NAMESPACE" get deploy,pods,svc,pvc,ingress,networkpolicy; }
 
 k8s_version() {
   kc -n "$K8S_NAMESPACE" exec deploy/cactustrade -- /cactustrade version </dev/null || die "cactusTrade is not running in namespace ${K8S_NAMESPACE}"

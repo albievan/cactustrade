@@ -46,6 +46,18 @@ App keys differ per environment; a Live app needs Saxo's approval.
 - **24-hour developer token** (SIM only): pasted instead of connecting; used as the bearer token;
   refused for a real (LIVE) account and once stored more than 24 hours ago.
 
+- **PKCE and the browser binding (PLAN 7.1.13, 2026-11-24).** The authorize address also carries
+  `code_challenge=<S256 challenge>&code_challenge_method=S256` (parameter names verified in
+  `openapi-samples-js/authentication/oauth2-pkce-flow/demo.js`), and the code exchange sends
+  `code_verifier` (RFC 7636 §4.5; the token-side name is the standard one, not seen in a Saxo
+  sample). **Unverified:** whether Saxo's *code-flow* apps (with a client secret) accept PKCE
+  as well; RFC 7636 lets a confidential client use it, and a server that does not know the
+  parameters ignores them. The owner's first "Connect to Saxo" settles it; if Saxo refuses,
+  the sign-in fails closed with "the platform refused the sign-in". Our own side: the state is
+  bound to the browser that started it by a nonce cookie (`__Host-cactustrade_oauth`, HttpOnly,
+  Secure, SameSite=Lax, 10 minutes; only its hash is kept with the state); a callback without
+  it, or from another browser, is refused and uses the state up.
+
 The redirect URI to register in the Saxo developer portal is
 `<CACTUSTRADE_PUBLIC_URL>/api/v1/oauth/saxo/callback` (shown on the account card).
 

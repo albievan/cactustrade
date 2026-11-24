@@ -17,7 +17,7 @@ CONTRACTS_TMP := .cache/contracts
 AUDIT_TMP     := .cache/audit
 
 .PHONY: help gen fmt fmt-check lint vet test cover test-int vuln audit contracts web-install web-check build run \
-        image check etoro-spec install uninstall status backup \
+        image check etoro-spec install uninstall status backup dist \
         lint-in-container test-in-container build-in-container check-in-container
 
 help: ## list targets
@@ -84,6 +84,29 @@ web-check: web-install ## web lint, typecheck, tests, build
 
 build: web-check ## bin/cactustrade with the web app embedded
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/cactustrade ./cmd/cactustrade
+
+# ---- releases (PLAN 7.9) -------------------------------------------------------------------
+# dist/ holds one release: a binary per OS and CPU (the web app embedded), SHA256SUMS and its
+# signature (OD31: `ssh-keygen -Y sign`, namespace cactustrade-release), checked at once the
+# way setup.sh checks it. The private key never enters the repository; RELEASE_SIGNERS holds
+# its public half. Not part of `make check`.
+DIST_DIR        := dist
+DIST_TARGETS    := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
+RELEASE_KEY     ?= $(HOME)/.config/cactustrade/release_ed25519
+RELEASE_SIGNERS ?= scripts/allowed_signers
+
+dist: web-check ## release binaries (linux/darwin/windows × amd64/arm64), SHA256SUMS and its signature in dist/
+	rm -rf $(DIST_DIR) && mkdir -p $(DIST_DIR)
+	for t in $(DIST_TARGETS); do \
+	  os=$${t%/*}; arch=$${t#*/}; ext=; [[ $$os == windows ]] && ext=.exe; \
+	  echo "$(DIST_DIR)/cactustrade-$$os-$$arch$$ext"; \
+	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" \
+	    -o "$(DIST_DIR)/cactustrade-$$os-$$arch$$ext" ./cmd/cactustrade; \
+	done
+	scripts/release-sums.sh $(DIST_DIR)
+	scripts/release-sign.sh "$(RELEASE_KEY)" $(DIST_DIR)
+	scripts/release-verify.sh $(DIST_DIR) "$(RELEASE_SIGNERS)"
+	cat $(DIST_DIR)/SHA256SUMS
 
 run: build ## standalone: SQLite in ./data, self-signed TLS, https://localhost:8443
 	./bin/cactustrade serve

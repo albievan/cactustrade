@@ -18,16 +18,27 @@ import (
 // _FROM and the password in CACTUSTRADE_SMTP_PASSWORD / _FILE), used while no server is
 // switched on in the app. It is re-read on "reload settings".
 type mailFallback struct {
-	mu       sync.RWMutex
-	server   domain.SMTPSettings
-	password string
-	ok       bool
+	mu sync.RWMutex
+	fb app.FallbackMail
+	ok bool
 }
 
-func (m *mailFallback) get() (domain.SMTPSettings, string, bool) {
+func (m *mailFallback) get() (app.FallbackMail, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.server, m.password, m.ok
+	return m.fb, m.ok
+}
+
+// testMailboxResetsEnv is the explicit opt-in to password-reset links through the bundled
+// test mailbox (PLAN 7.1.15): only for a single-machine trial where whoever reads Mailpit is
+// the user asking for the reset.
+const testMailboxResetsEnv = "CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS"
+
+// isTestMailbox reports whether host is the bundled Mailpit test mailbox (the compose service
+// "mailpit"): it accepts every mail and delivers none.
+func isTestMailbox(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	return h == "mailpit" || strings.HasPrefix(h, "mailpit.")
 }
 
 // load reads the variables; an invalid set is an error (and the old values stay).
@@ -35,9 +46,13 @@ func (m *mailFallback) load(getenv func(string) string) error {
 	host := strings.TrimSpace(getenv("CACTUSTRADE_SMTP_HOST"))
 	if host == "" {
 		m.mu.Lock()
-		m.server, m.password, m.ok = domain.SMTPSettings{}, "", false
+		m.fb, m.ok = app.FallbackMail{}, false
 		m.mu.Unlock()
 		return nil
+	}
+	resets, err := boolEnv(getenv, testMailboxResetsEnv, false)
+	if err != nil {
+		return err
 	}
 	port := 587
 	if v := getenv("CACTUSTRADE_SMTP_PORT"); v != "" {
@@ -66,7 +81,7 @@ func (m *mailFallback) load(getenv func(string) string) error {
 		return fmt.Errorf("CACTUSTRADE_SMTP_*: %w", err)
 	}
 	m.mu.Lock()
-	m.server, m.password, m.ok = st, pw, true
+	m.fb, m.ok = app.FallbackMail{Server: st, Password: pw, TestMailbox: isTestMailbox(host) && !resets}, true
 	m.mu.Unlock()
 	return nil
 }

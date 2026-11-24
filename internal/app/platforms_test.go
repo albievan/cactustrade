@@ -193,70 +193,98 @@ func TestConnectAccount(t *testing.T) {
 			t.Errorf("%s: %v", tt.name, err)
 		}
 	}
-	start := func() string {
+	// a started sign-in: the state and PKCE challenge in Saxo's address, the nonce for the
+	// browser's cookie
+	type flow struct{ state, challenge, nonce string }
+	param := func(u, name string) string {
+		i := strings.LastIndex(u, name+"=")
+		if i < 0 {
+			return ""
+		}
+		v := u[i+len(name)+1:]
+		if j := strings.IndexByte(v, '&'); j >= 0 {
+			v = v[:j]
+		}
+		return v
+	}
+	startAs := func(p Principal, id string) flow {
 		t.Helper()
-		cs, err := e.svc.ConnectAccount(ctx, e.admin, domain.PlatformSaxo, saxo.ID)
-		if err != nil || cs.RedirectURI != "https://trader.example:8453/api/v1/oauth/saxo/callback" || !strings.Contains(cs.AuthorizeURL, "state=") {
+		cs, err := e.svc.ConnectAccount(ctx, p, domain.PlatformSaxo, id)
+		if err != nil || cs.RedirectURI != "https://trader.example:8453/api/v1/oauth/saxo/callback" || !strings.Contains(cs.AuthorizeURL, "state=") || cs.BrowserNonce == "" {
 			t.Fatalf("connect = %+v %v", cs, err)
 		}
-		return cs.AuthorizeURL[strings.LastIndex(cs.AuthorizeURL, "state=")+len("state="):]
+		return flow{state: param(cs.AuthorizeURL, "state"), challenge: param(cs.AuthorizeURL, "code_challenge"), nonce: cs.BrowserNonce}
 	}
+	start := func() flow { t.Helper(); return startAs(e.admin, saxo.ID) }
+	ok := func(f flow) OAuthCallback { return OAuthCallback{Code: "c", State: f.state, BrowserNonce: f.nonce} }
 
-	state := start()
-	if strings.Contains(fmt.Sprint(e.svc.oauth.m), state) {
-		t.Fatal("the state is kept in clear")
+	f := start()
+	if s := fmt.Sprint(e.svc.oauth.m); strings.Contains(s, f.state) || strings.Contains(s, f.nonce) {
+		t.Fatal("the state or the nonce is kept in clear")
 	}
-	a, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, "the-code", state, "", "10.0.0.9")
+	if f.nonce == f.state || f.challenge == "" || strings.Contains(f.challenge, f.state) {
+		t.Fatalf("flow = %+v", f)
+	}
+	a, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, OAuthCallback{Code: "the-code", State: f.state, BrowserNonce: f.nonce, RemoteIP: "10.0.0.9"})
 	if err != nil || a.ID != saxo.ID || len(conn.Exchanged) != 1 || conn.Exchanged[0] != saxo.ID+":the-code:https://trader.example:8453/api/v1/oauth/saxo/callback" {
 		t.Fatalf("complete = %+v %v %v", a, err, conn.Exchanged)
 	}
-	if _, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, "the-code", state, "", ""); !errors.Is(err, domain.ErrInvalid) {
+	// PKCE: the exchange proves the sign-in with the verifier of the challenge Saxo saw
+	if v := conn.Verifiers[0]; !domain.ValidPKCEVerifier(v) || domain.PKCEChallenge(v) != f.challenge || v == f.state || v == f.nonce {
+		t.Fatalf("verifier %q for challenge %q", v, f.challenge)
+	}
+	if _, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, OAuthCallback{Code: "the-code", State: f.state, BrowserNonce: f.nonce}); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("a used state: %v", err)
 	}
 
 	cases := []struct {
-		name     string
-		mutate   func(state string) (pl domain.Platform, code, st, providerErr string)
-		before   func()
-		want     error
-		exchange bool
+		name   string
+		pl     domain.Platform
+		cb     func(f flow) OAuthCallback
+		before func()
+		want   error
 	}{
-		{"no state", func(string) (domain.Platform, string, string, string) { return domain.PlatformSaxo, "c", "", "" }, nil, domain.ErrInvalid, false},
-		{"unknown state", func(string) (domain.Platform, string, string, string) { return domain.PlatformSaxo, "c", "forged", "" }, nil, domain.ErrInvalid, false},
-		{"other platform", func(s string) (domain.Platform, string, string, string) { return domain.PlatformTiger, "c", s, "" }, nil, domain.ErrInvalid, false},
-		{"expired", func(s string) (domain.Platform, string, string, string) { return domain.PlatformSaxo, "c", s, "" }, func() { e.clock.Advance(OAuthStateTTL) }, domain.ErrInvalid, false},
-		{"provider refused", func(s string) (domain.Platform, string, string, string) {
-			return domain.PlatformSaxo, "", s, "access_denied\n<script>"
-		}, nil, ErrConnectRefused, false},
-		{"bad code", func(s string) (domain.Platform, string, string, string) { return domain.PlatformSaxo, "a b", s, "" }, nil, domain.ErrInvalid, false},
-		{"exchange fails", func(s string) (domain.Platform, string, string, string) { return domain.PlatformSaxo, "c", s, "" }, func() {
+		{"no state", domain.PlatformSaxo, func(f flow) OAuthCallback { c := ok(f); c.State = ""; return c }, nil, domain.ErrInvalid},
+		{"unknown state", domain.PlatformSaxo, func(f flow) OAuthCallback { c := ok(f); c.State = "forged"; return c }, nil, domain.ErrInvalid},
+		{"other platform", domain.PlatformTiger, ok, nil, domain.ErrInvalid},
+		{"expired", domain.PlatformSaxo, ok, func() { e.clock.Advance(OAuthStateTTL) }, domain.ErrInvalid},
+		// PLAN 7.1.13: the callback must come back to the browser that started the sign-in
+		{"no nonce cookie", domain.PlatformSaxo, func(f flow) OAuthCallback { c := ok(f); c.BrowserNonce = ""; return c }, nil, domain.ErrInvalid},
+		{"another browser's cookie", domain.PlatformSaxo, func(f flow) OAuthCallback { c := ok(f); c.BrowserNonce = f.state; return c }, nil, domain.ErrInvalid},
+		{"an oversized cookie", domain.PlatformSaxo, func(f flow) OAuthCallback { c := ok(f); c.BrowserNonce = strings.Repeat("n", 513); return c }, nil, domain.ErrInvalid},
+		{"provider refused", domain.PlatformSaxo, func(f flow) OAuthCallback {
+			c := ok(f)
+			c.Code, c.ProviderError = "", "access_denied\n<script>"
+			return c
+		}, nil, ErrConnectRefused},
+		{"a refusal without the cookie", domain.PlatformSaxo, func(f flow) OAuthCallback {
+			return OAuthCallback{State: f.state, ProviderError: "access_denied"}
+		}, nil, domain.ErrInvalid},
+		{"bad code", domain.PlatformSaxo, func(f flow) OAuthCallback { c := ok(f); c.Code = "a b"; return c }, nil, domain.ErrInvalid},
+		{"exchange fails", domain.PlatformSaxo, ok, func() {
 			conn.Err = fmt.Errorf("saxo token: HTTP 400: %w", domain.ErrUnavailable)
-		}, ErrConnectRefused, false},
-		{"user disabled", func(s string) (domain.Platform, string, string, string) { return domain.PlatformSaxo, "c", s, "" }, func() {
+		}, ErrConnectRefused},
+		{"user disabled", domain.PlatformSaxo, ok, func() {
 			u, _ := e.store.Users().Get(ctx, op.UserID)
 			u.Disabled = true
 			_ = e.store.Users().Update(ctx, u)
-		}, domain.ErrForbidden, false},
+		}, domain.ErrForbidden},
 	}
 	for _, tt := range cases {
 		conn.Err = nil
 		n := len(conn.Exchanged)
-		var st string
+		var f flow
 		if tt.name == "user disabled" { // olivia owns this one
 			own, _ := e.svc.CreateAccountOn(ctx, op, domain.PlatformSaxo, "Olivia Saxo", domain.ModeDemo)
-			cs, err := e.svc.ConnectAccount(ctx, op, domain.PlatformSaxo, own.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			st = cs.AuthorizeURL[strings.LastIndex(cs.AuthorizeURL, "state=")+len("state="):]
+			f = startAs(op, own.ID)
 		} else {
-			st = start()
+			f = start()
 		}
 		if tt.before != nil {
 			tt.before()
 		}
-		pl, code, s, pe := tt.mutate(st)
-		_, err := e.svc.CompleteConnect(ctx, pl, code, s, pe, "")
+		cb := tt.cb(f)
+		_, err := e.svc.CompleteConnect(ctx, tt.pl, cb)
 		if !errors.Is(err, tt.want) {
 			t.Errorf("%s: %v", tt.name, err)
 		}
@@ -266,23 +294,48 @@ func TestConnectAccount(t *testing.T) {
 		if len(conn.Exchanged) != n {
 			t.Errorf("%s: exchanged anyway", tt.name)
 		}
+		// whatever happened, the state is used up: the right cookie cannot finish it later
+		if cb.State == f.state {
+			if _, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, ok(f)); !errors.Is(err, domain.ErrInvalid) || len(conn.Exchanged) != n {
+				t.Errorf("%s: the state was not used up: %v", tt.name, err)
+			}
+		}
 	}
 	// the account was deleted while signing in
-	st := start()
+	f = start()
 	if err := e.svc.DeleteAccount(ctx, e.admin, saxo.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, "c", st, "", ""); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, ok(f)); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("deleted account: %v", err)
 	}
 	// without a connector the callback says so
 	other, _ := e.svc.CreateAccountOn(ctx, e.admin, domain.PlatformSaxo, "Saxo 2", domain.ModeDemo)
-	cs, _ := e.svc.ConnectAccount(ctx, e.admin, domain.PlatformSaxo, other.ID)
+	f = startAs(e.admin, other.ID)
 	e.svc.d.Connectors = nil
-	if _, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, "c", cs.AuthorizeURL[strings.LastIndex(cs.AuthorizeURL, "state=")+6:], "", ""); !errors.Is(err, domain.ErrUnavailable) {
+	if _, err := e.svc.CompleteConnect(ctx, domain.PlatformSaxo, ok(f)); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("no connector: %v", err)
 	}
 }
+
+// TestConnectNeedsValidVerifier: a random source that cannot give a PKCE verifier stops the
+// sign-in before anything is stored or sent (fail closed).
+func TestConnectNeedsValidVerifier(t *testing.T) {
+	ctx := context.Background()
+	e, _ := withBroker(t)
+	conn := &fakes.OAuthConnector{}
+	e.svc.d.Connectors = map[domain.Platform]ports.OAuthConnector{domain.PlatformSaxo: conn}
+	e.svc.cfg.PublicURL = "https://trader.example"
+	saxo, _ := e.svc.CreateAccountOn(ctx, e.admin, domain.PlatformSaxo, "Saxo SIM", domain.ModeDemo)
+	e.svc.d.Random = &shortRandom{}
+	if _, err := e.svc.ConnectAccount(ctx, e.admin, domain.PlatformSaxo, saxo.ID); !errors.Is(err, domain.ErrUnavailable) || len(e.svc.oauth.m) != 0 {
+		t.Fatalf("connect with short tokens = %v (%d pending)", err, len(e.svc.oauth.m))
+	}
+}
+
+type shortRandom struct{ fakes.Random }
+
+func (*shortRandom) Token() string { return "short" }
 
 func TestOAuthStatesBounded(t *testing.T) {
 	o := newOAuthStates()

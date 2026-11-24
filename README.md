@@ -83,8 +83,19 @@ The full list is in [`CLAUDE.md` §2](CLAUDE.md).
 ## Quick start: standalone (SQLite)
 
 ```sh
-make build                 # needs Go 1.26 + Node 20/pnpm, or: make build-in-container
+make build                 # needs Go 1.26 + Node 22/pnpm, or: make build-in-container
 ./bin/cactustrade          # https://localhost:8443 (self-signed certificate)
+```
+
+Or install a published release (Linux, macOS, Windows; amd64 or arm64) into the current
+folder. The setup scripts install only a release whose `SHA256SUMS` carries the release
+signature (`ssh-keygen -Y`, OpenSSH 8.1+) and lists the program's checksum; they keep the
+previous program as `cactustrade.old`. *No release key is published yet: until the owner
+publishes one (docs/RUNBOOK.md, "Releases"), both scripts refuse and you build from source.*
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/albievan/cactustrade/main/setup.sh | sh        # Linux, macOS
+irm https://raw.githubusercontent.com/albievan/cactustrade/main/setup.ps1 | iex             # Windows PowerShell
 ```
 
 On first start, the data folder (`./data`) gets:
@@ -125,6 +136,16 @@ then `ClusterIP`, reachable only through the ingress. `K8S_HTTPS=false` publishe
 `K8S_NODE_PORT` of every node instead (a trusted lab network only; `deploy.sh` warns).
 `./deploy.sh --render --k3s` prints the manifest `--install` would apply, without touching a
 cluster.
+
+Network and container hardening (PLAN 7.1.16): on k3s/k8s two NetworkPolicies let MariaDB
+take connections on 3306 only from the app pod, and the app only from the ingress controller's
+pods (`K8S_INGRESS_NAMESPACE`, `K8S_INGRESS_POD_SELECTOR`; k3s: Traefik in `kube-system`). They
+need a network plugin that enforces NetworkPolicy (k3s's built-in one does). Only the
+addresses in `K8S_TRUSTED_PROXIES` may set `X-Forwarded-For`; the default is nobody
+(`deploy.sh` warns) — set it to the ingress controller's pod addresses as described in
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md) ("Trusted proxies on k3s/k8s"). MariaDB runs as its own
+user (999) with no capabilities, no privilege gain and a read-only root file system in k8s and
+compose; compose's `volume-init` hands it `MARIADB_DATA_DIR`.
 
 ## Backups and restore
 
@@ -284,16 +305,50 @@ account currency is shown as *unknown*, never converted or guessed.
 | `CACTUSTRADE_BACKUP_RECIPIENT` / `_RECIPIENT_FILE` | — | age public key(s) backups are encrypted to (see *Backups and restore*); none = no app backup, and a plain gzip with a warning from `deploy.sh` |
 | `CACTUSTRADE_BACKUP_IDENTITY_FILE` | — | The age identity (private key) a restore decrypts with, instead of `--identity` |
 | `COMPOSE_PROFILES`, `MAILPIT_PORT` | `mailpit`, `8035` | Docker: the Mailpit test mailbox at `http://localhost:8035` (this machine only, no sign-in) |
+| `CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS` | `false` | While the only mail server is the Mailpit test mailbox (host `mailpit`), "Forgot password" is off: its mail never reaches the user. `true` sends reset links there anyway (a single-machine trial only) |
+| `CACTUSTRADE_SECRETS` | `db` | Where the eToro, LLM, mail and Saxo credentials are kept: `db` (encrypted in the database under the master key) or `vault` (see *Vault*) |
+| `CACTUSTRADE_VAULT_ADDR`, `_MOUNT`, `_PREFIX`, `_NAMESPACE` | —, `secret`, `cactustrade`, — | Vault's address (`https://`; `http://` only to this machine), the KV v2 mount, the folder under it, a Vault Enterprise namespace |
+| `CACTUSTRADE_VAULT_TOKEN_FILE` | `${SECRETS_DIR}/vault_token` when it exists | A file holding the Vault token (Vault Agent's sink, or your own) |
+| `CACTUSTRADE_VAULT_K8S_ROLE`, `_K8S_MOUNT`, `_K8S_JWT_FILE` | —, `kubernetes`, the pod's service-account token | Vault's Kubernetes auth instead of a token file |
+| `CACTUSTRADE_VAULT_CA_FILE` | — | PEM certificates trusted for Vault besides the system's |
+| `K8S_INGRESS_NAMESPACE`, `K8S_INGRESS_POD_SELECTOR` | `kube-system`, `app.kubernetes.io/name=traefik` | k3s/k8s: the ingress controller whose pods alone may reach the app (NetworkPolicy) |
+| `K8S_TRUSTED_PROXIES` | — (nobody) | k3s/k8s: the ingress controller's pod addresses / CIDRs, written into `CACTUSTRADE_TRUSTED_PROXIES` (RUNBOOK) |
+
+### Vault (optional)
+
+By default the credentials are encrypted in the database. With `CACTUSTRADE_SECRETS=vault`
+they live in HashiCorp Vault's KV version 2 engine instead, one secret per credential at
+`<mount>/<prefix>/<name>` holding `{"value": …}` (ADR-003). cactusTrade needs a policy with
+`create`, `read`, `update`, `delete` and `list` on `<mount>/data/<prefix>/*` and
+`<mount>/metadata/<prefix>/*`, nothing else. It renews its token before it expires and never
+follows a redirect (point the address at the active node or its load balancer). Move existing
+credentials once, with the server stopped or running:
+
+```sh
+CACTUSTRADE_VAULT_ADDR=https://vault.example:8200 CACTUSTRADE_VAULT_TOKEN_FILE=./vault_token \
+  ./cactustrade secrets migrate --to vault --dry-run     # lists the names; then without --dry-run
+```
+
+It copies every stored credential (reading each one back), prints only the names, and leaves
+the database copies in place; then set `CACTUSTRADE_SECRETS=vault` and restart. The master key
+is not needed while Vault holds the credentials. If Vault is down when cactusTrade starts, it
+starts without keys (nothing trades, the kill switch and web UI work); a running server keeps
+the keys it has already read. The k8s manifest has no service-account token in the pod; for
+Kubernetes auth add a projected token volume and point `CACTUSTRADE_VAULT_K8S_JWT_FILE` at it.
 
 ### E-mail
 
 Set the real mail server in the app under **Setup → E-mail** (Gmail by default: turn on
 2-Step Verification, create an *app password*, paste it; the page has a step-by-step guide
 for Gmail, Microsoft 365 and other providers, and a test button). Until then, Docker installs
-send through the bundled Mailpit test mailbox, so nothing leaves the machine. Each user sets
-an address and chooses what to be e-mailed about (trades, watchlist changes, alerts) under
-**Your account**; the same address receives password-reset links ("Forgot password?" on the
-sign-in page). Mail waits in an outbox and is retried; the outbox is on the E-mail page.
+send through the bundled Mailpit test mailbox, so nothing leaves the machine — and
+"Forgot password?" is off meanwhile, since a reset link in Mailpit never reaches the user
+(PLAN 7.1.15; the public status reports it unavailable, a reset request answers why, and the
+E-mail page tells the admin; `CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS=true`
+overrides it for a single-machine trial). Each user sets an address and chooses what to be
+e-mailed about (trades, watchlist changes, alerts) under **Your account**; the same address
+receives password-reset links ("Forgot password?" on the sign-in page). Mail waits in an outbox
+and is retried; the outbox is on the E-mail page.
 
 ## API
 

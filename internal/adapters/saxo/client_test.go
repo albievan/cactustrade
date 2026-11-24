@@ -273,7 +273,7 @@ func TestLapsedSignInNeedsReconnect(t *testing.T) {
 	}
 	// connecting again stores a new one, which is used
 	e.sim.route = nil
-	if err := e.c.Exchange(ctxFor(simAcct), "code-1", "https://trader.example/api/v1/oauth/saxo/callback"); err != nil {
+	if err := e.c.Exchange(ctxFor(simAcct), "code-1", "https://trader.example/api/v1/oauth/saxo/callback", testVerifier); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.c.Holdings(ctxFor(simAcct)); err != nil || e.sim.count("/auth/token") != 2 {
@@ -337,11 +337,11 @@ func TestFailsClosedWithoutAccountOrKeys(t *testing.T) {
 		if _, err := e.c.Holdings(tt.ctx); !errors.Is(err, tt.want) {
 			t.Errorf("%s: %v", tt.name, err)
 		}
-		if _, err := e.c.AuthorizeURL(tt.ctx, "https://x/cb", "st"); err == nil {
+		if _, err := e.c.AuthorizeURL(tt.ctx, "https://x/cb", "st", testChallenge); err == nil {
 			t.Errorf("%s: authorize URL without an app key", tt.name)
 		}
 	}
-	if err := e.c.Exchange(context.Background(), "c", "r"); !errors.Is(err, domain.ErrUnavailable) {
+	if err := e.c.Exchange(context.Background(), "c", "r", testVerifier); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatal("exchange without an account")
 	}
 	if e.sim.count("")+e.live.count("") != 0 {
@@ -349,9 +349,46 @@ func TestFailsClosedWithoutAccountOrKeys(t *testing.T) {
 	}
 }
 
+// A PKCE verifier and its S256 challenge (RFC 7636 Appendix B).
+const (
+	testVerifier  = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	testChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+)
+
+// TestConnectPKCE is PLAN 7.1.13: the sign-in address carries the S256 challenge, the token
+// request carries the verifier, and neither call goes out without them.
+func TestConnectPKCE(t *testing.T) {
+	e := newEnv(t)
+	u, err := e.c.AuthorizeURL(ctxFor(liveAcct), "https://trader.example/cb", "st", testChallenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := url.Parse(u)
+	if q := p.Query(); q.Get("code_challenge") != testChallenge || q.Get("code_challenge_method") != "S256" || strings.Contains(u, testVerifier) {
+		t.Fatalf("authorize URL = %s", u)
+	}
+	if _, err := e.c.AuthorizeURL(ctxFor(liveAcct), "https://trader.example/cb", "st", ""); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("no challenge: %v", err)
+	}
+	for _, v := range []string{"", "short", testVerifier + "+"} {
+		if err := e.c.Exchange(ctxFor(liveAcct), "the-code", "https://trader.example/cb", v); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("verifier %q: %v", v, err)
+		}
+	}
+	if e.live.count("") != 0 {
+		t.Fatal("a token request went out without a valid verifier")
+	}
+	if err := e.c.Exchange(ctxFor(liveAcct), "the-code", "https://trader.example/cb", testVerifier); err != nil {
+		t.Fatal(err)
+	}
+	if f := e.live.forms[0]; f.Get("code_verifier") != testVerifier || domain.PKCEChallenge(f.Get("code_verifier")) != testChallenge {
+		t.Fatalf("exchange form = %v", f)
+	}
+}
+
 func TestConnect(t *testing.T) {
 	e := newEnv(t)
-	u, err := e.c.AuthorizeURL(ctxFor(liveAcct), "https://trader.example:8453/api/v1/oauth/saxo/callback", "st&1")
+	u, err := e.c.AuthorizeURL(ctxFor(liveAcct), "https://trader.example:8453/api/v1/oauth/saxo/callback", "st&1", testChallenge)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +399,7 @@ func TestConnect(t *testing.T) {
 		q.Get("redirect_uri") != "https://trader.example:8453/api/v1/oauth/saxo/callback" || strings.Contains(u, "appsecret") {
 		t.Fatalf("authorize URL = %s", u)
 	}
-	if err := e.c.Exchange(ctxFor(liveAcct), "the-code", "https://trader.example:8453/api/v1/oauth/saxo/callback"); err != nil {
+	if err := e.c.Exchange(ctxFor(liveAcct), "the-code", "https://trader.example:8453/api/v1/oauth/saxo/callback", testVerifier); err != nil {
 		t.Fatal(err)
 	}
 	f := e.live.forms[0]
@@ -381,21 +418,21 @@ func TestConnect(t *testing.T) {
 	e.live.route = func(r *http.Request, _ int) (int, string, http.Header) {
 		return 400, `{"error":"invalid_request"}`, nil
 	}
-	if err := e.c.Exchange(ctxFor(liveAcct), "bad", "r"); !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "HTTP 400 (invalid_request)") {
+	if err := e.c.Exchange(ctxFor(liveAcct), "bad", "r", testVerifier); !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "HTTP 400 (invalid_request)") {
 		t.Fatalf("refused code: %v", err)
 	}
 	e.live.route = func(r *http.Request, _ int) (int, string, http.Header) { return 200, `{"access_token":"x"}`, nil }
-	if err := e.c.Exchange(ctxFor(liveAcct), "c", "r"); !errors.Is(err, domain.ErrUnavailable) {
+	if err := e.c.Exchange(ctxFor(liveAcct), "c", "r", testVerifier); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("no refresh token: %v", err)
 	}
 	e.live.route = func(r *http.Request, _ int) (int, string, http.Header) { return 200, `<html>`, nil }
-	if err := e.c.Exchange(ctxFor(liveAcct), "c", "r"); !errors.Is(err, domain.ErrUnavailable) {
+	if err := e.c.Exchange(ctxFor(liveAcct), "c", "r", testVerifier); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("not JSON: %v", err)
 	}
 	e.live.route = func(r *http.Request, _ int) (int, string, http.Header) {
 		return 200, `"` + strings.Repeat("x", maxTokenResponse) + `"`, nil
 	}
-	if err := e.c.Exchange(ctxFor(liveAcct), "c", "r"); !errors.Is(err, domain.ErrUnavailable) {
+	if err := e.c.Exchange(ctxFor(liveAcct), "c", "r", testVerifier); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("oversized: %v", err)
 	}
 }
@@ -621,7 +658,7 @@ func TestTransportErrorIsUnavailable(t *testing.T) {
 	if _, err := c.Holdings(ctxFor(simAcct)); !errors.Is(err, domain.ErrUnavailable) || errors.Is(err, domain.ErrReconnect) || secretsIn(err.Error()) {
 		t.Fatalf("sign-in host down: %v", err)
 	}
-	if err := c.Exchange(ctx, "c", "r"); !errors.Is(err, context.Canceled) {
+	if err := c.Exchange(ctx, "c", "r", testVerifier); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled exchange: %v", err)
 	}
 	// a secret store failure
@@ -630,7 +667,7 @@ func TestTransportErrorIsUnavailable(t *testing.T) {
 	if _, err := c2.Holdings(ctxFor(simAcct)); err == nil || !strings.Contains(err.Error(), "reading the Saxo") {
 		t.Fatalf("secret store down: %v", err)
 	}
-	if _, err := c2.AuthorizeURL(ctxFor(simAcct), "r", "s"); err == nil {
+	if _, err := c2.AuthorizeURL(ctxFor(simAcct), "r", "s", testChallenge); err == nil {
 		t.Fatal("authorize with the secret store down")
 	}
 }

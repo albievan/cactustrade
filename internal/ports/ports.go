@@ -456,11 +456,13 @@ type Holdings interface {
 // grant; Saxo). Both calls are for the account set with WithAccount.
 type OAuthConnector interface {
 	// AuthorizeURL is where the owner's browser signs in; the platform sends it back to
-	// redirectURI with a code and state. It needs the account's app key, nothing is sent.
-	AuthorizeURL(ctx context.Context, redirectURI, state string) (string, error)
-	// Exchange trades the code for tokens and stores the refresh token in the SecretStore
-	// (write-only) before anything uses the access token.
-	Exchange(ctx context.Context, code, redirectURI string) error
+	// redirectURI with a code and state. codeChallenge is the PKCE S256 challenge
+	// (domain.PKCEChallenge). It needs the account's app key, nothing is sent.
+	AuthorizeURL(ctx context.Context, redirectURI, state, codeChallenge string) (string, error)
+	// Exchange trades the code for tokens, proving the sign-in with the PKCE codeVerifier,
+	// and stores the refresh token in the SecretStore (write-only) before anything uses the
+	// access token.
+	Exchange(ctx context.Context, code, redirectURI, codeVerifier string) error
 }
 
 // SignalModel turns candles into candidates (regime model + playbooks).

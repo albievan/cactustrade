@@ -25,6 +25,34 @@ func (s *Server) clearCookie(w http.ResponseWriter) {
 	clearCookieNamed(w, s.cookieName(), s.cfg.CookieSecure)
 }
 
+// OAuthCookie binds a platform sign-in (Saxo) to the browser that started it (PLAN 7.1.13):
+// it holds the random nonce whose hash the app keeps with the OAuth state. SameSite=Lax,
+// because the platform's redirect back is a cross-site top-level navigation (a Strict cookie
+// would not come along); HttpOnly; it lives as long as a sign-in may take. With
+// CookieSecure off the __Host- prefix is dropped (browsers refuse it without Secure).
+const OAuthCookie = "__Host-cactustrade_oauth"
+
+func (s *Server) oauthCookieName() string {
+	if s.cfg.CookieSecure {
+		return OAuthCookie
+	}
+	return "cactustrade_oauth"
+}
+
+func (s *Server) setOAuthCookie(w http.ResponseWriter, nonce string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: s.oauthCookieName(), Value: nonce, Path: "/", MaxAge: int(app.OAuthStateTTL / time.Second),
+		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (s *Server) clearOAuthCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: s.oauthCookieName(), Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+	})
+}
+
 func clearCookieNamed(w http.ResponseWriter, name string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,

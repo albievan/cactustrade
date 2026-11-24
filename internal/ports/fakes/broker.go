@@ -235,26 +235,27 @@ func (h *Holdings) Holdings(ctx context.Context) (domain.Holdings, error) {
 }
 
 // OAuthConnector is a fake browser sign-in. AuthorizeURL answers
-// "https://auth.example/authorize?redirect_uri=…&state=…"; Exchange records the code and
-// fails with Err when set.
+// "https://auth.example/authorize?redirect_uri=…&code_challenge=…&state=…" (state last);
+// Exchange records the code and the PKCE verifier and fails with Err when set.
 type OAuthConnector struct {
 	mu        sync.Mutex
 	Err       error
 	Exchanged []string // "accountID:code:redirectURI"
+	Verifiers []string // the code verifier of each exchange, in order
 }
 
 var _ ports.OAuthConnector = (*OAuthConnector)(nil)
 
-// AuthorizeURL returns a fixed address carrying state.
-func (o *OAuthConnector) AuthorizeURL(ctx context.Context, redirectURI, state string) (string, error) {
+// AuthorizeURL returns a fixed address carrying the challenge and state.
+func (o *OAuthConnector) AuthorizeURL(ctx context.Context, redirectURI, state, codeChallenge string) (string, error) {
 	if _, ok := ports.AccountFrom(ctx); !ok {
 		return "", domain.ErrUnavailable
 	}
-	return "https://auth.example/authorize?redirect_uri=" + redirectURI + "&state=" + state, nil
+	return "https://auth.example/authorize?redirect_uri=" + redirectURI + "&code_challenge=" + codeChallenge + "&state=" + state, nil
 }
 
 // Exchange records the code for the account in ctx.
-func (o *OAuthConnector) Exchange(ctx context.Context, code, redirectURI string) error {
+func (o *OAuthConnector) Exchange(ctx context.Context, code, redirectURI, codeVerifier string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	a, ok := ports.AccountFrom(ctx)
@@ -265,5 +266,6 @@ func (o *OAuthConnector) Exchange(ctx context.Context, code, redirectURI string)
 		return o.Err
 	}
 	o.Exchanged = append(o.Exchanged, a.ID+":"+code+":"+redirectURI)
+	o.Verifiers = append(o.Verifiers, codeVerifier)
 	return nil
 }

@@ -58,8 +58,8 @@ func newSecTC(t *testing.T, h ports.PasswordHasher) (*tc, *Server) {
 	clk := &fakes.Clock{T: time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)}
 	svc, err := app.New(app.Deps{
 		Store: st, Secrets: &fakes.SecretStore{Now: clk.Now}, Hasher: h, Random: &longTokens{}, Clock: clk, Mailer: &fakes.Mailer{},
-		MailFallback: func() (domain.SMTPSettings, string, bool) {
-			return domain.SMTPSettings{Enabled: true, Host: "smtp.example.com", Port: 587, TLS: domain.SMTPStartTLS, From: "bot@example.com"}, "", true
+		MailFallback: func() (app.FallbackMail, bool) {
+			return app.FallbackMail{Server: domain.SMTPSettings{Enabled: true, Host: "smtp.example.com", Port: 587, TLS: domain.SMTPStartTLS, From: "bot@example.com"}}, true
 		},
 	}, app.Config{Version: "9.9.9", PublicURL: "https://trader.example"})
 	if err != nil {

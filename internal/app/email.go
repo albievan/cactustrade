@@ -66,8 +66,30 @@ func (s *Service) smtpPassword(ctx context.Context) (string, error) {
 	return pw, err
 }
 
-func fallbackText(st domain.SMTPSettings) string {
-	return fmt.Sprintf("%s:%d (%s)", st.Host, st.Port, st.TLS)
+// FallbackMail is the deployment's mail server (CACTUSTRADE_SMTP_*).
+type FallbackMail struct {
+	Server   domain.SMTPSettings
+	Password string
+	// TestMailbox marks a catch-all test mailbox (the bundled Mailpit): mail goes through it,
+	// but it never reaches the user, so password reset by e-mail is off while it is the only
+	// server (PLAN 7.1.15). cmd leaves it false when the deployment explicitly opts in.
+	TestMailbox bool
+}
+
+func fallbackText(fb FallbackMail) string {
+	t := fmt.Sprintf("%s:%d (%s)", fb.Server.Host, fb.Server.Port, fb.Server.TLS)
+	if fb.TestMailbox {
+		t += ", a test mailbox: password reset by e-mail is off"
+	}
+	return t
+}
+
+// fallback returns the deployment's mail server, if any.
+func (s *Service) fallback() (FallbackMail, bool) {
+	if s.d.MailFallback == nil {
+		return FallbackMail{}, false
+	}
+	return s.d.MailFallback()
 }
 
 // EmailSetup returns the mail server configuration (admin).
@@ -84,10 +106,8 @@ func (s *Service) EmailSetup(ctx context.Context, p Principal) (EmailSetup, erro
 		return EmailSetup{}, fmt.Errorf("app.EmailSetup: %w", err)
 	}
 	out := EmailSetup{Settings: st, PasswordSet: pw != "", Warnings: domain.EmailSenderWarnings(st)}
-	if s.d.MailFallback != nil {
-		if fb, _, ok := s.d.MailFallback(); ok {
-			out.Fallback = fallbackText(fb)
-		}
+	if fb, ok := s.fallback(); ok {
+		out.Fallback = fallbackText(fb)
 	}
 	return out, nil
 }
@@ -150,23 +170,28 @@ func (s *Service) SetEmailSetup(ctx context.Context, p Principal, st domain.SMTP
 // mailServer picks the server mail goes through: the in-app one when switched on, else the
 // deployment's fallback; ok is false when there is none (mail waits in the outbox).
 func (s *Service) mailServer(ctx context.Context) (domain.SMTPSettings, string, bool, error) {
-	st, _, err := s.smtpSettings(ctx)
+	st, pw, ok, _, err := s.mailRoute(ctx)
+	return st, pw, ok, err
+}
+
+// mailRoute is mailServer plus whether the server is a test mailbox that never reaches the
+// user (only ever the deployment's fallback; a server set in the app is taken as real).
+func (s *Service) mailRoute(ctx context.Context) (st domain.SMTPSettings, pw string, ok, testMailbox bool, err error) {
+	st, _, err = s.smtpSettings(ctx)
 	if err != nil {
-		return domain.SMTPSettings{}, "", false, err
+		return domain.SMTPSettings{}, "", false, false, err
 	}
 	if st.Enabled {
-		pw, err := s.smtpPassword(ctx)
+		pw, err = s.smtpPassword(ctx)
 		if err != nil {
-			return domain.SMTPSettings{}, "", false, err
+			return domain.SMTPSettings{}, "", false, false, err
 		}
-		return st, pw, true, nil
+		return st, pw, true, false, nil
 	}
-	if s.d.MailFallback != nil {
-		if fb, pw, ok := s.d.MailFallback(); ok {
-			return fb, pw, true, nil
-		}
+	if fb, ok := s.fallback(); ok {
+		return fb.Server, fb.Password, true, fb.TestMailbox, nil
 	}
-	return domain.SMTPSettings{}, "", false, nil
+	return domain.SMTPSettings{}, "", false, false, nil
 }
 
 // MailError is a failure of the mail server itself (not of the input or the database).
@@ -424,26 +449,40 @@ func (s *Service) notify(ctx context.Context, e domain.Event) {
 // ---- password reset -------------------------------------------------------------------
 
 // PasswordResetAvailable reports whether "Forgot password" can work: a public address for
-// the link and a mail server.
+// the link and a mail server that reaches the user. A test mailbox (the bundled Mailpit) does
+// not, unless the deployment opted in (PLAN 7.1.15).
 func (s *Service) PasswordResetAvailable(ctx context.Context) bool {
-	if s.cfg.PublicURL == "" || s.d.Mailer == nil {
-		return false
+	_, msg := s.resetBlocker(ctx)
+	return msg == ""
+}
+
+// resetBlocker says why password reset by e-mail cannot work (msg "" when it can).
+func (s *Service) resetBlocker(ctx context.Context) (what domain.Missing, msg string) {
+	const noServer = "Password reset by e-mail is not set up: an admin must set up a mail server"
+	if s.cfg.PublicURL == "" {
+		return domain.MissingPublicURL, "Password reset by e-mail is not set up: the server's public address (CACTUSTRADE_PUBLIC_URL) is not set"
 	}
-	_, _, ok, err := s.mailServer(ctx)
-	return err == nil && ok
+	if s.d.Mailer == nil {
+		return domain.MissingEmailServer, noServer
+	}
+	_, _, ok, test, err := s.mailRoute(ctx)
+	switch {
+	case err != nil || !ok:
+		return domain.MissingEmailServer, noServer
+	case test:
+		return domain.MissingEmailServer, "Password reset by e-mail is off: the only mail server is a test mailbox (Mailpit), " +
+			"which never reaches you; an admin must set up a real mail server (Setup → E-mail)"
+	}
+	return "", ""
 }
 
 // RequestPasswordReset e-mails a reset link when the user exists, is enabled and has an
 // e-mail address. It answers the same in every case (no user enumeration) and sends at most
 // domain.PasswordResetPerHour links per user per hour.
 func (s *Service) RequestPasswordReset(ctx context.Context, username, remoteIP string) error {
-	if !s.PasswordResetAvailable(ctx) {
+	if what, msg := s.resetBlocker(ctx); msg != "" {
 		// Asked before signing in: nobody here can fix it (CanFix false); an admin can.
-		what, msg := domain.MissingEmailServer, "Password reset by e-mail is not set up: an admin must set up a mail server"
-		if s.cfg.PublicURL == "" {
-			what, msg = domain.MissingPublicURL, "Password reset by e-mail is not set up: the server's public address (CACTUSTRADE_PUBLIC_URL) is not set"
-		}
-		return domain.MissingSetup(what, msg, fmt.Errorf("password reset by e-mail is not set up: %w", domain.ErrUnavailable))
+		return domain.MissingSetup(what, msg, fmt.Errorf("password reset by e-mail is not available: %w", domain.ErrUnavailable))
 	}
 	u, err := s.d.Store.Users().GetByUsername(ctx, domain.NormalizeUsername(username))
 	if errors.Is(err, domain.ErrNotFound) {

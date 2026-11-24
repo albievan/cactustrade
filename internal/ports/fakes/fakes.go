@@ -33,12 +33,13 @@ type Random struct {
 	n  int
 }
 
-// Token returns tok-N.
+// Token returns "tok" and N in 40 digits: 43 URL-safe characters like the real one (a valid
+// PKCE code verifier, PLAN 7.1.13).
 func (r *Random) Token() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.n++
-	return fmt.Sprintf("tok%04d", r.n)
+	return fmt.Sprintf("tok%040d", r.n)
 }
 
 // ID returns id-N.

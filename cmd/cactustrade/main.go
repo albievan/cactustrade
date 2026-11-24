@@ -9,6 +9,7 @@
 //	cactustrade backup --out FILE           encrypted standalone backup (age; PLAN 7.6a)
 //	cactustrade restore --in FILE --yes     restore a standalone backup (server stopped)
 //	cactustrade encrypt | decrypt           age filter for deploy.sh's MariaDB dumps (7.6b)
+//	cactustrade secrets migrate --to vault  copy the stored credentials into Vault (7.8)
 package main
 
 import (
@@ -51,6 +52,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/system"
 	"github.com/albievan/cactustrade/internal/adapters/tiger"
 	"github.com/albievan/cactustrade/internal/adapters/trading212"
+	"github.com/albievan/cactustrade/internal/adapters/vault"
 	"github.com/albievan/cactustrade/internal/app"
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
@@ -93,6 +95,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return encryptCmd(args, getenv, os.Stdin, out)
 	case "decrypt":
 		return decryptCmd(args, getenv, os.Stdin, out)
+	case "secrets":
+		return secretsCmd(ctx, args, getenv, out)
 	case "serve":
 		cfg, err := loadConfig(args, getenv)
 		if err != nil {
@@ -106,7 +110,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		}
 		return err
 	}
-	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest, backup, restore, encrypt, decrypt)", cmd)
+	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest, backup, restore, encrypt, decrypt, secrets)", cmd)
 }
 
 // newLogger writes JSON lines to stdout; every line logged with a context names the account
@@ -191,7 +195,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	}
 
 	clock := system.Clock{}
-	secrets, envCreds, err := openSecrets(cfg, store, getenv, clock, log)
+	secrets, envCreds, err := openSecrets(ctx, cfg, store, getenv, clock, log)
 	if err != nil {
 		return err
 	}
@@ -466,30 +470,63 @@ func streamAccount(ctx context.Context, store *sqlstore.Store, secrets ports.Sec
 	return domain.Account{}, false
 }
 
-// openSecrets loads the master key and returns the credential store: encrypted in the
-// database, overlaid by credentials from the environment (ETORO_DEMO_PUB / _PK…).
-func openSecrets(cfg config, store *sqlstore.Store, getenv func(string) string, clock system.Clock, log *slog.Logger) (*secretstore.Env, map[domain.CredentialName]string, error) {
-	// Master key: explicit (containers) or generated in the data folder (standalone only).
+// openSecrets returns the credential store, overlaid by credentials from the environment
+// (ETORO_DEMO_PUB / _PK…): encrypted in the database under the master key (default), or in
+// Vault (CACTUSTRADE_SECRETS=vault, PLAN 7.8).
+func openSecrets(ctx context.Context, cfg config, store *sqlstore.Store, getenv func(string) string, clock system.Clock, log *slog.Logger) (*secretstore.Env, map[domain.CredentialName]string, error) {
+	envCreds, err := secretstore.FromEnvironment(getenv, os.ReadFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cfg.Secrets == secretsVault {
+		vs, err := openVault(ctx, cfg, clock, log)
+		if err != nil {
+			return nil, nil, err
+		}
+		return secretstore.WithEnv(vs, envCreds), envCreds, nil
+	}
+	cipher, err := openCipher(cfg, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	return secretstore.WithEnv(secretstore.NewDB(store.Secrets(), cipher, clock), envCreds), envCreds, nil
+}
+
+// openVault builds the Vault store and signs in once. Vault not answering does not stop the
+// start (the kill switch and the web UI must work); until it answers no credential can be
+// read, so nothing trades (fail closed). A wrong setting is an error.
+func openVault(ctx context.Context, cfg config, clock system.Clock, log *slog.Logger) (*vault.Store, error) {
+	vc := cfg.Vault
+	vc.Now, vc.Log = clock.Now, log
+	vs, err := vault.New(vc)
+	if err != nil {
+		return nil, err
+	}
+	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := vs.Check(cctx); err != nil {
+		log.Warn("Vault is not usable yet: no credential can be read (nothing trades) until it is", "addr", vc.Addr, "err", err)
+	} else {
+		log.Info("credentials are kept in Vault", "addr", vc.Addr)
+	}
+	return vs, nil
+}
+
+// openCipher loads the master key: explicit (containers) or, standalone, master.key in the
+// data folder, generated there on first start.
+func openCipher(cfg config, log *slog.Logger) (*secretstore.Cipher, error) {
 	gen := ""
 	if !cfg.Container {
 		gen = filepath.Join(cfg.DataDir, "master.key")
 	}
 	key, created, err := secretstore.LoadMasterKey(cfg.MasterKey, cfg.MasterKeyFile, gen)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if created {
 		log.Warn("generated a new master key: back it up; without it the stored credentials cannot be read", "file", gen)
 	}
-	cipher, err := secretstore.NewCipher(key)
-	if err != nil {
-		return nil, nil, err
-	}
-	envCreds, err := secretstore.FromEnvironment(getenv, os.ReadFile)
-	if err != nil {
-		return nil, nil, err
-	}
-	return secretstore.WithEnv(secretstore.NewDB(store.Secrets(), cipher, clock), envCreds), envCreds, nil
+	return secretstore.NewCipher(key)
 }
 
 // healthcheck asks the local server's /healthz (the container HEALTHCHECK). Over TLS it

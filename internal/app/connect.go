@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,7 +17,11 @@ import (
 // The browser sign-in of view-only platforms that have one (Saxo: OAuth 2.0 authorization
 // code grant). The owner starts it from the web UI; the platform sends the browser back to
 // the public callback with a code and the state we issued. The state is random, stored only
-// as a hash, single-use, valid OAuthStateTTL, and bound to the user and the account.
+// as a hash, single-use, valid OAuthStateTTL, and bound to the user and the account. It is
+// also bound to the browser that started it (PLAN 7.1.13): a random nonce goes into a cookie
+// there, and the callback must bring the same cookie back (its hash is kept with the state).
+// PKCE (RFC 7636, S256) binds the code to us: the verifier never leaves this process until
+// the code exchange.
 
 // OAuthStateTTL is how long a sign-in may take.
 const OAuthStateTTL = 10 * time.Minute
@@ -28,6 +33,8 @@ type oauthState struct {
 	userID, accountID string
 	platform          domain.Platform
 	expires           time.Time
+	nonceHash         string // hash of the browser nonce (the cookie)
+	verifier          string // the PKCE code verifier (memory only)
 }
 
 // oauthStates holds the pending sign-ins, keyed by the state's hash. They live in memory: a
@@ -103,10 +110,21 @@ func (s *Service) redirectURI(pl domain.Platform) string {
 }
 
 // ConnectStart is where to send the owner's browser to sign in, and the redirect address the
-// platform must have registered.
+// platform must have registered. BrowserNonce goes into a cookie in that browser (the HTTP
+// adapter's job; never into a response body): the callback is refused without it.
 type ConnectStart struct {
 	AuthorizeURL string
 	RedirectURI  string
+	BrowserNonce string
+}
+
+// OAuthCallback is what the platform's redirect brought back: the code, our state, the
+// platform's own error parameter ("" when it sent a code), the nonce cookie the browser sent
+// ("" = none) and the caller's address.
+type OAuthCallback struct {
+	Code, State, ProviderError string
+	BrowserNonce               string
+	RemoteIP                   string
 }
 
 // ConnectAccount starts the browser sign-in of an account on platform pl that has one (owner,
@@ -132,17 +150,24 @@ func (s *Service) ConnectAccount(ctx context.Context, p Principal, pl domain.Pla
 		return ConnectStart{}, domain.MissingSetup(domain.MissingPublicURL, "Set CACTUSTRADE_PUBLIC_URL (the address the browser comes back to) first",
 			fmt.Errorf("CACTUSTRADE_PUBLIC_URL is not set: %w", domain.ErrUnavailable))
 	}
-	state := s.d.Random.Token()
+	state, nonce, verifier := s.d.Random.Token(), s.d.Random.Token(), s.d.Random.Token()
+	if !domain.ValidPKCEVerifier(verifier) {
+		return ConnectStart{}, fmt.Errorf("app.ConnectAccount: the random source gave no valid PKCE verifier: %w", domain.ErrUnavailable)
+	}
 	now := s.d.Clock.Now().UTC()
-	u, err := conn.AuthorizeURL(ports.WithAccount(ctx, v.Account), redirect, state)
+	u, err := conn.AuthorizeURL(ports.WithAccount(ctx, v.Account), redirect, state, domain.PKCEChallenge(verifier))
 	if err != nil {
 		return ConnectStart{}, fmt.Errorf("app.ConnectAccount: %w", err)
 	}
-	if !s.oauth.put(hashToken(state), oauthState{userID: p.UserID, accountID: v.ID, platform: pl, expires: now.Add(OAuthStateTTL)}, now) {
+	st := oauthState{
+		userID: p.UserID, accountID: v.ID, platform: pl, expires: now.Add(OAuthStateTTL),
+		nonceHash: hashToken(nonce), verifier: verifier,
+	}
+	if !s.oauth.put(hashToken(state), st, now) {
 		return ConnectStart{}, fmt.Errorf("too many sign-ins in progress, try again in a few minutes: %w", domain.ErrUnavailable)
 	}
 	s.audit(ctx, p, "account.connect_started", v.ID, "platform="+string(pl))
-	return ConnectStart{AuthorizeURL: u, RedirectURI: redirect}, nil
+	return ConnectStart{AuthorizeURL: u, RedirectURI: redirect, BrowserNonce: nonce}, nil
 }
 
 // ErrConnectRefused means the platform refused the sign-in or the code exchange. The state
@@ -151,20 +176,25 @@ var ErrConnectRefused = errors.New("the platform refused the sign-in")
 
 // CompleteConnect finishes a browser sign-in (public: the platform redirects the browser
 // here, and the session cookie may not come along). The state must be one we issued for this
-// platform, unused and younger than OAuthStateTTL, for an account its user still owns; it is
-// used up whatever happens. providerError is the platform's own error parameter ("" when it
-// sent a code). It returns the account that was connected.
-func (s *Service) CompleteConnect(ctx context.Context, pl domain.Platform, code, state, providerError, remoteIP string) (domain.Account, error) {
-	if state == "" || len(state) > 512 {
+// platform, unused and younger than OAuthStateTTL, for an account its user still owns, and
+// the browser must bring back the nonce cookie of the browser that started it; the state is
+// used up whatever happens. It returns the account that was connected.
+func (s *Service) CompleteConnect(ctx context.Context, pl domain.Platform, cb OAuthCallback) (domain.Account, error) {
+	if cb.State == "" || len(cb.State) > 512 {
 		return domain.Account{}, domain.Invalid("state", "missing or malformed")
 	}
-	st, ok := s.oauth.take(hashToken(state))
+	st, ok := s.oauth.take(hashToken(cb.State))
 	now := s.d.Clock.Now().UTC()
 	if !ok || st.platform != pl || !now.Before(st.expires) {
 		return domain.Account{}, domain.Invalid("state", "the sign-in has expired or was already used: connect again")
 	}
-	if providerError != "" {
-		return domain.Account{}, fmt.Errorf("%s answered %q: %w", platformLabel(pl), clip(providerError, 64), ErrConnectRefused)
+	if cb.BrowserNonce == "" || len(cb.BrowserNonce) > 512 ||
+		subtle.ConstantTimeCompare([]byte(hashToken(cb.BrowserNonce)), []byte(st.nonceHash)) != 1 {
+		return domain.Account{}, domain.Invalid("state", "this sign-in was started in another browser (or its cookie is gone): connect again from this browser")
+	}
+	code, remoteIP := cb.Code, cb.RemoteIP
+	if cb.ProviderError != "" {
+		return domain.Account{}, fmt.Errorf("%s answered %q: %w", platformLabel(pl), clip(cb.ProviderError, 64), ErrConnectRefused)
 	}
 	if !validCode(code) {
 		return domain.Account{}, domain.Invalid("code", "missing or malformed")
@@ -182,7 +212,7 @@ func (s *Service) CompleteConnect(ctx context.Context, pl domain.Platform, code,
 		return domain.Account{}, fmt.Errorf("the %s client is not configured: %w", platformLabel(pl), domain.ErrUnavailable)
 	}
 	p := Principal{UserID: u.ID, Username: u.Username, Role: u.Role, RemoteIP: remoteIP}
-	if err := conn.Exchange(ports.WithAccount(ctx, a), code, s.redirectURI(pl)); err != nil {
+	if err := conn.Exchange(ports.WithAccount(ctx, a), code, s.redirectURI(pl), st.verifier); err != nil {
 		s.d.Log.WarnContext(ctx, "connecting an account failed", "account", a.ID, "platform", string(pl), "err", err)
 		s.audit(ctx, p, "account.connect_failed", a.ID, "platform="+string(pl))
 		return domain.Account{}, fmt.Errorf("app.CompleteConnect: %w: %w", ErrConnectRefused, err)
