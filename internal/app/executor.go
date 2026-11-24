@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -70,6 +71,8 @@ type runtimeState struct {
 	// views is the portfolio view cache (PLAN 6.6a): read by view use cases only, never by
 	// an order path (CLAUDE.md §2.2).
 	views *viewCache
+	// sweeping is set while a sweep of the real gates runs (one at a time, review minor 4).
+	sweeping atomic.Bool
 }
 
 // agentLocks are one account's agent locks. Lock order: ctl before entry, never the other

@@ -225,6 +225,7 @@ func (s *Server) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 		armed = append(armed, RealArmedAccount{Id: a.ID, Name: a.Name})
 	}
 	out.RealArmed = &armed
+	out.RealArmedUnknown = &st.RealArmedUnknown
 	writeJSON(w, http.StatusOK, out)
 }
 

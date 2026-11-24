@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"html"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -165,7 +166,13 @@ func (s *Server) webHandler() http.Handler {
 		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if p == "api/docs" {
 			w.Header().Set("Content-Security-Policy", swaggerCSP)
-			serveFile(w, r, "api-docs.html")
+			b, err := fs.ReadFile(s.cfg.Web, "api-docs.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store") // the banner is per user and per moment
+			http.ServeContent(w, r, "api-docs.html", time.Time{}, bytes.NewReader(withRealBanner(b, s.realBanner(r))))
 			return
 		}
 		if p != "" && p != "index.html" {
@@ -255,4 +262,45 @@ func (s *Server) PurgeLoop(ctx context.Context, every time.Duration) {
 			}
 		}
 	}
+}
+
+// realBanner is the real-money banner of the Swagger UI page, which is served outside the
+// React app (OD27, review minor 1): for a signed-in user, the same facts as the app's banner
+// (system status), as escaped HTML; "" when nothing is armed or the visitor is anonymous. A
+// status that cannot be read is "unknown", never "not armed".
+func (s *Server) realBanner(r *http.Request) string {
+	p := state(r).principal
+	if p.UserID == "" {
+		return ""
+	}
+	const style = `style="background:#b02a37;color:#fff;font:600 15px/1.4 system-ui,sans-serif;padding:10px 16px;text-align:center"`
+	st, err := s.svc.Status(r.Context(), p)
+	switch {
+	case err != nil || st.RealArmedUnknown:
+		return `<div role="alert" ` + style + `>REAL MONEY — real-trading state unknown: it cannot be read now. ` +
+			`Treat real trading as armed until the app shows otherwise.</div>`
+	case len(st.RealArmed) == 0:
+		return ""
+	}
+	names := make([]string, 0, len(st.RealArmed))
+	for _, a := range st.RealArmed {
+		names = append(names, html.EscapeString(a.Name))
+	}
+	return `<div role="alert" ` + style + `>REAL MONEY — real trading armed on: ` + strings.Join(names, ", ") + `</div>`
+}
+
+// withRealBanner puts banner right after the page's <body> tag (at the start without one).
+func withRealBanner(page []byte, banner string) []byte {
+	if banner == "" {
+		return page
+	}
+	i := bytes.Index(page, []byte("<body>"))
+	if i < 0 {
+		return append([]byte(banner), page...)
+	}
+	i += len("<body>")
+	out := make([]byte, 0, len(page)+len(banner))
+	out = append(out, page[:i]...)
+	out = append(out, banner...)
+	return append(out, page[i:]...)
 }

@@ -22,6 +22,9 @@ type SystemStatus struct {
 	// RealArmed lists the accounts the caller can see whose real trading is armed (the
 	// banner on every page, OD27). Always empty in this build.
 	RealArmed []RealArmedAccount
+	// RealArmedUnknown: the gate of at least one real account the caller can see could not
+	// be read; the banner says the real-trading state is unknown (never "not armed").
+	RealArmedUnknown bool
 }
 
 // Now is the service's clock, for adapters that must measure against the same time the use
@@ -39,7 +42,14 @@ func accountMode(a domain.Account) domain.TradingMode {
 
 // Status reports versions and the caller's current account: its mode and agent state
 // (viewer). Without an account the mode reads demo and the agent stopped.
+//
+// A user who must still change the default password gets only the banner's facts (the
+// change-password page shows the banner too, review minor 1): no version, build, start time
+// or account; every other use case stays refused for them.
 func (s *Service) Status(ctx context.Context, p Principal) (SystemStatus, error) {
+	if p.MustChangePassword && p.UserID != "" {
+		return s.bannerStatus(ctx, p)
+	}
 	if err := s.authorize(p, domain.PermView); err != nil {
 		return SystemStatus{}, err
 	}
@@ -58,7 +68,19 @@ func (s *Service) Status(ctx context.Context, p Principal) (SystemStatus, error)
 	if err != nil {
 		return SystemStatus{}, err
 	}
-	st.RealArmed = s.realArmed(ctx, vs)
+	st.RealArmed, st.RealArmedUnknown = s.realArmed(ctx, vs)
+	return st, nil
+}
+
+// bannerStatus is Status for a user who must still change the default password: the real
+// banner's facts and nothing else.
+func (s *Service) bannerStatus(ctx context.Context, p Principal) (SystemStatus, error) {
+	st := SystemStatus{Mode: domain.ModeDemo, AgentState: domain.AgentStopped, Database: s.d.Store.Driver(), Now: s.d.Clock.Now().UTC()}
+	vs, err := s.d.Store.Accounts().ForUser(ctx, p.UserID)
+	if err != nil {
+		return SystemStatus{}, fmt.Errorf("app.Status: %w", err)
+	}
+	st.RealArmed, st.RealArmedUnknown = s.realArmed(ctx, vs)
 	return st, nil
 }
 

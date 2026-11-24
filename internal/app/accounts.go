@@ -369,16 +369,19 @@ func (s *Service) SetAccountCredentials(ctx context.Context, p Principal, id str
 			return domain.Invalid("key", "unknown credential for "+platformLabel(v.OnPlatform()))
 		}
 	}
+	if len(puts) > 0 && tradable {
+		// Before the first write (review MAJOR): a change that fails part-way may already
+		// have replaced one key, so the account is unreconciled and its gate disarmed
+		// whatever happens below. The ctl lock is held and the agent is quiescent.
+		s.unreconcile(v.ID, "the account's keys changed: reconcile again")
+		s.disarmIfArmed(ctx, v.Account, p, domain.DisarmKeys) // OD24
+	}
 	for _, x := range puts {
 		if err := s.d.Secrets.Put(ctx, x.name, x.val); err != nil {
 			return fmt.Errorf("app.SetAccountCredentials: %w", err)
 		}
 	}
 	if len(puts) > 0 {
-		if tradable {
-			s.unreconcile(v.ID, "the account's keys changed: reconcile again")
-			s.disarmIfArmed(ctx, v.Account, p, domain.DisarmKeys) // OD24; the ctl lock is held
-		}
 		s.audit(ctx, p, "account.keys_set", v.ID, fmt.Sprintf("credentials=%d", len(puts))) // never the values
 	}
 	return nil

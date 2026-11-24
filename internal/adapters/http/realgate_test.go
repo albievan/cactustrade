@@ -2,11 +2,15 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"net/http/cookiejar"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/app"
@@ -25,7 +29,12 @@ const realLimits = `{"tradingBudgetCents":100000,"dailyLossBp":100,"drawdownBp":
 
 func newRealGateTC(t *testing.T, log *slog.Logger) *realGateTC {
 	t.Helper()
-	x := newAgentTCServer(t, func(*app.Deps) {}, Config{}, log)
+	return newRealGateTCConfig(t, log, Config{})
+}
+
+func newRealGateTCConfig(t *testing.T, log *slog.Logger, cfg Config) *realGateTC {
+	t.Helper()
+	x := newAgentTCServer(t, func(*app.Deps) {}, cfg, log)
 	code, m, _ := x.do("POST", "/api/v1/accounts", `{"name":"Live","mode":"real"}`, x.csrfHdr()...)
 	if code != 201 {
 		t.Fatalf("create real %d %v", code, m)
@@ -46,11 +55,15 @@ func newRealGateTC(t *testing.T, log *slog.Logger) *realGateTC {
 }
 
 // seedEvidence gives the demo account n qualifying risk days ending yesterday.
-func (g *realGateTC) seedEvidence(t *testing.T, n int) {
+func (g *realGateTC) seedEvidence(t *testing.T, n int) { g.seedEvidenceDays(t, 0, n) }
+
+// seedEvidenceDays gives the demo account the qualifying risk days from+1 … from+n days
+// before today.
+func (g *realGateTC) seedEvidenceDays(t *testing.T, from, n int) {
 	t.Helper()
 	ctx := context.Background()
 	start := domain.RiskDayStart(time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC))
-	for i := range n {
+	for i := from; i < from+n; i++ {
 		at := start.AddDate(0, 0, -(1 + i)).Add(17 * time.Hour)
 		id := fmt.Sprintf("ev-%d", i)
 		o, err := domain.NewOrder(domain.Order{
@@ -93,6 +106,7 @@ func TestRealGateEndpoints(t *testing.T) {
 	base := "/api/v1/accounts/" + g.real + "/real-gate"
 	const pw = "a long password"
 
+	g.seedEvidenceDays(t, 0, 19) // one day short (review minor 5: the step's name is what it tests)
 	code, m, _ := g.do("GET", base, "")
 	if code != 200 || m["enabled"] != false || m["armed"] != false || m["phrase"] != "ENABLE REAL TRADING Live" || m["canArm"] != true ||
 		m["canDisarm"] != true || m["demoAccountId"] != g.acct || m["gate"].(map[string]any)["state"] != "locked" {
@@ -105,8 +119,8 @@ func TestRealGateEndpoints(t *testing.T) {
 			failing[c["name"].(string)] = true
 		}
 	}
-	if len(failing) != 1 || !failing["demo_evidence"] {
-		t.Fatalf("failing checks %v", failing)
+	if len(failing) != 1 || !failing["demo_evidence"] || m["evidence"].(map[string]any)["count"] != 19.0 {
+		t.Fatalf("failing checks %v, evidence %v", failing, m["evidence"])
 	}
 	for _, s := range []agentStep{
 		{"without CSRF", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING Live", pw), nil, 403, ""},
@@ -114,7 +128,7 @@ func TestRealGateEndpoints(t *testing.T) {
 		{"an unknown field", "POST", base + "/arm", `{"demoAccountId":"x","confirm":"y","password":"z","mode":"real"}`, csrf, 400, ""},
 		{"wrong password", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING Live", "not it"), csrf, 403, "the password is not correct"},
 		{"wrong phrase", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING", pw), csrf, 422, ""},
-		{"19 days short of evidence", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING Live", pw), csrf, 409, "Real trading cannot be armed"},
+		{"19 days: one short of the evidence", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING Live", pw), csrf, 409, "Real trading cannot be armed"},
 		{"a demo account has no gate", "GET", "/api/v1/accounts/" + g.acct + "/real-gate", "", nil, 422, ""},
 		{"an unknown account", "GET", "/api/v1/accounts/nope/real-gate", "", nil, 404, ""},
 		{"disarm without CSRF", "POST", base + "/disarm", `{}`, nil, 403, ""},
@@ -124,7 +138,7 @@ func TestRealGateEndpoints(t *testing.T) {
 			t.Fatalf("%s: %d %v", s.name, code, m)
 		}
 	}
-	g.seedEvidence(t, 20)
+	g.seedEvidenceDays(t, 19, 1) // the 20th day
 	code, m, _ = g.do("POST", base+"/arm", armBody(g.acct, " ENABLE REAL TRADING Live ", pw), csrf...)
 	if code != 403 || m["title"] != "Real trading is not enabled in this build" {
 		t.Fatalf("every check passing: %d %v", code, m)
@@ -291,4 +305,57 @@ func TestRealRefusalHTTP(t *testing.T) {
 	if code, m, _ := g.do("GET", "/api/v1/system/status", ""); code != 200 || len(m["realArmed"].([]any)) != 0 {
 		t.Fatalf("status after %d %v", code, m)
 	}
+}
+
+// TestRealBannerUnknownAndSwagger (review minor 1): an unreadable gate is reported as unknown
+// in the status, and the Swagger UI page (served by the server, outside the React app)
+// carries the same banner for a signed-in user: armed, unknown, or none.
+func TestRealBannerUnknownAndSwagger(t *testing.T) {
+	web := fstest.MapFS{
+		"index.html":    {Data: []byte("<html>app</html>")},
+		"api-docs.html": {Data: []byte("<html><body><div id=\"swagger-ui\"></div></body></html>")},
+	}
+	g := newRealGateTCConfig(t, slog.New(slog.DiscardHandler), Config{Web: web})
+	docs := func(c *http.Client) string {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(context.Background(), "GET", g.srv.URL+"/api/docs", nil)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			t.Fatalf("docs %d %s", resp.StatusCode, b)
+		}
+		return string(b)
+	}
+	if body := docs(g.c); strings.Contains(body, "REAL MONEY") || strings.Contains(body, "unknown") {
+		t.Fatalf("nothing armed: %s", body)
+	}
+	// Armed (stored directly: this build cannot arm), with a name that needs escaping.
+	if code, m, _ := g.do("PATCH", "/api/v1/accounts/"+g.real, `{"name":"Live <b>&"}`, g.csrfHdr()...); code != 200 {
+		t.Fatalf("rename %d %v", code, m)
+	}
+	ev := domain.GateEvidence{Days: []domain.RiskDate{"2026-11-20"}, Count: 1, First: "2026-11-20", Last: "2026-11-20"}
+	if _, err := g.store.RealGates().Put(context.Background(), domain.LockedGate(g.real).Arm(g.acct, "u", ev, time.Date(2026, 11, 23, 14, 0, 0, 0, time.UTC))); err != nil {
+		t.Fatal(err)
+	}
+	if body := docs(g.c); !strings.Contains(body, "REAL MONEY — real trading armed on: Live &lt;b&gt;&amp;") || strings.Contains(body, "<b>&") ||
+		!strings.Contains(body, `<div id="swagger-ui">`) {
+		t.Fatalf("armed: %s", body)
+	}
+	anon := &http.Client{Transport: g.c.Transport}
+	if body := docs(anon); strings.Contains(body, "REAL MONEY") {
+		t.Fatalf("an anonymous visitor got the banner: %s", body)
+	}
+	// Unreadable: unknown in the status and on the page.
+	g.store.GatesErr = errors.New("database down")
+	if code, m, _ := g.do("GET", "/api/v1/system/status", ""); code != 200 || m["realArmedUnknown"] != true || len(m["realArmed"].([]any)) != 0 {
+		t.Fatalf("status with the gate unreadable %d %v", code, m)
+	}
+	if body := docs(g.c); !strings.Contains(body, "real-trading state unknown") {
+		t.Fatalf("unknown: %s", body)
+	}
+	g.store.GatesErr = nil
 }

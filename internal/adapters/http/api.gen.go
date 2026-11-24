@@ -2277,8 +2277,11 @@ type SystemStatus struct {
 
 	// RealArmed the accounts the caller can see whose real trading is armed (the banner on every page); always empty in this build
 	RealArmed *[]RealArmedAccount `json:"realArmed,omitempty"`
-	StartedAt time.Time           `json:"startedAt"`
-	Version   string              `json:"version"`
+
+	// RealArmedUnknown the gate of at least one real account the caller can see could not be read: the banner says the real-trading state is unknown (never 'not armed')
+	RealArmedUnknown *bool     `json:"realArmedUnknown,omitempty"`
+	StartedAt        time.Time `json:"startedAt"`
+	Version          string    `json:"version"`
 }
 
 // SystemStatusDatabase defines model for SystemStatus.Database.

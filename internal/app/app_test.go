@@ -93,8 +93,10 @@ func TestDefaultAdmin(t *testing.T) {
 	if err != nil || !p.MustChangePassword {
 		t.Fatalf("principal = %+v %v", p, err)
 	}
-	if _, err := s.Status(ctx, p); !errors.Is(err, domain.ErrPasswordChangeRequired) {
-		t.Fatalf("status before change: %v", err)
+	// Status answers only the real banner's facts (review minor 1: the change-password page
+	// shows the banner): no version, build, start time or account.
+	if st, err := s.Status(ctx, p); err != nil || st.Version != "" || st.Build != "" || st.Account != nil || !st.StartedAt.IsZero() {
+		t.Fatalf("status before change: %+v %v", st, err)
 	}
 	if _, err := s.ListUsers(ctx, p); !errors.Is(err, domain.ErrPasswordChangeRequired) {
 		t.Fatalf("users before change: %v", err)
@@ -148,8 +150,11 @@ func TestAPIKeyOfDefaultAdminIsLocked(t *testing.T) {
 	if err != nil || !p.MustChangePassword {
 		t.Fatalf("principal = %+v %v", p, err)
 	}
-	if _, err := e.svc.Status(ctx, p); !errors.Is(err, domain.ErrPasswordChangeRequired) {
-		t.Fatalf("status: %v", err)
+	if st, err := e.svc.Status(ctx, p); err != nil || st.Version != "" || st.Account != nil {
+		t.Fatalf("status (banner facts only): %+v %v", st, err)
+	}
+	if _, err := e.svc.ListUsers(ctx, p); !errors.Is(err, domain.ErrPasswordChangeRequired) {
+		t.Fatalf("users: %v", err)
 	}
 }
 

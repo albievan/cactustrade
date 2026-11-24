@@ -862,6 +862,10 @@ Each is the **default until the owner answers**. OD14–OD18 shape phase 6; OD19
 - **OD31 – Release signing:** `ssh-keygen -Y sign` (no new dependency). Default until the owner answers.
 - **OD32 – Cookie prefix** `__Host-`: yes, but it signs everyone out once. Default until the owner answers.
 - **OD33 – Rate-limit numbers** as in 7.3; kill, pause, stop and disarm are never throttled. Default until the owner answers.
+- **OD34 – Disarm when the arming admin loses the right:** should a gate disarm when the admin who armed it is demoted or disabled? Today: no (open question from the real-gate review, 2026-11-24).
+- **OD35 – Disarm when the linked demo account goes:** should a gate disarm when its linked demo account is deleted? Today: no; the arming record keeps the id and only a new arm fails its check.
+- **OD36 – Disarm on a rename:** should a gate disarm when the real account is renamed (the typed phrase names it)? Today: no.
+- **OD37 – Banner for admins who cannot see the account:** should every admin get the real-money banner, also for real accounts not shared with them? Today: only users who can see the account (OD27); every admin is e-mailed on arm and disarm.
 
 | ID | Step | Files | Acceptance tests | Status |
 |---|---|---|---|---|
@@ -1317,7 +1321,7 @@ the history are views only (`TestEntriesNeverUseTheViewCache`, `TestHistoryLoopI
 Open for the owner: OD14–OD18 remain defaults until answered; `Themes.tsx` still derives
 `canEdit` in React (6.15 note); the trade pager's same-instant caveat (6.12-d).
 
-## Phase 7 — hardening and the real-mode gate — `in_progress`
+## Phase 7 — hardening and the real-mode gate — `done up to 7.17; 7.18–7.24 need the owner (written consent, real runs)`
 
 Order: hardening (7.1–7.9) → gate machinery with real trading still **impossible** (7.10–7.17)
 → **owner's written consent (7.18, blocked)** → lifting the refusals (7.19–7.23) → owner's
@@ -1858,3 +1862,35 @@ issues (incl. the new depguard rule), vet, `go test -race` with coverage **domai
 89.4 %**, MariaDB `test-int` ok, govulncheck "No vulnerabilities found", `make audit` (modules
 verified, licences ok, pnpm audit clean, images pinned), contracts in sync, `pnpm -C web check`
 (128 tests). `make dist` run once with a throw-away key (above).
+
+### Real-gate review (2026-11-24)
+
+Status: `done` (2026-11-24). An independent review of 7.10–7.17. Each finding below got a
+test that failed first, then the fix. Real trading stays **impossible**:
+`domain.RealTradingEnabled` is still false, no refusal site S1–S11 was lifted, the eToro
+allowlist is unchanged, there is no new dependency and no migration.
+
+| # | Sev. | Finding | Fix | Test (failed first) |
+|---|---|---|---|---|
+| R1 | MAJOR | `SetAccountCredentials` wrote the two eToro keys one at a time and returned on the first failed write. The disarm and the unreconcile ran only after the loop, so a change that failed part-way left the gate armed and the account reconciled, with one key possibly new. | The unreconcile and `disarmIfArmed(…, DisarmKeys)` now run **before** the first `Secrets.Put`, once validation has passed and something is to be written. The ctl lock is held and the agent is quiescent. A change that then writes nothing at all still disarms (fail closed). | `TestKeyChangeFailingPartWayDisarms`: write 1 or 2 fails → gate locked for the key change, account unreconciled; an invalid key changes nothing. Failed with the old order. |
+| R2 | minor | The banner failed open: a gate read error read as "not armed", a failed `Status` showed nothing, and the change-password page and Swagger UI had no banner. | `realGateState` returns the error, and `Status.RealArmedUnknown` / contract `realArmedUnknown` carry it. `TradingHealth` reports an unreadable gate as a problem. `ModeProvider` remembers a failed status read, and `RealBanner` then shows a red "real-trading state unknown" banner (with any names still known). `ChangeDefaultPassword` is wrapped in `ModeProvider` and renders `RealBanner`. **`Status` now answers a default-password user with the banner's facts only** (no version, build, start time or account), because the page has no other source; every other use case stays refused, and the three tests asserting the old 403 now assert that narrowed answer. The server renders the same banner (escaped, inline style, `Cache-Control: no-store`) right after `<body>` of the Swagger UI page for a signed-in visitor; anonymous visitors get the page unchanged. | `TestRealGateStateUnknown`, `TestStatusForDefaultPassword`, `TestRealBannerUnknownAndSwagger` (status, armed and escaped, anonymous, unknown), `RealBanner.test.tsx` (unknown on every route, a failed first load, last known names), `ChangeDefaultPassword.test.tsx` (armed, none, unknown). |
+| R3 | minor | Restore detection compared clocks (`restore.at` against `armed_at`). A skewed clock could let a restored arming through. | Every restore locks every gate: `PrepareRestored` (standalone, in the restore transaction) and `deploy/backup/mariadb-restore.sh` (one transaction with the lease and session clean-up; skipped for a dump older than 00012). Both run `UPDATE real_gates SET state='locked', disarmed_at=<now µs>, disarmed_by='', disarm_reason='a backup was restored', version=version+1, updated_at=<now µs> WHERE state='armed'`. New `domain.DisarmRestored`. The `restore.at` comparison stays as a second check. | `TestBackupRestoreRoundTrip` (a gate armed an hour in the future is locked with that reason) and `TestMariaDBBackupRestore` (test-int: none armed after the restore, reason, version bumped). The SQLite one failed before the fix. |
+| R4 | minor | The disarm latch was per process: when the gate write failed, other replicas still saw the gate armed. | `disarmQuietly` stores a **kill** when the gate write fails (`storeKillLocked`: latch, risk state, agent state, cancel the tick; audited `agent.kill` with the reason "the real-trading disarm could not be stored (…)"). It skips this when this process already holds a kill (a kill being tripped stores its own). Consequence: an admin must reset the kill switch after the database trouble, and the supervisor flattens our positions there (on a real account only from 7.21). `tripLocked` was split into `storeKillLocked` + `announceKill`, so the gate is disarmed once per trip, without recursion. | `TestRealGateDisarmWriteFailureKills`: gate write fails → kill stored; a fresh `Service` on the same store (no latches) sees the account killed; a kill whose disarm fails is audited once. Failed before the fix. |
+| R5 | minor | Disarm work ran ahead of exit work: the kill's gate disarm sent its event and e-mails before the flatten, and the supervisor tick swept gates before starting the passes. | `tripLocked` latches and stores the disarm and returns an `announce` func. `Kill` runs it (deferred) after `flatten`. The supervisor's drawdown trip (`tripQuietly`) runs it at the end of its pass, after the closes; a real account is not supervised before 7.21 (S6), so no test can reach that path yet. `trip` (the agent tick's kill) runs it on return. The tick now starts the passes first, then `sweepRealGatesAside` runs `sweepRealGates` in its own goroutine (in the loop's WaitGroup) with a 30 s timeout. At most one sweep runs at a time (`runtimeState.sweeping`). | `TestTripAnnouncesTheDisarmAfterwards` (stored before return, no event or e-mail until `announce`; `Kill` sends them), `TestSlowGateSweepDoesNotDelayExits` (a gate read blocked forever: the tick returns, the demo pass closes its due position, the sweep has a deadline, a second tick starts no second sweep). The sweep test failed before the fix. |
+| R6 | minor | Tests were weaker than their names. | `TestRealRefusalModeReferences` says in its comment that it is a tripwire for review and that the behaviour matrix is the guard. It also matches `isRealAccount`, `accountMode` and `.Mode ==` / `.Mode !=`; the 10 new hits are in `modeSites` with a reason each (reads, limits, display, the gate's own narrowing; none lets real through). `TestRealGateEndpoints` seeds 19 qualifying days before the step now named "19 days: one short of the evidence", checks the count, then adds the 20th. | the source test itself; `TestRealGateEndpoints`. |
+| R7 | minor | The RUNBOOK disarm procedure was stale. | It is no longer "planned". The menu is *Setup → Real trading*. Step 1 says a kill on a real account stores the kill and disarms today but flattens only **from 7.21**. Step 3 (`CACTUSTRADE_REAL_TRADING`) is marked **from 7.23** and is skipped until then. A failed disarm stores a kill, the "state unknown" banner means "treat it as armed", and the restore section says every gate is locked. ARCHITECTURE "Real-mode gate" is updated to match. | docs |
+
+**Open owner questions (listed, not implemented):** OD34–OD37 above.
+- Should a gate disarm when the admin who armed it is demoted or disabled?
+- Should a gate disarm when the linked demo account is deleted?
+- Should a gate disarm when the real account is renamed?
+- Should admins who cannot see the account get the banner?
+
+**Verification (2026-11-24):** `make check` green: gofumpt, golangci-lint 0 issues, vet,
+`go test -race` with coverage **domain 97.9 %, app 89.6 %**, MariaDB `test-int` ok (including
+the restore script locking the gates), govulncheck "No vulnerabilities found", `make audit`
+(modules verified, licences ok, pnpm audit clean, images pinned), contracts in sync,
+`pnpm -C web check` (194 tests). Three fixes were checked by temporarily reverting them: R1's,
+R4's and R5's tests failed and passed again once the fix was restored. R3's SQLite test failed
+before its fix. R2's tests use the new `realArmedUnknown` contract field.
+

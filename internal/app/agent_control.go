@@ -229,7 +229,8 @@ func (s *Service) Kill(ctx context.Context, p Principal, accountID, reason strin
 	// Once authorized, the kill runs to the end even if the caller goes away (a closed
 	// browser tab must not stop the closes), as force close does.
 	ctx = context.WithoutCancel(ctx)
-	already, terr := s.tripLocked(ctx, v.Account, p, why)
+	already, announce, terr := s.tripLocked(ctx, v.Account, p, why)
+	defer announce() // the gate disarm's event and e-mails wait for the flatten (review minor 4)
 	rep.Already = already
 	if terr != nil {
 		// Exits must work even when the kill could not be stored: flatten anyway.

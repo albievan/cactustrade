@@ -78,9 +78,10 @@ func (s *Store) LiveLeases(ctx context.Context, now time.Time) (int, error) {
 
 // PrepareRestored readies a restored database for its first start: the leases of the
 // processes that ran when the backup was taken are dropped (they are gone), every session is
-// ended (a sign-out made after the backup must not come back), and the setting restore.at
-// records when the restore happened (PLAN 7.6a: a real-mode gate armed before it is disarmed,
-// 7.12/7.13).
+// ended (a sign-out made after the backup must not come back), every real-mode gate is
+// locked (review minor 2: a restore never brings an arming back, whatever the clocks say),
+// and the setting restore.at records when the restore happened (PLAN 7.6a: kept as a second
+// check, a gate armed before it is not in force, 7.12/7.13).
 func (s *Store) PrepareRestored(ctx context.Context, at time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -91,6 +92,11 @@ func (s *Store) PrepareRestored(ctx context.Context, at time.Time) error {
 		if _, err := tx.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("sqlstore.PrepareRestored: %w", err)
 		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE real_gates SET state = ?, disarmed_at = ?, disarmed_by = '', disarm_reason = ?, "+
+		"version = version + 1, updated_at = ? WHERE state = ?",
+		string(domain.GateLocked), us(at), domain.DisarmRestored, us(at), string(domain.GateArmed)); err != nil {
+		return fmt.Errorf("sqlstore.PrepareRestored: locking the real gates: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM settings WHERE k = ?", RestoreAtSetting); err != nil {
 		return fmt.Errorf("sqlstore.PrepareRestored: %w", err)

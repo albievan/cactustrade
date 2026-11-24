@@ -2,7 +2,7 @@
 
 What to watch and what to do: the monitoring (PLAN 7.5), then the incident procedures (PLAN
 7.9): eToro API down, kill switch tripped, reconciliation mismatch, lease held by a dead
-process, restore, Vault unavailable, **disarm real trading now** (planned with the gate), and
+process, restore, Vault unavailable, **disarm real trading now**, and
 the operating notes (trusted proxies on k3s/k8s, releases).
 
 Two rules hold in every procedure: **never hold a position overnight** (if cactusTrade cannot
@@ -327,8 +327,9 @@ restore:
 2. The server reconciles every account with eToro **before** any agent, supervisor pass or
    order (PLAN 4.14). Positions opened after the backup was taken are matched against eToro:
    check the reconciliation of each account and the eToro portfolio before starting an agent.
-3. A real-trading arm older than the restore is disarmed by the gate (`restore.at`, PLAN 7.12 /
-   7.13): arm again only through the full gate.
+3. Every real-trading gate is locked by the restore itself (reason "a backup was restored"),
+   whatever the clocks say; as a second check, an arm older than `restore.at` is not in force
+   (PLAN 7.12 / 7.13). Arm again only through the full gate.
 
 ### Vault unavailable (only with `CACTUSTRADE_SECRETS=vault`)
 
@@ -345,31 +346,39 @@ closed by cactusTrade until Vault answers.
 3. Do not restart cactusTrade during a Vault outage unless you must: the restarted process
    cannot read any key.
 
-### Disarm real trading now (planned procedure)
+### Disarm real trading now
 
 **Today real trading is impossible in this build** (`domain.RealTradingEnabled = false`,
-PLAN 7.10; every real-mode site S1–S11 refuses). The gate that arms a real account arrives with
-PLAN 7.13–7.15 and the lift only after the owner's written consent (7.18); this procedure is the
-planned one and is confirmed when 7.16 documents the gate. Do the steps in this order; each one
-alone stops new real entries, and **exits continue** after every one of them.
+PLAN 7.10; every real-mode site S1–S11 refuses). The gate machinery exists (PLAN 7.13–7.15: the
+*Real trading* page, the disarm endpoint, the banner); real trading itself is lifted only after
+the owner's written consent (7.18). Steps marked *(from 7.21)* / *(from 7.23)* do not do
+everything described until that step ships. Do the steps in this order; each one alone stops
+new real entries, and **exits continue** after every one of them.
 
 1. **Kill the real account** (fastest; operator with trade access, session or API key, never
-   rate-limited): `POST /api/v1/agent/kill?accountId=<real account>` (above). Our pending orders
-   are cancelled and our positions closed.
+   rate-limited): `POST /api/v1/agent/kill?accountId=<real account>` (above). It stores the kill
+   and disarms the gate today. *(from 7.21)* Our pending orders are cancelled and our positions
+   closed; until then a kill on a real account flattens nothing (refusal site S7), so close any
+   real position in eToro's web app.
 2. **Disarm** (trade access and the `agent.kill` permission, session or API key, never
-   rate-limited, D32): the *Disarm* button under *Settings → Real trading*, or
+   rate-limited, D32): the *Disarm* button under *Setup → Real trading*, or
    ```sh
    curl -fsS -X POST -H "Authorization: Bearer $CT_KEY" -H 'Content-Type: application/json' \
      -d '{"reason":"runbook: disarm now"}' "$CT/api/v1/accounts/$REAL_ACCT/real-gate/disarm"
    ```
    The agent goes to stopped; arming again needs the full gate (admin, owner, password, phrase,
-   evidence).
-3. **Switch the deployment off:** `CACTUSTRADE_REAL_TRADING=off` (the default, OD28; `deploy.sh`
-   never sets it) and restart. Real entries are then refused even on an armed account; real
-   exits never depend on it.
+   evidence). If the disarm cannot be stored (database trouble), cactusTrade also stores a kill
+   on the account so that every process refuses entries; an admin resets it once the cause is
+   fixed.
+3. *(from 7.23)* **Switch the deployment off:** `CACTUSTRADE_REAL_TRADING=off` (the default,
+   OD28; `deploy.sh` never sets it) and restart. Real entries are then refused even on an armed
+   account; real exits never depend on it. The setting does not exist before 7.23 (nothing reads
+   it): skip this step until then.
 4. **Cut eToro access** if cactusTrade itself is in doubt: delete or regenerate the real API
    key in eToro's settings. From then on, close any real position in eToro's web app.
-5. Check: the red "REAL MONEY" banner is gone, `cactustrade_real_gate_armed` is 0 for every
+5. Check: the red "REAL MONEY" banner is gone (a red "real-trading state unknown" banner means
+   the gate could not be read: treat it as armed and find out why),
+   `cactustrade_real_gate_armed` is 0 for every
    account (alert `CactusTradeRealArmed` resolves), the audit log has the disarm with your
    reason, and the eToro portfolio shows no position cactusTrade opened.
 

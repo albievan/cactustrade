@@ -75,7 +75,7 @@ func (s *Service) superviseTick(ctx context.Context, wg *sync.WaitGroup) {
 		return
 	}
 	s.health.tick(s.d.Clock.Now())
-	s.sweepRealGates(ctx, as) // expired gates and gates older than a restore (OD24)
+	defer s.sweepRealGatesAside(ctx, wg, as) // after the passes have started (review minor 4)
 	for _, a := range as {
 		if !s.supervisable(ctx, a) {
 			continue
@@ -176,7 +176,9 @@ func (s *Service) supervise(ctx context.Context, accountID string) (SupervisorRe
 		case !rep.Killed && domain.DrawdownBreached(pf.Equity(), st.State, l):
 			why := fmt.Sprintf("drawdown limit: the account equity $%s (every position, also those not opened by cactusTrade) is $%s below the high-water mark $%s (limit %d bp)",
 				pf.Equity(), st.State.HighWaterMark-pf.Equity(), st.State.HighWaterMark, l.Drawdown)
-			if err := s.trip(ctx, a, why); err != nil {
+			announce, err := s.tripQuietly(ctx, a, why)
+			defer announce() // a gate disarm is announced after this pass's exits (review minor 4)
+			if err != nil {
 				rep.fail("persisting the kill: %v", err)
 			}
 			rep.Killed, rep.Tripped = true, true
@@ -370,38 +372,61 @@ const killEffect = "New entries are stopped. Only the positions cactusTrade open
 // orders follows in the caller (the supervisor does it in the same pass, and on every later
 // pass while killed).
 func (s *Service) trip(ctx context.Context, a domain.Account, why string) error {
+	announce, err := s.tripQuietly(ctx, a, why)
+	announce()
+	return err
+}
+
+// tripQuietly is trip leaving the gate disarm's announcement (never nil) to the caller, which
+// runs it after its exit work (the supervisor: at the end of the pass).
+func (s *Service) tripQuietly(ctx context.Context, a domain.Account, why string) (func(), error) {
 	l := s.rt.agent(a.ID)
 	l.ctl.Lock()
 	defer l.ctl.Unlock()
-	_, err := s.tripLocked(ctx, a, Principal{}, why)
-	return err
+	_, announce, err := s.tripLocked(ctx, a, Principal{}, why)
+	return announce, err
 }
 
 // tripLocked turns the kill switch on; the caller holds the account's control lock. The kill
 // is persisted first (risk state and agent state), then the running agent tick is cancelled,
-// then it is audited and announced. already reports that the switch was on before (nothing
-// is announced again).
-func (s *Service) tripLocked(ctx context.Context, a domain.Account, p Principal, why string) (already bool, err error) {
-	now := s.d.Clock.Now().UTC()
+// a real-money account's gate is disarmed (latched and stored, OD24), then the kill is
+// audited and announced. already reports that the switch was on before (nothing is announced
+// again). announce (never nil) sends the gate disarm's event and e-mails: the caller runs it
+// after its exit work (review minor 4).
+func (s *Service) tripLocked(ctx context.Context, a domain.Account, p Principal, why string) (already bool, announce func(), err error) {
+	already, err = s.storeKillLocked(ctx, a, why)
+	announce = s.disarmIfArmedQuietly(ctx, a, p, domain.DisarmKill+": "+why) // OD24
+	if already && err == nil {
+		return true, announce, nil
+	}
+	s.announceKill(ctx, a, p, why)
+	if err != nil {
+		return already, announce, fmt.Errorf("app.trip: %w", err)
+	}
+	return already, announce, nil
+}
+
+// storeKillLocked latches the kill in memory, stores it (risk state and agent state) and
+// cancels the running agent tick; the caller holds the account's control lock. It leaves the
+// gate alone (tripLocked disarms it; a failed disarm calls this to make its refusal hold in
+// every process).
+func (s *Service) storeKillLocked(ctx context.Context, a domain.Account, why string) (already bool, err error) {
 	// Latched in memory first: it holds even if neither write below reaches the database
 	// (review m3), until ResetKill.
 	s.rt.latchKill(a.ID)
-	already, err = s.persistKill(ctx, a.ID, why, now)
+	already, err = s.persistKill(ctx, a.ID, why, s.d.Clock.Now().UTC())
 	if serr := s.setAgentState(ctx, a.ID, domain.AgentKilled); serr != nil {
 		err = errors.Join(err, serr)
 		s.publishAgentState(a.ID, domain.AgentKilled) // latched in memory all the same
 	}
 	s.rt.cancelEntries(a.ID)
-	s.disarmIfArmed(ctx, a, p, domain.DisarmKill+": "+why) // OD24
-	if already && err == nil {
-		return true, nil
-	}
+	return already, err
+}
+
+// announceKill audits a kill and raises its danger event.
+func (s *Service) announceKill(ctx context.Context, a domain.Account, p Principal, why string) {
 	s.audit(ctx, p, "agent.kill", a.ID, why)
 	s.emitFor(ctx, a.ID, p.Username, "agent.killed", domain.SeverityDanger, "Kill switch on "+a.Name, why+". "+killEffect)
-	if err != nil {
-		return already, fmt.Errorf("app.trip: %w", err)
-	}
-	return already, nil
 }
 
 // persistKill stores the kill in the account's risk state (versioned, retried on a

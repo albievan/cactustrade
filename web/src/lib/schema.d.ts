@@ -240,7 +240,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Version, trading mode and agent state (viewer) */
+        /**
+         * Version, trading mode and agent state (viewer)
+         * @description A user who must still change the default password gets only the real-trading banner's facts (realArmed, realArmedUnknown); version, build, start time and account are left empty.
+         */
         get: operations["getSystemStatus"];
         put?: never;
         post?: never;
@@ -1677,6 +1680,8 @@ export interface components {
             account?: components["schemas"]["Account"];
             /** @description the accounts the caller can see whose real trading is armed (the banner on every page); always empty in this build */
             realArmed?: components["schemas"]["RealArmedAccount"][];
+            /** @description the gate of at least one real account the caller can see could not be read: the banner says the real-trading state is unknown (never 'not armed') */
+            realArmedUnknown?: boolean;
         };
         RealArmedAccount: {
             id: string;

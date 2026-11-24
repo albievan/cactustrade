@@ -271,6 +271,7 @@ paths:
       tags: [system]
       operationId: getSystemStatus
       summary: Version, trading mode and agent state (viewer)
+      description: "A user who must still change the default password gets only the real-trading banner's facts (realArmed, realArmedUnknown); version, build, start time and account are left empty."
       responses:
         "200":
           description: System status
@@ -1927,6 +1928,9 @@ components:
           type: array
           description: "the accounts the caller can see whose real trading is armed (the banner on every page); always empty in this build"
           items: { $ref: "#/components/schemas/RealArmedAccount" }
+        realArmedUnknown:
+          type: boolean
+          description: "the gate of at least one real account the caller can see could not be read: the banner says the real-trading state is unknown (never 'not armed')"
     RealArmedAccount:
       type: object
       required: [id, name]

@@ -330,6 +330,9 @@ const (
 	DisarmLimits  = "a risk limit was raised"
 	DisarmRestore = "a backup was restored after the gate was armed"
 	DisarmExpired = "the arming expired (30 days)"
+	// DisarmRestored is recorded by the restore itself, which locks every gate whatever the
+	// clocks say (deploy/backup/mariadb-restore.sh writes the same text).
+	DisarmRestored = "a backup was restored"
 )
 
 // SettingRestoreAt is the settings key holding the time of the latest restore of the

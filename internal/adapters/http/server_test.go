@@ -114,8 +114,13 @@ func (x *tc) setupAndLogin() {
 	if u, _ := m["user"].(map[string]any); u["mustChangePassword"] != true {
 		x.t.Fatalf("default admin login %v", m)
 	}
-	if code, m, _ := x.do("GET", "/api/v1/system/status", ""); code != 403 || m["title"] != "Password change required" {
+	// Only the real banner's facts before the change (review minor 1), nothing else.
+	if code, m, _ := x.do("GET", "/api/v1/system/status", ""); code != 200 || m["version"] != "" || m["build"] != "" || m["account"] != nil ||
+		m["realArmed"] == nil || m["realArmedUnknown"] != false {
 		x.t.Fatalf("status before change %d %v", code, m)
+	}
+	if code, m, _ := x.do("GET", "/api/v1/accounts", ""); code != 403 || m["title"] != "Password change required" {
+		x.t.Fatalf("accounts before change %d %v", code, m)
 	}
 	if code, m, _ := x.do("GET", "/api/v1/auth/me", ""); code != 200 || m["user"].(map[string]any)["mustChangePassword"] != true {
 		x.t.Fatalf("me before change %d %v", code, m)

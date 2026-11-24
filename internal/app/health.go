@@ -234,9 +234,13 @@ func (s *Service) accountHealth(ctx context.Context, a domain.Account, now, firs
 		AccountID: a.ID, Mode: accountMode(a), Supervised: s.supervisable(ctx, a),
 		AgentState: s.agentState(ctx, a.ID), Reconciled: s.Reconciled(a.ID).OK,
 		LastPass: pr.last, LastCleanPass: pr.lastClean, Orders: map[domain.OrderState]int{},
-		RealGateArmed: s.realGateArmed(ctx, a),
 	}
 	var problems []string
+	armed, gerr := s.realGateState(ctx, a)
+	ah.RealGateArmed = armed
+	if gerr != nil {
+		problems = append(problems, "reading the real gate failed: its state is unknown")
+	}
 	killed, err := s.isKilled(ctx, a.ID)
 	ah.Killed = killed // a read error reads as killed (fail closed)
 	if err != nil {

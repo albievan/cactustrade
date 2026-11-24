@@ -16,13 +16,16 @@ const me = {
   permissions: ["view", "agent.control", "settings.write", "users.manage", "audit.view"], via: "session", csrfToken: "c",
 };
 
-function serve(realArmed: { id: string; name: string }[], mode = "demo") {
-  const status = { version: "0.1.0", build: "15", mode, agentState: "stopped", database: "sqlite", startedAt: "", now: "", realArmed };
+function serve(realArmed: { id: string; name: string }[], mode = "demo", opts: { unknown?: boolean; statusFails?: boolean } = {}) {
+  const status = { version: "0.1.0", build: "15", mode, agentState: "stopped", database: "sqlite", startedAt: "", now: "", realArmed, realArmedUnknown: opts.unknown ?? false };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
     if (url.endsWith("/api/v1/auth/me")) return json(me);
-    if (url.endsWith("/api/v1/system/status")) return json(status);
+    if (url.endsWith("/api/v1/system/status")) {
+      if (opts.statusFails) return new Response(JSON.stringify({ title: "Internal error", status: 500 }), { status: 500, headers: { "Content-Type": "application/problem+json" } });
+      return json(status);
+    }
     if (url.endsWith("/api/v1/accounts")) return json([]);
     if (url.includes("/api/v1/events")) return json({ events: [], unseen: 0 });
     return new Response("{}", { status: 404 });
@@ -63,6 +66,29 @@ describe("RealBanner in the Layout (OD27)", () => {
     expect(await screen.findByText("page " + path)).toBeInTheDocument();
     await screen.findByText("v0.1.0 · build 15"); // the status has arrived
     expect(screen.queryByText(/real trading armed on/)).not.toBeInTheDocument();
+    unmount();
+  });
+
+  // Review minor 1: a failure is never shown as "not armed".
+  it.each(paths)("says the state is unknown on %s when a gate cannot be read", async (path) => {
+    serve([], "demo", { unknown: true });
+    const { unmount } = renderAt(path);
+    const banner = await screen.findByText(/REAL MONEY — real-trading state unknown/);
+    expect(banner.closest("[role=alert]")).not.toBeNull();
+    unmount();
+  });
+
+  it("says the state is unknown when the status itself cannot be read (first load)", async () => {
+    serve([], "demo", { statusFails: true });
+    const { unmount } = renderAt("/");
+    expect(await screen.findByText(/REAL MONEY — real-trading state unknown/)).toBeInTheDocument();
+    unmount();
+  });
+
+  it("names the accounts still known to be armed when a gate is unknown", async () => {
+    serve([{ id: "r1", name: "Live" }], "demo", { unknown: true });
+    const { unmount } = renderAt("/");
+    expect(await screen.findByText(/real-trading state unknown.*Last known armed on: Live/)).toBeInTheDocument();
     unmount();
   });
 });

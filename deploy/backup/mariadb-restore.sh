@@ -11,9 +11,11 @@
 #     touched until here.
 #  3. Swap in one atomic RENAME TABLE: DATABASE's tables move to DATABASE_prerestore (kept
 #     until the next restore), the restored ones to DATABASE.
-#  4. Ready it for the first start: no leases, no sessions (everyone signs in again), and
-#     the setting restore.at (a real-mode gate armed before it is disarmed, OD24). The app's
-#     start-up then reconciles every account with eToro before anything else (PLAN 4.14).
+#  4. Ready it for the first start: no leases, no sessions (everyone signs in again), every
+#     real-mode gate locked (a restore never brings an arming back, whatever the clocks say),
+#     and the setting restore.at (a second check: a gate armed before it is disarmed, OD24).
+#     The app's start-up then reconciles every account with eToro before anything else
+#     (PLAN 4.14).
 set -eu
 db="${1:?database name}"
 newest="${2:?newest schema version}"
@@ -76,5 +78,9 @@ sql -e "CREATE DATABASE IF NOT EXISTS \`$db\`; DROP DATABASE IF EXISTS \`$prev\`
 # 4. ready for the first start
 now_us="$(sql -e "SELECT FLOOR(UNIX_TIMESTAMP(NOW(6)) * 1000000)")"
 at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-sql "$db" -e "DELETE FROM agent_leases; DELETE FROM sessions; DELETE FROM settings WHERE k = 'restore.at'; INSERT INTO settings (k, v, updated_at) VALUES ('restore.at', '$at', $now_us)"
+lock_gates=""
+if has_table "$db" real_gates; then # schema 12 on (an older dump has no gate to lock)
+  lock_gates="UPDATE real_gates SET state = 'locked', disarmed_at = $now_us, disarmed_by = '', disarm_reason = 'a backup was restored', version = version + 1, updated_at = $now_us WHERE state = 'armed';"
+fi
+sql "$db" -e "START TRANSACTION; DELETE FROM agent_leases; DELETE FROM sessions; $lock_gates DELETE FROM settings WHERE k = 'restore.at'; INSERT INTO settings (k, v, updated_at) VALUES ('restore.at', '$at', $now_us); COMMIT"
 echo "restored schema $version into $db (the replaced tables are kept in $prev until the next restore)"

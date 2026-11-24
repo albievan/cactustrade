@@ -36,6 +36,7 @@ type backupEnv struct {
 	id       *age.X25519Identity
 	idFile   string
 	acct     domain.Account
+	real     domain.Account // a real-money account whose gate is stored armed
 	secretNm domain.CredentialName
 }
 
@@ -122,6 +123,17 @@ func newBackupEnv(t *testing.T) *backupEnv {
 	}
 	e.secretNm = uk
 	now := time.Now()
+	// A real account's gate stored armed an hour in the future (a skewed clock): restore.at
+	// alone would not catch it, the restore must lock it (review minor 2).
+	rv, err := svc.CreateAccount(ctx, p, "Live", domain.ModeReal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.real = rv.Account
+	ev := domain.GateEvidence{Days: []domain.RiskDate{"2026-11-20"}, Count: 1, First: "2026-11-20", Last: "2026-11-20"}
+	if _, err := st.RealGates().Put(ctx, domain.LockedGate(e.real.ID).Arm(e.acct.ID, admin.ID, ev, now.Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.Sessions().Create(ctx, domain.Session{
 		TokenHash: "token-hash", UserID: admin.ID, CSRFToken: "csrf", CreatedAt: now, LastSeen: now, ExpiresAt: now.Add(time.Hour),
 	}); err != nil {
@@ -293,6 +305,10 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	}
 	if ts, err := time.Parse(time.RFC3339Nano, at); err != nil || time.Since(ts) > time.Minute {
 		t.Fatalf("restore.at %q %v", at, err)
+	}
+	// every gate is locked by the restore itself, whatever the clocks say (review minor 2)
+	if g, err := stB.RealGates().Get(ctx, e.real.ID); err != nil || g.State != domain.GateLocked || g.DisarmReason != domain.DisarmRestored || g.DisarmedAt.IsZero() {
+		t.Fatalf("real gate after the restore: %+v %v", g, err)
 	}
 	if n, _ := os.ReadDir(filepath.Join(dirB, lockDirName)); len(n) != 0 {
 		t.Fatalf("lock files left: %v", n)

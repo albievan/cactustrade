@@ -354,18 +354,27 @@ real-money account whatever the gate says. What exists is the gate's machinery:
 - **App** (`internal/app/realgate.go`): `RealGateStatus` (view), `ArmReal` (refused),
   `DisarmReal` (trade access + `agent.kill`, session or API key, idempotent; the agent stops,
   nothing is cancelled or closed), the automatic disarms (kill trip in `tripLocked`, key change
-  in `SetAccountCredentials`, a raised limit in `SetRiskLimits`, a restore and the expiry on
-  every read and in the supervisor loop's sweep), an in-memory disarm latch (fail closed), and
-  `armLocked`, which only `ArmReal` calls after `CanArm` — unreachable here, used by tests to
-  build the worst case of the refusal matrix. `Status.RealArmed` feeds the banner;
-  `TradingHealth` reports `RealGateArmed` per account.
+  in `SetAccountCredentials` before the first key is written, a raised limit in
+  `SetRiskLimits`, a restore and the expiry on every read and in the supervisor loop's sweep,
+  which runs beside the passes with a timeout), an in-memory disarm latch plus a stored kill
+  when the disarm cannot be written (fail closed in every process), and `armLocked`, which only
+  `ArmReal` calls after `CanArm` — unreachable here, used by tests to build the worst case of
+  the refusal matrix. A kill stores the disarm before its flatten and announces it (event,
+  e-mails) after. `Status.RealArmed` feeds the banner, `Status.RealArmedUnknown` says a gate
+  could not be read (never shown as "not armed"); `TradingHealth` reports `RealGateArmed` per
+  account and an unreadable gate as a problem.
+- **Restore:** every restore locks every gate (`PrepareRestored`, `mariadb-restore.sh`; reason
+  "a backup was restored"), whatever the clocks say; `restore.at` stays as a second check.
 - **HTTP:** `GET /api/v1/accounts/{id}/real-gate`, `POST …/arm` (web session, password under
   the sign-in limiter, CSRF), `POST …/disarm` (session or key, CSRF for cookies, never rate
   limited). A failing check is 409, every other real-mode refusal 403 "Real trading is not
   enabled in this build".
 - **Web:** *Setup → Real trading* shows the server's checklist, the evidence days, the demo
   account picker, the arm dialog (phrase + password) and Disarm; a red, non-dismissible
-  banner on every signed-in page while any visible account is armed (OD27).
+  banner on every signed-in page while any visible account is armed (OD27), or saying the
+  state is unknown when a gate or the status cannot be read; the change-password page shows it
+  too (its Status answer carries only the banner's facts), and the server renders the same
+  banner into the Swagger UI page for a signed-in user.
 
 ## Observability
 

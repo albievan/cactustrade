@@ -118,18 +118,25 @@ func (s *Service) gateLive(ctx context.Context, g domain.RealGate) (bool, string
 // DisarmUnreadableRestore is the reason recorded when the restore time cannot be read.
 const DisarmUnreadableRestore = "the time of the latest restore cannot be read"
 
-// realGateArmed reports whether the account's gate is in force now (read only: nothing is
-// stored). Read errors and non-real accounts are "not armed".
-func (s *Service) realGateArmed(ctx context.Context, a domain.Account) bool {
+// realGateState reports whether the account's gate is in force now (read only: nothing is
+// stored). Non-real accounts are not armed. A read error (the gate or the restore time) is
+// returned: the state is then unknown, which the banner shows as such (never as "not armed").
+func (s *Service) realGateState(ctx context.Context, a domain.Account) (bool, error) {
 	if !isRealAccount(a) {
-		return false
+		return false, nil
 	}
 	g, err := s.storedGate(ctx, a.ID)
 	if err != nil {
-		return false
+		return false, err
+	}
+	if g.State != domain.GateArmed {
+		return false, nil
+	}
+	if _, err := s.d.Store.Settings().Get(ctx, domain.SettingRestoreAt); err != nil && !errors.Is(err, domain.ErrNotFound) {
+		return false, err
 	}
 	live, _ := s.gateLive(ctx, g)
-	return live
+	return live, nil
 }
 
 // RealArmedAccount names an account whose real trading is armed (the banner, OD27).
@@ -137,15 +144,21 @@ type RealArmedAccount struct {
 	ID, Name string
 }
 
-// realArmed lists the accounts in vs whose gate is in force now.
-func (s *Service) realArmed(ctx context.Context, vs []domain.AccountView) []RealArmedAccount {
-	var out []RealArmedAccount
+// realArmed lists the accounts in vs whose gate is in force now; unknown reports that at
+// least one real account's gate could not be read.
+func (s *Service) realArmed(ctx context.Context, vs []domain.AccountView) (out []RealArmedAccount, unknown bool) {
 	for _, v := range vs {
-		if s.realGateArmed(ctx, v.Account) {
+		armed, err := s.realGateState(ctx, v.Account)
+		if err != nil {
+			s.d.Log.WarnContext(ctx, "real gate: the state cannot be read", "account", v.ID, "err", err)
+			unknown = true
+			continue
+		}
+		if armed {
 			out = append(out, RealArmedAccount{ID: v.ID, Name: v.Name})
 		}
 	}
-	return out
+	return out, unknown
 }
 
 // realAccount resolves a real-money account for the gate use cases.
@@ -421,12 +434,24 @@ func (s *Service) DisarmReal(ctx context.Context, p Principal, accountID, reason
 	return g, nil
 }
 
-// disarmLocked disarms the account's gate for why: latched in memory first (a gate armed
-// before it is not in force even if the write fails), then stored if it was armed, then the
-// agent is moved to stopped when running or paused. Only a change is audited, announced and
-// e-mailed. The caller holds the account's control lock. p is the user (Principal{} = the
-// system).
+// disarmLocked disarms the account's gate for why and announces it at once (see
+// disarmQuietly). The caller holds the account's control lock.
 func (s *Service) disarmLocked(ctx context.Context, a domain.Account, p Principal, why string) (domain.RealGate, error) {
+	g, announce, err := s.disarmQuietly(ctx, a, p, why)
+	announce()
+	return g, err
+}
+
+// disarmQuietly disarms the account's gate for why: latched in memory first (a gate armed
+// before it is not in force even if the write fails), then stored if it was armed, then the
+// agent is moved to stopped when running or paused. When the gate cannot be stored, a kill is
+// stored as well (unless this process already holds one), so every process refuses entries,
+// not only this one (review minor 3). Only a change is audited; its danger event and e-mails
+// are left to announce, which the caller runs when the urgent work is done (a kill runs it
+// after its flatten, review minor 4). announce is never nil. The caller holds the account's
+// control lock. p is the user (Principal{} = the system).
+func (s *Service) disarmQuietly(ctx context.Context, a domain.Account, p Principal, why string) (domain.RealGate, func(), error) {
+	nothing := func() {}
 	now := s.d.Clock.Now().UTC()
 	s.gates.latch(a.ID, now)
 	s.rt.cancelEntries(a.ID) // no entry pipeline keeps running on a gate being disarmed
@@ -448,32 +473,52 @@ func (s *Service) disarmLocked(ctx context.Context, a domain.Account, p Principa
 	}
 	if err != nil {
 		s.audit(ctx, p, "real.disarm_failed", a.ID, why)
-		return domain.LockedGate(a.ID), err
+		if !s.rt.killLatched(a.ID) { // a kill being tripped (tripLocked) is stored by it
+			kwhy := "the real-trading disarm could not be stored (" + why + ")"
+			already, kerr := s.storeKillLocked(ctx, a, kwhy)
+			if kerr != nil {
+				err = errors.Join(err, fmt.Errorf("storing the kill: %w", kerr))
+			}
+			if !already || kerr != nil {
+				s.announceKill(ctx, a, p, kwhy)
+			}
+		}
+		return domain.LockedGate(a.ID), nothing, err
 	}
 	if !changed {
-		return g, nil
+		return g, nothing, nil
 	}
 	s.audit(ctx, p, "real.disarm", a.ID, why)
-	title := "Real trading disarmed on " + a.Name
-	body := why + ". New entries stop; positions due are still closed. Arming again needs the full checklist."
-	s.emitFor(ctx, a.ID, p.Username, "real.disarmed", domain.SeverityDanger, title, body)
-	s.mailGateChange(ctx, a, p.Username, title, body)
-	return g, nil
+	return g, func() {
+		title := "Real trading disarmed on " + a.Name
+		body := why + ". New entries stop; positions due are still closed. Arming again needs the full checklist."
+		s.emitFor(ctx, a.ID, p.Username, "real.disarmed", domain.SeverityDanger, title, body)
+		s.mailGateChange(ctx, a, p.Username, title, body)
+	}, nil
 }
 
-// disarmIfArmed is the automatic disarm (OD24) for a real-money account whose gate is armed:
-// a kill-switch trip, a key change, a raised limit. The caller holds the account's control
-// lock. Errors are logged (the in-memory latch holds the disarm all the same).
+// disarmIfArmed is the automatic disarm (OD24) for a real-money account whose gate is armed
+// (a key change, a raised limit), announced at once. The caller holds the account's control
+// lock.
 func (s *Service) disarmIfArmed(ctx context.Context, a domain.Account, p Principal, why string) {
+	s.disarmIfArmedQuietly(ctx, a, p, why)()
+}
+
+// disarmIfArmedQuietly is disarmIfArmed leaving the announcement to the caller (a kill-switch
+// trip announces after its flatten). Errors are logged (the in-memory latch, and the kill
+// stored on a failed write, hold the disarm all the same). The result is never nil.
+func (s *Service) disarmIfArmedQuietly(ctx context.Context, a domain.Account, p Principal, why string) func() {
 	if !isRealAccount(a) {
-		return
+		return func() {}
 	}
 	if g, err := s.storedGate(ctx, a.ID); err == nil && g.State != domain.GateArmed {
-		return
+		return func() {}
 	}
-	if _, err := s.disarmLocked(ctx, a, p, why); err != nil {
+	_, announce, err := s.disarmQuietly(ctx, a, p, why)
+	if err != nil {
 		s.d.Log.ErrorContext(ctx, "real gate: the automatic disarm could not be stored", "account", a.ID, "reason", why, "err", err)
 	}
+	return announce
 }
 
 // expireGate disarms a gate found stored armed but no longer in force (expired, older than a
@@ -493,8 +538,26 @@ func (s *Service) expireGate(ctx context.Context, a domain.Account, why string, 
 	return out
 }
 
+// sweepTimeout bounds one sweep of the real gates.
+const sweepTimeout = 30 * time.Second
+
+// sweepRealGatesAside runs sweepRealGates in its own goroutine (in wg) with sweepTimeout, so
+// a slow store never delays a supervisor pass's exits; a sweep still running is not started
+// again.
+func (s *Service) sweepRealGatesAside(ctx context.Context, wg *sync.WaitGroup, as []domain.Account) {
+	if !s.rt.sweeping.CompareAndSwap(false, true) {
+		return
+	}
+	wg.Go(func() {
+		defer s.rt.sweeping.Store(false)
+		sctx, cancel := context.WithTimeout(ctx, sweepTimeout)
+		defer cancel()
+		s.sweepRealGates(sctx, as)
+	})
+}
+
 // sweepRealGates disarms every stored-armed gate that is no longer in force (expiry, a
-// restore). The supervisor loop runs it on every tick.
+// restore). The supervisor loop runs it on every tick (sweepRealGatesAside).
 func (s *Service) sweepRealGates(ctx context.Context, as []domain.Account) {
 	for _, a := range as {
 		if !isRealAccount(a) {

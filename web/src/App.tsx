@@ -29,8 +29,9 @@ export function App() {
   if (location.pathname === "/reset-password") return <ResetPassword />;
   if (loading) return <div className="p-5 text-center text-secondary">Loading…</div>;
   if (!me) return <Login />;
-  // The built-in admin/admin must choose a new password before anything else.
-  if (me.user.mustChangePassword) return <ChangeDefaultPassword />;
+  // The built-in admin/admin must choose a new password before anything else. The page is
+  // outside the Layout, so it shows the real-money banner itself (OD27).
+  if (me.user.mustChangePassword) return <ModeProvider><ChangeDefaultPassword /></ModeProvider>;
   return (
     <ModeProvider>
     <Routes>

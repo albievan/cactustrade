@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { api, errorText } from "../lib/api";
 import { useSession } from "../lib/session";
 import { AuthLayout } from "../components/AuthLayout";
+import { RealBanner } from "../components/RealBanner";
 
 // Shown instead of the app while the account still has the default password (admin/admin).
 // The server refuses everything else until the password is changed.
@@ -30,6 +31,8 @@ export function ChangeDefaultPassword() {
     }
   }
   return (
+    <>
+    <RealBanner />
     <AuthLayout>
       <div>
         <h2><i className="bi bi-shield-lock me-2" />Choose a new password</h2>
@@ -56,5 +59,6 @@ export function ChangeDefaultPassword() {
         </form>
       </div>
     </AuthLayout>
+    </>
   );
 }

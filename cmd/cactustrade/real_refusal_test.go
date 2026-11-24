@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -59,22 +60,50 @@ var modeSites = map[string][]string{
 	"internal/app/agent.go":         {`if !a.Tradable() || a.Mode != domain.ModeDemo || s.agentState(ctx, a.ID) != domain.AgentRunning || !s.rt.claimTick(a.ID) {`, `case a.Mode != domain.ModeDemo:`}, // S9
 	"internal/app/agent_view.go":    {`c := AgentControls{Gated: v.Mode != domain.ModeDemo}`},                                                                                                          // S10
 	"internal/app/force_close.go":   {`if v.Mode != domain.ModeDemo {`, `if v.Tradable() && v.Mode == domain.ModeDemo && v.Access.AtLeast(domain.AccessTrade) {`},                                      // S7
-	"internal/app/health.go":        {`return a.Tradable() && a.Mode == domain.ModeDemo && s.hasKeys(ctx, a)`},                                                                                         // S6 supervisable
-	"internal/app/accounts.go":      {`if mode != domain.ModeDemo && mode != domain.ModeReal {`, `a := domain.Account{ID: domain.EnvAccountID, Name: "Demo (environment)", OwnerID: owner.ID, Mode: domain.ModeDemo, EnvKeys: true, CreatedAt: now, UpdatedAt: now}`},
-	"internal/app/system.go":        {`if a.Mode == domain.ModeReal {`, `return domain.ModeReal`, `return domain.ModeDemo`, `Version: s.cfg.Version, Build: s.cfg.Build, Mode: domain.ModeDemo, AgentState: domain.AgentStopped,`},
+	"internal/app/health.go": {
+		`return a.Tradable() && a.Mode == domain.ModeDemo && s.hasKeys(ctx, a)`,      // S6 supervisable
+		`AccountID: a.ID, Mode: accountMode(a), Supervised: s.supervisable(ctx, a),`, // health: reports the mode (a read)
+	},
+	"internal/app/accounts.go": {`if mode != domain.ModeDemo && mode != domain.ModeReal {`, `a := domain.Account{ID: domain.EnvAccountID, Name: "Demo (environment)", OwnerID: owner.ID, Mode: domain.ModeDemo, EnvKeys: true, CreatedAt: now, UpdatedAt: now}`},
+	"internal/app/system.go": {
+		`if a.Mode == domain.ModeReal {`, `return domain.ModeReal`, `return domain.ModeDemo`, `Version: s.cfg.Version, Build: s.cfg.Build, Mode: domain.ModeDemo, AgentState: domain.AgentStopped,`,
+		`func accountMode(a domain.Account) domain.TradingMode {`,                                                                              // accountMode: real only when the account says so (display, limits)
+		`st.Mode, st.AgentState, st.Account = accountMode(v.Account), s.agentState(ctx, v.ID), &v`,                                             // Status: the mode shown (R3's frame)
+		`st := SystemStatus{Mode: domain.ModeDemo, AgentState: domain.AgentStopped, Database: s.d.Store.Driver(), Now: s.d.Clock.Now().UTC()}`, // bannerStatus: banner facts only
+	},
+	// accountMode for display and limits (review minor 5): never a permission to trade.
+	"internal/app/risk.go": {
+		`return domain.DefaultLimitsFor(accountMode(a))`,                // real accounts default to the real limits (OD25)
+		`if err := l.ValidateFor(accountMode(v.Account)); err != nil {`, // real limits checked against the real ceilings (OD25)
+	},
+	"internal/app/market.go":    {`mode := accountMode(v.Account)`}, // TestConnection: reports the mode (a read)
+	"internal/ports/account.go": {`if a.Mode != "" {`},              // log attributes name the mode (PLAN 7.2)
 	// The gate machinery (7.13): only ever narrows (a gate exists for real accounts only).
 	"internal/app/realgate.go": {
 		`func isRealAccount(a domain.Account) bool { return a.Tradable() && a.Mode == domain.ModeReal }`,
 		`if c.Tradable() && c.Mode == domain.ModeDemo && c.OwnerID == v.OwnerID {`,
+		`if !isRealAccount(a) {`,         // realGateState: not real = not armed (a read)
+		`if !isRealAccount(v.Account) {`, // realAccount: only real accounts have a gate (refuses)
+		`if !isRealAccount(a) {`,         // disarmIfArmedQuietly: nothing to disarm
+		`if !isRealAccount(a) {`,         // sweepRealGates: nothing to sweep
 	},
 	// cmd: the environment account is demo; the backtester refuses a real account.
 	"cmd/cactustrade/main.go":     {`case x.Mode != domain.ModeReal:`},
 	"cmd/cactustrade/backtest.go": {`if !ok || acct.Mode == domain.ModeReal {`},
 }
 
-// TestRealRefusalModeReferences: every reference to domain.ModeReal / domain.ModeDemo in
-// non-test code is in modeSites (the shared repository suite's fixtures, storetest, are
-// test code in all but name and are skipped).
+// modeRef matches a line that decides on a trading mode: the constants, the app's helpers
+// isRealAccount and accountMode, and any comparison of a .Mode field (review minor 5).
+var modeRef = regexp.MustCompile(`ModeReal|ModeDemo|isRealAccount|accountMode|\.Mode\s*(==|!=)`)
+
+// TestRealRefusalModeReferences: every line of non-test code that references
+// domain.ModeReal / domain.ModeDemo, calls isRealAccount or accountMode, or compares a .Mode
+// field is in modeSites (the shared repository suite's fixtures, storetest, are test code in
+// all but name and are skipped). This is a tripwire for review, not the guard: a mode check
+// written another way (a switch on Mode, a string literal "real") passes it. The guard is the
+// behaviour matrix (TestRealRefusalDomain, TestRealRefusalEtoroClient, TestRealRefusalApp,
+// TestRealRefusalHTTP), which drives every refusal site with a gate armed and counts the
+// broker calls and requests.
 func TestRealRefusalModeReferences(t *testing.T) {
 	root := filepath.Join("..", "..")
 	found := map[string][]string{}
@@ -102,7 +131,7 @@ func TestRealRefusalModeReferences(t *testing.T) {
 			return err
 		}
 		for _, line := range strings.Split(string(src), "\n") {
-			if strings.Contains(line, "ModeReal") || strings.Contains(line, "ModeDemo") {
+			if modeRef.MatchString(line) {
 				trim := strings.TrimSpace(line)
 				if strings.HasPrefix(trim, "//") {
 					continue // a comment line

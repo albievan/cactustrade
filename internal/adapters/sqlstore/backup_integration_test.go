@@ -20,6 +20,7 @@ import (
 
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore/storetest"
+	"github.com/albievan/cactustrade/internal/domain"
 )
 
 const itPassword = "test-only-password"
@@ -140,6 +141,16 @@ func TestMariaDBBackupRestore(t *testing.T) {
 	}
 	storetest.Run(t, a) // fills every table the suite knows
 	now := time.Now()
+	// A gate stored armed an hour in the future (a skewed clock): the restore must lock it,
+	// whatever restore.at says (review minor 2).
+	var gated string
+	if err := a.DB().QueryRowContext(ctx, "SELECT id FROM accounts WHERE id NOT IN (SELECT account_id FROM real_gates) LIMIT 1").Scan(&gated); err != nil {
+		t.Fatal(err)
+	}
+	ev := domain.GateEvidence{Days: []domain.RiskDate{"2026-11-20"}, Count: 1, First: "2026-11-20", Last: "2026-11-20"}
+	if _, err := a.RealGates().Put(ctx, domain.LockedGate(gated).Arm("demo-x", "u-x", ev, now.Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.DB().ExecContext(ctx, "INSERT INTO agent_leases (account_id, holder, expires_at) SELECT id, 'old', ? FROM accounts WHERE id NOT IN (SELECT account_id FROM agent_leases) LIMIT 1",
 		now.Add(time.Hour).UnixMicro()); err != nil {
 		t.Fatal(err)
@@ -257,6 +268,13 @@ func TestMariaDBBackupRestore(t *testing.T) {
 	}
 	if ts, err := time.Parse(time.RFC3339, at); err != nil || time.Since(ts) > 10*time.Minute {
 		t.Fatalf("restore.at %q %v", at, err)
+	}
+	var stillArmed int
+	if err := b.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM real_gates WHERE state = 'armed'").Scan(&stillArmed); err != nil || stillArmed != 0 {
+		t.Fatalf("%d gates still armed after the restore (%v)", stillArmed, err)
+	}
+	if g, err := b.RealGates().Get(ctx, gated); err != nil || g.State != domain.GateLocked || g.DisarmReason != domain.DisarmRestored || g.DisarmedAt.IsZero() || g.Version < 2 {
+		t.Fatalf("gate after the restore: %+v %v", g, err)
 	}
 	// foreign keys point at the restored tables and still cascade
 	var foreign int
