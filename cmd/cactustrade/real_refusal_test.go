@@ -85,8 +85,11 @@ func TestRealRefusalModeReferences(t *testing.T) {
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			switch d.Name() {
-			case "node_modules", ".git", ".cache", "web", "storetest":
+			switch name := d.Name(); {
+			// Hidden folders (.git, .cache, .claude worktrees of other checkouts) are not
+			// this build's code.
+			case path != root && strings.HasPrefix(name, "."),
+				name == "node_modules", name == "web", name == "storetest":
 				return filepath.SkipDir
 			}
 			return nil
