@@ -90,6 +90,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return backtestCmd(ctx, args, getenv, out)
 	case "llm-test":
 		return llmTestCmd(ctx, args, getenv, out)
+	case "etoro-lookup":
+		return etoroLookupCmd(ctx, args, getenv, out)
 	case "backup":
 		return backupCmd(ctx, args, getenv, out, time.Now)
 	case "restore":
