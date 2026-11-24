@@ -209,6 +209,7 @@ var orderPathFiles = []string{"agent.go", "executor.go", "risk.go", "supervisor.
 // nothing.)
 var viewCacheReaders = []string{
 	"viewPortfolio", "peek", "entries", "flights", "viewEquity", "AgentStatusView", "LiveSnapshot", "WarmLiveView",
+	"WatchlistEntries", "WatchlistOverview", "watchHoldings", // R27
 }
 
 // cacheReads lists the view-cache reads in one Go source file: any viewCacheReaders
@@ -256,7 +257,7 @@ func TestViewCacheReadersAreViewsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views := []string{"viewcache.go", "agent_view.go", "live.go"}
+	views := []string{"viewcache.go", "agent_view.go", "live.go", "watchlist_view.go"} // R27: the watchlist page's holdings
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") || slices.Contains(views, name) {
 			continue

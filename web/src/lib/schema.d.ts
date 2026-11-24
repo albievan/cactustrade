@@ -823,6 +823,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/watchlist/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the caller may edit the watchlist and what the account holds (viewer)
+         * @description R27. canEdit says whether the caller has trade access to the current account (themes,
+         *     auto-assign, import, export); the page only shows it. holdings come from the portfolio
+         *     view cache (PLAN 6.6a): at most one eToro read per account every 10 s, shared with
+         *     every other view, never used for trading.
+         */
+        get: operations["getWatchlistOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlist/theme-assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put watchlist shares into themes (trade access)
+         * @description One theme per watchlist share (R27-a): the share is added to the chosen theme's picked
+         *     shares and removed from every other theme of the account; an empty themeId removes it
+         *     from all of them. Everything is checked before anything is stored.
+         */
+        post: operations["assignWatchlistThemes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlist/theme-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Propose the closest theme for each watchlist share without one (trade access; changes nothing)
+         * @description Deterministic scoring, no LLM (R27-c): a search word that is the symbol 5, starts a
+         *     word of the name 3, starts a word of the industry name 2; the theme's eToro industry
+         *     4. Ties go to the theme whose name sorts first. Reads eToro's industries (one screen
+         *     per theme industry, read-only market data); when that fails the industry is not
+         *     scored and a note says so.
+         */
+        get: operations["proposeWatchlistThemes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlist/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the watchlist and themes as JSON (trade access)
+         * @description No secrets, no account ids; LLM profiles by name only.
+         */
+        get: operations["exportWatchlist"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlist/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge a watchlist file into the current account (trade access, web UI)
+         * @description At most 1 MiB, version 1, at most 200 shares and 50 themes. Every share goes through
+         *     the same eToro check as adding by hand; refused ones are reported, not added. A theme
+         *     with the same name (case-insensitive) is updated, any other created. Importing the
+         *     same file twice changes nothing the second time.
+         */
+        post: operations["importWatchlist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/watchlist/{instrumentId}": {
         parameters: {
             query?: never;
@@ -1906,6 +2018,119 @@ export interface components {
             addedBy: string;
             /** Format: date-time */
             addedAt: string;
+            /** @description the account's theme this share is in (absent = none; R27) */
+            themeId?: string;
+            holding?: components["schemas"]["WatchHolding"];
+        };
+        /** @description What the account holds of one instrument, from the portfolio view cache (a view only) */
+        WatchHolding: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            name: string;
+            /** @description LSE, NYSE (also NASDAQ), ASX, or empty when not known */
+            market: string;
+            positions: number;
+            units: components["schemas"]["Decimal"];
+            valueCents: components["schemas"]["Cents"];
+            costCents: components["schemas"]["Cents"];
+            pnlCents: components["schemas"]["Cents"];
+            /** @description positions cactusTrade opened */
+            ours: number;
+            shorts: number;
+        };
+        WatchlistHoldings: {
+            /** @description a portfolio was read */
+            known: boolean;
+            /** @description older than 30 s, or none */
+            stale: boolean;
+            /** Format: date-time */
+            asOf?: string;
+            /** @description why the portfolio is not known */
+            error?: string;
+            currency: string;
+            watchlistValueCents: components["schemas"]["Cents"];
+            watchlistPnlCents: components["schemas"]["Cents"];
+            watchlistPositions: number;
+            notOnWatchlist: components["schemas"]["WatchHolding"][];
+        };
+        WatchlistOverview: {
+            /** @description the caller has trade access to the current account */
+            canEdit: boolean;
+            holdings: components["schemas"]["WatchlistHoldings"];
+        };
+        ThemeAssignment: {
+            /** Format: int64 */
+            instrumentId: number;
+            /** @description empty = no theme */
+            themeId: string;
+        };
+        ThemeAssignmentsRequest: {
+            assignments: components["schemas"]["ThemeAssignment"][];
+        };
+        ThemeAssignmentsResult: {
+            /** @description themes stored */
+            changedThemes: number;
+        };
+        ThemeProposal: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            themeId: string;
+            themeName: string;
+            score: number;
+            reasons: string[];
+        };
+        ThemeProposals: {
+            proposals: components["schemas"]["ThemeProposal"][];
+            /** @description symbols of shares without a theme that no theme matches */
+            unmatched: string[];
+            notes: string[];
+        };
+        WatchlistFileShare: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            market: string;
+        };
+        WatchlistFileTheme: {
+            name: string;
+            keywords: string[];
+            /** Format: int64 */
+            industryId: number;
+            instruments: number[];
+            llmProfileName?: string;
+        };
+        WatchlistFileAccount: {
+            name: string;
+        };
+        /** @description A cactusTrade watchlist file (R27). No secrets, no account ids. */
+        WatchlistFile: {
+            /** @enum {integer} */
+            version: 1;
+            /** Format: date-time */
+            exportedAt: string;
+            account: components["schemas"]["WatchlistFileAccount"];
+            watchlist: components["schemas"]["WatchlistFileShare"][];
+            themes: components["schemas"]["WatchlistFileTheme"][];
+        };
+        ImportSkip: {
+            /** Format: int64 */
+            instrumentId?: number;
+            /** @description the share's symbol or the theme's name */
+            name: string;
+            reason: string;
+        };
+        WatchlistImportResult: {
+            added: string[];
+            /** @description already on the watchlist */
+            already: string[];
+            skipped: components["schemas"]["ImportSkip"][];
+            themesCreated: string[];
+            themesUpdated: string[];
+            themesUnchanged: string[];
+            themesSkipped: components["schemas"]["ImportSkip"][];
+            notes: string[];
         };
         AddWatchRequest: {
             /** Format: int64 */
@@ -4264,6 +4489,134 @@ export interface operations {
                 };
             };
             401: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getWatchlistOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Overview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistOverview"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    assignWatchlistThemes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThemeAssignmentsRequest"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeAssignmentsResult"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    proposeWatchlistThemes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Proposals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeProposals"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    exportWatchlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file (Content-Disposition attachment) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistFile"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    importWatchlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchlistFile"];
+            };
+        };
+        responses: {
+            /** @description What was merged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistImportResult"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            413: components["responses"]["Problem"];
+            415: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };
     };

@@ -78,6 +78,12 @@ export type RealGate = components["schemas"]["RealGate"];
 export type RealGateStatus = components["schemas"]["RealGateStatus"];
 export type GateCheck = components["schemas"]["GateCheck"];
 export type RealArmedAccount = components["schemas"]["RealArmedAccount"];
+export type WatchHolding = components["schemas"]["WatchHolding"];
+export type WatchlistOverview = components["schemas"]["WatchlistOverview"];
+export type ThemeAssignment = components["schemas"]["ThemeAssignment"];
+export type ThemeProposal = components["schemas"]["ThemeProposal"];
+export type ThemeProposals = components["schemas"]["ThemeProposals"];
+export type WatchlistImportResult = components["schemas"]["WatchlistImportResult"];
 
 // forAccount is "?accountId=…" for a named account, "" for the current one.
 function forAccount(accountId?: string): string {
@@ -251,6 +257,12 @@ export const api = {
   disarmRealGate: (accountId: string, reason?: string) =>
     request<RealGate>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/real-gate/disarm`, reason ? { reason } : {}),
   watchlistCounts: () => request<WatchlistCount[]>("GET", "/api/v1/watchlist/counts"),
+  // R27: the watchlist page's header, themes per share, auto-assign and the JSON file.
+  watchlistOverview: () => request<WatchlistOverview>("GET", "/api/v1/watchlist/overview"),
+  assignThemes: (assignments: ThemeAssignment[]) =>
+    request<{ changedThemes: number }>("POST", "/api/v1/watchlist/theme-assignments", { assignments }),
+  themeProposals: () => request<ThemeProposals>("GET", "/api/v1/watchlist/theme-proposals"),
+  importWatchlist: (file: unknown) => request<WatchlistImportResult>("POST", "/api/v1/watchlist/import", file),
   killAgent: (reason: string) => request<KillReport>("POST", "/api/v1/agent/kill", { reason }),
   resetKill: (confirm: string) => request<AgentStatusResult>("POST", "/api/v1/agent/reset", { confirm }),
   reconcileAgent: () => request<Reconciliation>("POST", "/api/v1/agent/reconcile"),
@@ -279,6 +291,9 @@ export const api = {
   unshareAccount: (id: string, userId: string) =>
     request<void>("DELETE", `/api/v1/accounts/${encodeURIComponent(id)}/shares/${encodeURIComponent(userId)}`),
 };
+
+// WATCHLIST_EXPORT_URL downloads the current account's watchlist and themes as JSON (R27).
+export const WATCHLIST_EXPORT_URL = "/api/v1/watchlist/export";
 
 // usd formats US-dollar cents, e.g. 123456 → "$1,234.56".
 export function usd(cents: number | undefined): string {
