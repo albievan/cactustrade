@@ -175,6 +175,11 @@ func (s *Service) ActiveReviewer(ctx context.Context) (domain.LLMConfig, string,
 	if err != nil {
 		return domain.LLMConfig{}, "", true, fmt.Errorf("app.ActiveReviewer: %w", err)
 	}
+	if key != "" {
+		if err := ps[i].ValidateKeyTransport(); err != nil { // a profile stored before PLAN 7.1.9
+			return domain.LLMConfig{}, "", true, fmt.Errorf("app.ActiveReviewer: %w", err)
+		}
+	}
 	c := ps[i].LLMConfig
 	c.Enabled = true
 	return c, key, true, nil
@@ -275,6 +280,11 @@ func (s *Service) SaveLLMProfile(ctx context.Context, p Principal, in domain.LLM
 			return LLMProfileView{}, domain.Invalid("apiKey", "at most 4096 characters, no spaces")
 		}
 	}
+	if key != nil && *key != "" {
+		if err := in.ValidateKeyTransport(); err != nil {
+			return LLMProfileView{}, err
+		}
+	}
 	st, ps, err := s.loadLLM(ctx)
 	if err != nil {
 		return LLMProfileView{}, fmt.Errorf("app.SaveLLMProfile: %w", err)
@@ -297,6 +307,15 @@ func (s *Service) SaveLLMProfile(ctx context.Context, p Principal, in domain.LLM
 				return LLMProfileView{}, fmt.Errorf("app.SaveLLMProfile: %w", err)
 			} else if k != "" {
 				return LLMProfileView{}, domain.Invalid("apiKey", "enter the key again: the stored one belongs to "+old.Endpoint()+" ("+string(old.Provider)+")")
+			}
+		}
+		if key == nil { // the stored key stays: it must still travel encrypted (PLAN 7.1.9)
+			if k, err := s.llmKey(ctx, in.ID); err != nil {
+				return LLMProfileView{}, fmt.Errorf("app.SaveLLMProfile: %w", err)
+			} else if k != "" {
+				if err := in.ValidateKeyTransport(); err != nil {
+					return LLMProfileView{}, err
+				}
 			}
 		}
 		ps[i] = in
@@ -373,9 +392,10 @@ type LLMModelsRequest struct {
 	Key       string
 }
 
-// LLMModels lists the models a provider offers (admin).
+// LLMModels lists the models a provider offers (admin, web session: it sends a key to an
+// address, PLAN 7.1.8). A key only travels over https (PLAN 7.1.9).
 func (s *Service) LLMModels(ctx context.Context, p Principal, req LLMModelsRequest) ([]string, error) {
-	if err := s.authorize(p, domain.PermManageSettings); err != nil {
+	if err := s.llmAdmin(p); err != nil {
 		return nil, err
 	}
 	if s.d.LLM == nil {
@@ -407,6 +427,11 @@ func (s *Service) LLMModels(ctx context.Context, p Principal, req LLMModelsReque
 	}
 	if pr, _ := domain.LLMProviderByID(c.Provider); pr.KeyRequired && key == "" {
 		return nil, domain.Invalid("apiKey", "enter the API key first")
+	}
+	if key != "" {
+		if err := c.ValidateKeyTransport(); err != nil {
+			return nil, err
+		}
 	}
 	ms, err := s.d.LLM.Models(ctx, c, key)
 	if err != nil {

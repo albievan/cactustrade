@@ -160,11 +160,14 @@ paths:
       tags: [auth]
       operationId: setMyProfile
       summary: Change your e-mail address and notification choices (web UI)
+      description: >-
+        Changing the e-mail address (where password-reset links go) needs the current password
+        (PLAN 7.1.11); wrong passwords are rate-limited like sign-ins (429 with Retry-After).
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/Profile" }
+            schema: { $ref: "#/components/schemas/ProfileInput" }
       responses:
         "200":
           description: Stored
@@ -174,6 +177,7 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
   /api/v1/email:
     get:
       tags: [email]
@@ -242,6 +246,7 @@ paths:
       tags: [auth]
       operationId: changePassword
       summary: Change your own password (ends your other sessions)
+      description: Wrong current passwords are rate-limited like sign-ins (429 with Retry-After; PLAN 7.1.10).
       requestBody:
         required: true
         content:
@@ -252,6 +257,7 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
   /api/v1/system/status:
     get:
       tags: [system]
@@ -378,7 +384,10 @@ paths:
     get:
       tags: [credentials]
       operationId: listCredentials
-      summary: Which credentials are set (never their values)
+      summary: Which deployment credentials are set (never their values)
+      description: >-
+        Read-only status. eToro keys are set per account (PUT /api/v1/accounts/{accountId}/keys, owner,
+        web UI); the deployment's demo pair comes from ETORO_DEMO_PUB / ETORO_DEMO_PK (PLAN 7.1.3).
       responses:
         "200":
           description: Credential status
@@ -388,34 +397,6 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Credential" }
         "401": { $ref: "#/components/responses/Problem" }
-  /api/v1/credentials/{name}:
-    parameters:
-      - { name: name, in: path, required: true, schema: { $ref: "#/components/schemas/CredentialName" } }
-    put:
-      tags: [credentials]
-      operationId: setCredential
-      summary: Set a credential (admin, web UI session only); write-only
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/SetCredentialRequest" }
-      responses:
-        "204": { description: Stored (encrypted) }
-        "400": { $ref: "#/components/responses/Problem" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "403": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
-    delete:
-      tags: [credentials]
-      operationId: deleteCredential
-      summary: Delete a credential (admin, web UI session only)
-      responses:
-        "204": { description: Deleted }
-        "401": { $ref: "#/components/responses/Problem" }
-        "403": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
   /api/v1/accounts:
     get:
       tags: [accounts]
@@ -1629,6 +1610,17 @@ components:
       properties:
         email: { type: string, maxLength: 254, description: "empty = no e-mail" }
         notify: { $ref: "#/components/schemas/NotifyPrefs" }
+    ProfileInput:
+      type: object
+      required: [email, notify]
+      properties:
+        email: { type: string, maxLength: 254, description: "empty = no e-mail" }
+        notify: { $ref: "#/components/schemas/NotifyPrefs" }
+        currentPassword:
+          type: string
+          maxLength: 1024
+          writeOnly: true
+          description: Your current password; required when the e-mail address changes, never stored or returned
     SmtpPreset:
       type: object
       required: [id, label, host, port, tls]
@@ -1781,11 +1773,6 @@ components:
         source: { type: string, enum: [ui, env], description: "env = from an environment variable; read-only here" }
         envVar: { type: string, description: The environment variable that may provide it }
         updatedAt: { type: string, format: date-time }
-    SetCredentialRequest:
-      type: object
-      required: [value]
-      properties:
-        value: { type: string, maxLength: 4096, description: "Write-only: never returned" }
     Cents:
       type: integer
       format: int64

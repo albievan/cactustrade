@@ -177,8 +177,10 @@ func (s *Service) RenameAccount(ctx context.Context, p Principal, id, name strin
 	return v, nil
 }
 
-// DeleteAccount removes an account, its keys, shares and watchlist (owner, web session).
-// The environment account comes back on the next start while its variables are set.
+// DeleteAccount removes an account, its keys, shares and watchlist (owner, web session),
+// only while it is quiescent (PLAN 7.1.2): agent stopped, no open agent position, no order
+// that is not final. The environment account comes back on the next start while its
+// variables are set.
 func (s *Service) DeleteAccount(ctx context.Context, p Principal, id string) error {
 	v, err := s.anyAccount(ctx, p, id, domain.AccessOwner)
 	if err != nil {
@@ -187,8 +189,11 @@ func (s *Service) DeleteAccount(ctx context.Context, p Principal, id string) err
 	if p.Via != ViaSession {
 		return fmt.Errorf("only from the web UI: %w", domain.ErrForbidden)
 	}
-	if st := s.agentState(ctx, v.ID); st == domain.AgentRunning || st == domain.AgentPaused {
-		return fmt.Errorf("stop the agent of %s first: %w", v.Name, domain.ErrConflict)
+	locks := s.rt.agent(v.ID)
+	locks.ctl.Lock()
+	defer locks.ctl.Unlock()
+	if err := s.quiescent(ctx, p, v, "deleting it"); err != nil {
+		return fmt.Errorf("app.DeleteAccount: %w", err)
 	}
 	if !v.EnvKeys {
 		for _, c := range domain.PlatformCredentials(v.OnPlatform()) {
@@ -203,6 +208,42 @@ func (s *Service) DeleteAccount(ctx context.Context, p Principal, id string) err
 	}
 	s.audit(ctx, p, "account.delete", v.ID, "name="+v.Name)
 	s.emit(ctx, p.Username, "account.deleted", domain.SeverityWarning, platformLabel(v.OnPlatform())+" account "+v.Name+" deleted", "")
+	return nil
+}
+
+// quiescent says why an account may not be deleted or have its keys changed now (nil = it
+// may; PLAN 7.1.2, 7.1.3): its agent must be stopped (a killed agent needs the kill reset
+// first), and no position cactusTrade opened may be open and no order of ours not final —
+// the supervisor still has work on them (exits continue whatever the agent state, D21). A
+// read error refuses (fail closed). The caller holds the account's ctl lock, so the agent
+// cannot be started in between.
+func (s *Service) quiescent(ctx context.Context, p Principal, v domain.AccountView, what string) error {
+	switch killed, err := s.isKilled(ctx, v.ID); {
+	case err != nil:
+		return fmt.Errorf("reading the kill switch: %w: %w", err, domain.ErrUnavailable)
+	case killed:
+		return s.fixable(p, v, domain.MissingSetup(domain.MissingKillReset,
+			"The kill switch of "+v.Name+" is on: an admin must reset it, and its positions must be closed, before "+what, domain.ErrConflict))
+	}
+	switch st, err := s.d.Store.Settings().Get(ctx, agentStateKey(v.ID)); {
+	case errors.Is(err, domain.ErrNotFound):
+	case err != nil:
+		return fmt.Errorf("reading the agent state: %w: %w", err, domain.ErrUnavailable)
+	case domain.AgentState(st) != domain.AgentStopped:
+		return fmt.Errorf("the agent of %s is %s: stop it before %s: %w", v.Name, st, what, domain.ErrConflict)
+	}
+	pos, err := s.d.Store.AgentPositions().ListOpen(ctx, v.ID)
+	if err != nil {
+		return fmt.Errorf("reading the open positions: %w: %w", err, domain.ErrUnavailable)
+	}
+	ords, err := s.d.Store.Orders().ListOpen(ctx, v.ID)
+	if err != nil {
+		return fmt.Errorf("reading the open orders: %w: %w", err, domain.ErrUnavailable)
+	}
+	if len(pos) > 0 || len(ords) > 0 {
+		return fmt.Errorf("%s has %d open position(s) and %d order(s) in flight opened by cactusTrade: wait until they are closed before %s: %w",
+			v.Name, len(pos), len(ords), what, domain.ErrConflict)
+	}
 	return nil
 }
 
@@ -288,6 +329,17 @@ func (s *Service) SetAccountCredentials(ctx context.Context, p Principal, id str
 	if p.Via != ViaSession {
 		return fmt.Errorf("keys can only be set in the web UI: %w", domain.ErrForbidden)
 	}
+	tradable := v.Tradable()
+	if tradable && slices.ContainsFunc(domain.PlatformCredentials(v.OnPlatform()), func(c domain.CredentialSpec) bool { return values[c.Key] != "" }) {
+		// eToro keys name the eToro account behind this one: never swap them under the
+		// supervisor (PLAN 7.1.3).
+		locks := s.rt.agent(v.ID)
+		locks.ctl.Lock()
+		defer locks.ctl.Unlock()
+		if err := s.quiescent(ctx, p, v, "changing its keys"); err != nil {
+			return fmt.Errorf("app.SetAccountCredentials: %w", err)
+		}
+	}
 	type put struct {
 		name domain.CredentialName
 		val  string
@@ -322,6 +374,9 @@ func (s *Service) SetAccountCredentials(ctx context.Context, p Principal, id str
 		}
 	}
 	if len(puts) > 0 {
+		if tradable {
+			s.unreconcile(v.ID, "the account's keys changed: reconcile again")
+		}
 		s.audit(ctx, p, "account.keys_set", v.ID, fmt.Sprintf("credentials=%d", len(puts))) // never the values
 	}
 	return nil

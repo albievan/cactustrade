@@ -206,7 +206,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	// misses events instead of holding up an order.
 	bus := eventbus.New()
 	svc, err = app.New(app.Deps{
-		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
+		Store: store, Secrets: secrets, Hasher: argon2.NewLimited(argon2.New(argon2.Default), argon2.DefaultSlots, argon2.DefaultWait),
 		Random: system.Random{}, Clock: clock, Log: log,
 		Broker: broker, Market: feed, Calendar: cal,
 		Holdings: map[domain.Platform]ports.Holdings{
@@ -292,7 +292,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	go httpapi.PurgeLoop(ctx, svc, log, 10*time.Minute)
+	go handler.PurgeLoop(ctx, 10*time.Minute)
 	if ids, err := store.Watchlist().Watched(ctx); err == nil {
 		stream.Watch(ids...)
 	}

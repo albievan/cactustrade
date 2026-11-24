@@ -18,7 +18,10 @@ type CredentialStatus struct {
 	UpdatedAt *time.Time
 }
 
-// Credentials lists every credential and whether it is set (viewers may see the list).
+// Credentials lists every deployment credential and whether it is set (viewers may see the
+// list). It is read-only: eToro keys are set per account (SetAccountCredentials, owner, web
+// session, only while the account is quiescent), and the environment account's demo pair
+// comes from ETORO_DEMO_PUB / ETORO_DEMO_PK (PLAN 7.1.3, D27).
 func (s *Service) Credentials(ctx context.Context, p Principal) ([]CredentialStatus, error) {
 	if err := s.authorize(p, domain.PermView); err != nil {
 		return nil, err
@@ -40,49 +43,6 @@ func (s *Service) Credentials(ctx context.Context, p Principal) ([]CredentialSta
 		out = append(out, cs)
 	}
 	return out, nil
-}
-
-// SetCredential stores a credential, encrypted (admin, signed-in only: an API key cannot
-// change the broker keys). The value is never logged, audited or returned.
-func (s *Service) SetCredential(ctx context.Context, p Principal, name, value string) error {
-	if err := s.authorize(p, domain.PermManageSecrets); err != nil {
-		return err
-	}
-	if p.Via != ViaSession {
-		return fmt.Errorf("credentials are set in the web UI only: %w", domain.ErrForbidden)
-	}
-	n, err := domain.ParseCredentialName(name)
-	if err != nil {
-		return err
-	}
-	v, err := domain.NormalizeCredential(value)
-	if err != nil {
-		return err
-	}
-	if err := s.d.Secrets.Put(ctx, n, v); err != nil {
-		return fmt.Errorf("app.SetCredential: %w", err)
-	}
-	s.audit(ctx, p, "credential.set", string(n), "")
-	return nil
-}
-
-// DeleteCredential removes a credential (admin, signed-in only).
-func (s *Service) DeleteCredential(ctx context.Context, p Principal, name string) error {
-	if err := s.authorize(p, domain.PermManageSecrets); err != nil {
-		return err
-	}
-	if p.Via != ViaSession {
-		return fmt.Errorf("credentials are changed in the web UI only: %w", domain.ErrForbidden)
-	}
-	n, err := domain.ParseCredentialName(name)
-	if err != nil {
-		return err
-	}
-	if err := s.d.Secrets.Delete(ctx, n); err != nil {
-		return fmt.Errorf("app.DeleteCredential: %w", err)
-	}
-	s.audit(ctx, p, "credential.delete", string(n), "")
-	return nil
 }
 
 // AuditLog lists the newest audit entries (admin). limit is clamped to 1-500.

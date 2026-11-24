@@ -34,6 +34,10 @@ shape the system, in `docs/adr/`.
 | D25 | Entries need a calendar: without one, or on any calendar error, every market is closed for entries (unlike the scanner's test convenience). | app/agent.go |
 | D26 | The agent decides on **5-minute bars** at each bar close + 5 s (same interval as the scanner; pending OD3). | app/agent.go |
 | D18 | One port, both schemes: with TLS on, the listener sniffs the first byte; plain HTTP is answered with a 308 redirect to `https://<same host:port><path>` (a browser typing `host:8453` no longer gets "Client sent an HTTP request to an HTTPS server"). | ADR-005 |
+| D27 | **eToro keys are set per account only** (PLAN 7.1.3, 2026-11-24): the global `PUT/DELETE /api/v1/credentials/{name}` and `app.SetCredential`/`DeleteCredential` are removed. Reasons: no web page used them (the Credentials list was API-only), every key is per account now, and the global names were the environment account's keys (written there without any account ownership) or real keys no account used. `GET /api/v1/credentials` stays as a read-only status of the deployment's credentials; the environment account's pair comes from `ETORO_DEMO_PUB`/`ETORO_DEMO_PK`, or its owner sets it under Platform accounts. | app/credentials.go, contract |
+| D28 | **Sign-in limiter per (user, IP) with a per-user slow-down** (PLAN 7.1.5): hard limits only per IP (20) and per (user, IP) (5) per 15 min; across IPs a user's attempts add a delay (1/2/4/8 s after 5) instead of a global lock. Attempts are counted before hashing and refunded when right (or when the server was busy). Reset requests, reset confirms and OAuth callbacks have their own buckets. ≤ 10 000 keys (sweep, then drop the longest idle), swept by `PurgeLoop`. | adapters/http/limiter.go |
+| D29 | **At most 3 password hashes at once** (`argon2.Limited`, 2 s wait → `domain.ErrBusy` → 429 + `Retry-After: 1`), wired around the argon2id hasher in `cmd`; `GOMEMLIMIT=400MiB` with a 512 MiB container / pod limit (PLAN 7.1.4). | adapters/argon2, cmd, deploy |
+| D30 | **Quiescent account** (PLAN 7.1.2, 7.1.3): deleting an account or changing an eToro account's keys needs the agent stopped (killed → `MissingKillReset`), 0 open agent positions and 0 non-final orders, checked under the account's `ctl` lock; read errors refuse. New keys leave the account unreconciled ("keys changed") without an alert. View-only platforms have no agent and are not checked for key changes. | app/accounts.go |
 
 ### Dependencies (phase 1)
 
@@ -1296,7 +1300,7 @@ the history are views only (`TestEntriesNeverUseTheViewCache`, `TestHistoryLoopI
 Open for the owner: OD14–OD18 remain defaults until answered; `Themes.tsx` still derives
 `canEdit` in React (6.15 note); the trade pager's same-instant caveat (6.12-d).
 
-## Phase 7 — hardening and the real-mode gate — `todo`
+## Phase 7 — hardening and the real-mode gate — `in_progress`
 
 Order: hardening (7.1–7.9) → gate machinery with real trading still **impossible** (7.10–7.17)
 → **owner's written consent (7.18, blocked)** → lifting the refusals (7.19–7.23) → owner's
@@ -1337,7 +1341,7 @@ U1–U11 (demo, step 4.17) must be settled first.
 
 | ID | Step | Files | Acceptance tests | Status |
 |---|---|---|---|---|
-| 7.1 | **Security review pass (reviewer agent, read-only).** Scope: auth/sessions/CSRF, the SSE stream, CSV exports, authorization per account, secrets in logs/errors/fixtures, allowlists of all 4 broker adapters, depguard layering, SSRF (LLM base URL, SMTP host, Saxo redirect), headers, container settings, `deploy.sh`. Ranked findings go into PLAN ("Phase 7 security review") with a fix step `7.1.n` per BLOCKER/MAJOR (planned after the review). | PLAN | Findings table exists; every BLOCKER/MAJOR has a step id; `make check` green | todo |
+| 7.1 | **Security review pass (reviewer agent, read-only).** Scope: auth/sessions/CSRF, the SSE stream, CSV exports, authorization per account, secrets in logs/errors/fixtures, allowlists of all 4 broker adapters, depguard layering, SSRF (LLM base URL, SMTP host, Saxo redirect), headers, container settings, `deploy.sh`. Ranked findings go into PLAN ("Phase 7 security review") with a fix step `7.1.n` per BLOCKER/MAJOR (planned after the review). | PLAN | Findings table exists; every BLOCKER/MAJOR has a step id; `make check` green | done (findings: "Phase 7 security review"; 7.1.1–7.1.12 fixed, 7.1.13–7.1.17 planned) |
 | 7.2 | **Mode and account in every log line.** A `slog.Handler` wrapper adds `account_id` and `mode` from `ports.AccountFrom(ctx)` to each record logged with a context. The request log adds the current account's mode. A source test bans non-`Context` log calls in `internal/app` and `internal/adapters/etoro`. Orders already store `mode`; `trades` has it (6.4). | `internal/adapters/logctx/` (new) or `cmd/cactustrade/log.go`, `internal/app/*.go` (call sites), tests | `go test ./...`: executor and supervisor test logs carry `mode=demo` / `mode=real` and the account id; a planted `s.d.Log.Info(` fails the source test; no key / token / cookie in any captured line. | todo |
 | 7.3 | **API rate limits.** Token buckets per principal (user id / API key id) and per IP on `/api/*`: reads 600/min, mutations 60/min, exports 10/min, stream connects 30/min (OD33). **Kill, pause, stop and disarm are never throttled** (§2.6). Bounded memory (≤ 10 000 keys, purged by `PurgeLoop`). 429 problem+json with `Retry-After`; metric. | `internal/adapters/http/{ratelimit.go,ratelimit_test.go,server.go}` | `go test ./internal/adapters/http -run RateLimit`: limits per class; with every bucket exhausted, `POST /agent/kill` is still 200; 10 001 keys keep memory bounded. | todo |
 | 7.4 | **Headers, cookies, body limits.** Add `Permissions-Policy`, COOP `same-origin`, CORP `same-origin`; check the CSP has no `unsafe-inline` outside Swagger; `MaxBytesReader` 1 MiB on JSON bodies; optional `__Host-` cookie prefix (OD32). | `internal/adapters/http/{middleware.go,server.go,handlers.go}`, `server_test.go` | Header table test over route classes (SPA, API, Swagger, SSE, CSV, `/metrics`, 308 redirect); a 2 MiB body → 413. | todo |
@@ -1362,3 +1366,58 @@ U1–U11 (demo, step 4.17) must be settled first.
 | 7.22 | *(after 7.18)* **App lift: entries.** `mayOpen`, `startable`, `agentGate`, `agentTickAll`, `controlsFor`: real requires an armed gate + `CACTUSTRADE_REAL_TRADING=on` (OD28) + reconciled + real limits; a permit per entry. Real agents never auto-resume (OD26). 4.12 extended: scenarios with an armed real account and random disarm / kill / opt-in-off / expiry events. | `internal/app/{executor.go,agent.go,agent_control.go,agent_view.go}`, `agent_property_test.go` | `go test -race ./internal/app -run 'AgentSequenceProperties\|Real'`: no `Open` after a disarm, opt-in off or expiry; exits continue; every real `Open` carries a valid permit; demo invariants unchanged. | blocked by 7.18 |
 | 7.23 | *(after 7.18)* **Wiring.** `CACTUSTRADE_REAL_TRADING` (default off; `.env` off; `deploy.sh` never sets it); a start-up log line and a system event when on. | `cmd/cactustrade/*`, `.env`, `deploy.sh`, docs | `go test ./cmd/cactustrade`; default config → entries on real refused. | blocked by 7.18 |
 | 7.24 | **OWNER: first real run** (never by Claude). The smallest long the owner chooses on an NYSE share in session; sanitised real fixtures; disarm drill and kill drill with 1 position. | `testdata/`, `docs/etoro-api.md` | Real fixtures green; RU list closed | blocked: owner only |
+
+### Phase 7 security review (7.1, 2026-11-24)
+
+**D17 re-confirmed by the owner (2026-11-24):** asked about the review's finding that a fresh
+install's admin/admin can be taken by anyone on the LAN before the owner signs in, the owner
+chose "Keep admin/admin as is" and accepts the risk of that window. No change.
+
+Reviewer agent pass, read-only (scope as in 7.1). Each fix below started with a test that
+failed on the code as it was, then the fix. No BLOCKER was found.
+Every MAJOR (F1–F6) and the MINORs F7–F12 are fixed; F13–F17 are planned steps. `make check`
+green on 2026-11-24 (incl. MariaDB `test-int`); coverage domain 98.0 %, app 89.0 %.
+Dry run of the k8s rendering: `./deploy.sh --render --k3s` (HTTPS: Service `ClusterIP`) and
+`K8S_HTTPS=false ./deploy.sh --render --k3s` (NodePort + warning on stderr), covered by
+`TestDeployRenderService`.
+
+| # | Sev | Finding | Where | Fix step |
+|---|---|---|---|---|
+| F1 | MAJOR | An admin **API key** could create, update and delete users: `CreateUser`, `UpdateUser`, `DeleteUser` only authorised the permission, never `p.Via`. | `internal/app/users.go` | 7.1.1 |
+| F2 | MAJOR | `DeleteAccount` refused only while the agent was running or paused: a killed agent with closes pending, or a stopped one with open agent positions / non-final orders, could lose its account row (and keys) under the supervisor. | `internal/app/accounts.go` | 7.1.2 |
+| F3 | MAJOR | eToro keys could be swapped with positions open (a different eToro account behind the same id), and the account stayed "reconciled"; the global `PUT/DELETE /api/v1/credentials/{name}` wrote the env account's eToro keys without any account ownership. | `internal/app/{accounts.go,credentials.go}` | 7.1.3 |
+| F4 | MAJOR | Unauthenticated memory exhaustion: every sign-in runs argon2id (64 MiB) with no bound on concurrency, and the limiter counted a failure only *after* hashing (50 parallel requests all hash). | `internal/adapters/http/handlers.go`, `internal/adapters/argon2` | 7.1.4 |
+| F5 | MAJOR | Anyone could lock out any user: 5 failures for a username from anywhere refused that user everywhere; reset requests shared the sign-in IP counter; the reset-confirm limit was one global key; the limiter map was never swept or capped. | `internal/adapters/http/{limiter.go,handlers_email.go,server.go}` | 7.1.5 |
+| F6 | MAJOR | k8s exposed the pod's plain HTTP on a NodePort even with `K8S_HTTPS=true` (ingress). | `deploy/k8s/cactustrade.yaml`, `deploy.sh` | 7.1.6 |
+| F7 | MINOR | Saxo, Tiger, Trading 212 and the LLM client followed redirects (headers with keys travel to another host). | adapters, `cmd/cactustrade/main.go` | 7.1.7 |
+| F8 | MINOR | `LLMModels` (sends a typed or stored key to a URL) was reachable with an admin API key. | `internal/app/llm.go` | 7.1.8 |
+| F9 | MINOR | SSRF: an LLM key could be sent over plain `http` to any host; LLM base URLs and SMTP hosts could be link-local / cloud metadata addresses. | `internal/domain/{llm.go,email.go}`, `internal/app/llm.go` | 7.1.9 |
+| F10 | MINOR | `ChangePassword` checked the current password with no rate limit (a stolen session could guess it). | `internal/adapters/http/handlers.go` | 7.1.10 |
+| F11 | MINOR | `SetMyProfile` changed the e-mail address (where reset links go) without the current password: a stolen session could take the account over. | `internal/app/email.go`, contract, `web/src/pages/Account.tsx` | 7.1.11 |
+| F12 | MINOR | depguard: no rule kept `internal/app` out of the eToro adapter (or the LLM adapter); `net`, `net/smtp`, `os/exec`, `crypto/tls` not denied in domain, app and strategy. | `.golangci.yml` | 7.1.12 |
+| F13 | MINOR | Saxo OAuth `state` is not bound to the browser (no nonce cookie) and no PKCE. | `internal/app/connect.go`, `internal/adapters/saxo/oauth.go` | 7.1.13 (planned) |
+| F14 | MINOR | `/metrics` is open without a token in standalone mode. | `cmd/cactustrade/config.go` | 7.1.14 (planned) |
+| F15 | MINOR | The bundled Mailpit counts as a working mail server, so "reset by e-mail" is offered although the mail never reaches the user. | `internal/app/email.go` | 7.1.15 (planned) |
+| F16 | MINOR | k8s: no NetworkPolicy; trusted proxies hard-coded to k3s's pod CIDR; MariaDB without TLS / hardening options. | `deploy/k8s/cactustrade.yaml` | 7.1.16 (planned) |
+| F17 | MINOR | Images by tag, not digest; Node 20 in the web build. | `Dockerfile`, compose, k8s | 7.1.17 → 7.7 (planned) |
+| — | note | The default admin/admin (D17) is unchanged: the owner is being asked about it. | — | — |
+
+| ID | Step | Files | Acceptance tests | Status |
+|---|---|---|---|---|
+| 7.1.1 | User management needs a web session: `CreateUser`, `UpdateUser`, `DeleteUser` go through `userAdmin(p, target)`: permission, `ViaSession`, and (defence in depth) a key never targets its own owner. | `internal/app/users.go`, tests | `TestUserManagementNeedsSession`: key vs session × create/update/delete. | done |
+| 7.1.2 | `DeleteAccount` only when the agent is stopped with 0 open agent positions and 0 non-final orders (`quiescent`); a killed agent → `MissingKillReset` (409), else 409 with the counts. | `internal/app/accounts.go`, tests | stopped + 1 open position → `ErrConflict`; killed with a close pending → `ErrConflict` (+ `MissingKillReset`). | done |
+| 7.1.3 | eToro key change only while `quiescent`; afterwards the account is unreconciled ("keys changed"). The global credential writes are removed (decision D27). | `internal/app/{accounts.go,credentials.go}`, contract, handlers, `web/src/lib/api.ts` | key change with an open position → 409; after a change `Reconciled(id).OK == false`; `PUT`/`DELETE /api/v1/credentials/…` → 404/405 (`TestGlobalCredentialWritesRemoved`). | done |
+| 7.1.4 | `argon2.Limited` (3 slots, 2 s wait → `domain.ErrBusy` → 429 + `Retry-After`); the limiter records an attempt before hashing (refunded on success); `GOMEMLIMIT=400MiB` in k8s and compose. | `internal/adapters/argon2`, `internal/adapters/http/{handlers.go,problem.go}`, `internal/domain/errors.go`, `cmd/cactustrade/main.go`, deploy files | 50 concurrent sign-ins never run more than 3 hashes at once; the rest get 429 with `Retry-After`. | done |
+| 7.1.5 | Limiter per (user, IP) with a per-user slow-down instead of a global lock; reset requests and reset confirms in their own buckets (per user hourly, per IP); `Sweep` + 10 000-key cap from `PurgeLoop`. | `internal/adapters/http/{limiter.go,handlers.go,handlers_email.go,server.go}`, `cmd/cactustrade/main.go` | 5 reset requests for admin do not block admin's sign-in from another IP; bad reset tokens from IP A do not block IP B; 5 failures from IP A do not block the user from IP B; 10 001 keys stay ≤ 10 000. | done |
+| 7.1.6 | k8s Service is `ClusterIP` when `K8S_HTTPS=true`; NodePort only in the explicit no-HTTPS mode, with a loud warning. `deploy.sh --render` prints the manifest without touching a cluster. | `deploy/k8s/cactustrade.yaml`, `deploy.sh`, `cmd/cactustrade/deploy_test.go` | `go test ./cmd/cactustrade -run DeployRender`: https → ClusterIP, no nodePort; http → NodePort + warning. | done |
+| 7.1.7 | Every non-eToro HTTP client refuses redirects (`CheckRedirect` → `http.ErrUseLastResponse`). | `internal/adapters/{saxo,tiger,trading212,llm}` | one redirect test per client: the redirect target gets 0 requests. | done |
+| 7.1.8 | `LLMModels` uses `llmAdmin` (web session). | `internal/app/llm.go` | API key → 403. | done |
+| 7.1.9 | With a key: `https` base URL required (except `ollama_local` and localhost); link-local and metadata addresses refused for LLM base URLs and SMTP hosts; key-to-endpoint binding unchanged. | `internal/domain/{llm.go,email.go,netguard.go}`, `internal/app/llm.go` | table tests in domain and app. | done |
+| 7.1.10 | `ChangePassword` runs the sign-in limiter on the current-password check. | `internal/adapters/http/handlers.go` | 5 wrong current passwords → the 6th is 429. | done |
+| 7.1.11 | Changing the e-mail address needs the current password (`ProfileInput.currentPassword`; limiter as 7.1.10); the Account page asks for it and shows refusals with `ProblemAlert`. | contract, `internal/app/email.go`, `internal/adapters/http/handlers_email.go`, `web/src/pages/Account.tsx` + test | without / with a wrong password → 400 `currentPassword`; notify-only changes need none. | done |
+| 7.1.12 | depguard: an `etoro` rule (no `internal/app`), `internal/app` denied for the LLM adapter; `net`, `net/smtp`, `os/exec`, `crypto/tls` denied in domain, app and strategy. | `.golangci.yml` | a planted import fails `make lint` (checked by hand, reverted). | done |
+| 7.1.13 | Saxo OAuth: a nonce cookie binding `state` to the browser, and PKCE (S256). | `internal/app/connect.go`, `internal/adapters/saxo/oauth.go`, HTTP | a callback without the cookie → refused; the token request carries the verifier. | planned |
+| 7.1.14 | `/metrics` needs the metrics token in standalone mode too (generated into the data dir when unset). | `cmd/cactustrade/config.go`, README | `/metrics` without a token → 401 in every mode. | planned |
+| 7.1.15 | Mailpit as the only mail server = "reset unavailable" (public status and the request say why). | `internal/app/email.go` | with Mailpit only, `passwordResetAvailable` is false. | planned |
+| 7.1.16 | k8s NetworkPolicy (app ↔ MariaDB, ingress → app only), trusted proxies from `.env`, MariaDB hardening. | `deploy/k8s/cactustrade.yaml`, `deploy.sh`, `.env` | `deploy.sh --render` contains the policies; documented dry-run. | planned |
+| 7.1.17 | Images pinned by digest; Node 22 for the web build (with 7.7). | `Dockerfile`, compose, k8s | `make audit` (7.7). | planned |

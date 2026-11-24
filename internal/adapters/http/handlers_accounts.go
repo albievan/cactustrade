@@ -175,7 +175,7 @@ func (s *Server) ConnectSaxoAccount(w http.ResponseWriter, r *http.Request, acco
 // Only a fixed reason goes into the address, never Saxo's text.
 func (s *Server) SaxoCallback(w http.ResponseWriter, r *http.Request, params SaxoCallbackParams) {
 	ip := state(r).ip
-	if ok, _ := s.limiter.Allow(ip, "oauth-callback:"+ip); !ok {
+	if ok, _ := s.limiter.Allowed(oauthIP, ip); !ok {
 		http.Redirect(w, r, "/accounts?connect_error=failed", http.StatusSeeOther)
 		return
 	}
@@ -186,7 +186,7 @@ func (s *Server) SaxoCallback(w http.ResponseWriter, r *http.Request, params Sax
 		switch {
 		case errors.As(err, &ve) && ve.Field == "state":
 			reason = "expired"
-			s.limiter.Fail(ip, "oauth-callback:"+ip) // forged or replayed states count
+			s.limiter.Failed(oauthIP, ip) // forged or replayed states count
 		case errors.Is(err, app.ErrConnectRefused):
 			reason = "refused"
 		}

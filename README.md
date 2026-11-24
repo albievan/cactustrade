@@ -118,7 +118,11 @@ as `admin` / `admin` and choose a new password. Other actions:
 
 `.env` holds non-secret defaults. Put per-machine overrides in `.env.local`, for example
 `HTTPS_PORT=8453` when port 8443 is taken. On k3s/k8s the pod speaks HTTP behind the cluster's
-ingress, and HTTPS terminates at Traefik (`K8S_HTTPS`).
+ingress, and HTTPS terminates at Traefik (`K8S_HTTPS=true`, the default): the app's Service is
+then `ClusterIP`, reachable only through the ingress. `K8S_HTTPS=false` publishes plain HTTP on
+`K8S_NODE_PORT` of every node instead (a trusted lab network only; `deploy.sh` warns).
+`./deploy.sh --render --k3s` prints the manifest `--install` would apply, without touching a
+cluster.
 
 ## eToro API keys
 
@@ -127,8 +131,10 @@ ingress, and HTTPS terminates at Traefik (`K8S_HTTPS`).
    permissions, then verify by SMS. Optionally restrict the key to your server's IP address.
 3. Copy the **Public API Key** (sent as `x-api-key`) and the **User Key** (sent as `x-user-key`).
 4. Give them to cactusTrade in one of two ways:
-   - **Web UI → Credentials.** Admin only, and write-only: a key is never shown, logged or
-     returned again.
+   - **Web UI → Platform accounts → your account → Keys.** The account's owner, and
+     write-only: a key is never shown, logged or returned again. Keys change only while the
+     account's agent is stopped with no position or order of cactusTrade's open; the account
+     is then reconciled again before the agent can start.
    - **Environment (demo only).** Set `ETORO_DEMO_PUB` and `ETORO_DEMO_PK`, or the `_FILE`
      variants that name a file. Credentials set this way are read-only in the UI.
 

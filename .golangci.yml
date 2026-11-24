@@ -41,6 +41,10 @@ linters:
             - { pkg: "database/sql", desc: "domain does no I/O" }
             - { pkg: "net/http", desc: "domain does no I/O" }
             - { pkg: "os", desc: "domain does no I/O" }
+            - { pkg: "net$", desc: "domain does no I/O (PLAN 7.1.12)" }
+            - { pkg: "net/smtp", desc: "domain does no I/O (PLAN 7.1.12)" }
+            - { pkg: "os/exec", desc: "domain does no I/O (PLAN 7.1.12)" }
+            - { pkg: "crypto/tls", desc: "domain does no I/O (PLAN 7.1.12)" }
         app:
           files: ["**/internal/app/**", "**/internal/ports/**"]
           list-mode: lax
@@ -49,6 +53,10 @@ linters:
             - { pkg: "database/sql", desc: "use ports, not the database" }
             - { pkg: "net/http", desc: "use ports, not HTTP" }
             - { pkg: "os", desc: "use ports, not the OS" }
+            - { pkg: "net$", desc: "use ports, not the network or the OS (PLAN 7.1.12)" }
+            - { pkg: "net/smtp", desc: "use ports, not the network or the OS (PLAN 7.1.12)" }
+            - { pkg: "os/exec", desc: "use ports, not the network or the OS (PLAN 7.1.12)" }
+            - { pkg: "crypto/tls", desc: "use ports, not the network or the OS (PLAN 7.1.12)" }
         # The regime model and playbooks are pure functions of candles: no I/O, no ports, no
         # broker. Floats are allowed here (and only here and at the eToro JSON edge).
         strategy:
@@ -61,6 +69,10 @@ linters:
             - { pkg: "database/sql", desc: "strategy does no I/O" }
             - { pkg: "net/http", desc: "strategy does no I/O" }
             - { pkg: "os", desc: "strategy does no I/O" }
+            - { pkg: "net$", desc: "strategy does no I/O (PLAN 7.1.12)" }
+            - { pkg: "net/smtp", desc: "strategy does no I/O (PLAN 7.1.12)" }
+            - { pkg: "os/exec", desc: "strategy does no I/O (PLAN 7.1.12)" }
+            - { pkg: "crypto/tls", desc: "strategy does no I/O (PLAN 7.1.12)" }
         # The LLM reviewer (phase 5) must never reach the broker (CLAUDE.md §2.5).
         reviewer:
           files: ["**/internal/adapters/llm/**"]
@@ -71,6 +83,15 @@ linters:
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/saxo", desc: "the LLM never calls a broker" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/tiger", desc: "the LLM never calls a broker" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/secretstore", desc: "the LLM adapter gets its key injected, nothing more" }
+            - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases (PLAN 7.1.12)" }
+        # The eToro client is reached only through ports.Broker / ports.MarketData; it never
+        # calls back into the use cases (PLAN 7.1.12).
+        etoro:
+          files: ["**/internal/adapters/etoro/**"]
+          list-mode: lax
+          deny:
+            - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/llm", desc: "the broker client never talks to the LLM" }
         # The Trading 212 client is read-only and stands alone: it never reaches eToro.
         trading212:
           files: ["**/internal/adapters/trading212/**"]

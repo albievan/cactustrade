@@ -313,7 +313,9 @@ func (s *Service) MyProfile(ctx context.Context, p Principal) (Profile, error) {
 }
 
 // SetMyProfile changes the caller's e-mail and notification choices (web session; audited).
-func (s *Service) SetMyProfile(ctx context.Context, p Principal, pr Profile) (Profile, error) {
+// A new e-mail address needs the caller's current password (PLAN 7.1.11); notification
+// choices alone need none.
+func (s *Service) SetMyProfile(ctx context.Context, p Principal, pr Profile, currentPassword string) (Profile, error) {
 	if p.UserID == "" || p.Via != ViaSession {
 		return Profile{}, domain.ErrForbidden
 	}
@@ -327,6 +329,21 @@ func (s *Service) SetMyProfile(ctx context.Context, p Principal, pr Profile) (Pr
 	u, err := s.d.Store.Users().Get(ctx, p.UserID)
 	if err != nil {
 		return Profile{}, fmt.Errorf("app.SetMyProfile: %w", err)
+	}
+	// The address receives password-reset links: a stolen session must not be able to
+	// redirect them (PLAN 7.1.11). A password sent along is always checked, so that a
+	// right answer means one was verified (the HTTP limiter relies on it).
+	if u.Email != pr.Email && currentPassword == "" {
+		return Profile{}, domain.Invalid("currentPassword", "is needed to change the e-mail address")
+	}
+	if currentPassword != "" {
+		ok, err := s.d.Hasher.Verify(u.PasswordHash, currentPassword)
+		if err != nil {
+			return Profile{}, fmt.Errorf("app.SetMyProfile: %w", err)
+		}
+		if !ok {
+			return Profile{}, domain.Invalid("currentPassword", "is not correct")
+		}
 	}
 	if u.Email != pr.Email {
 		u.Email, u.UpdatedAt = pr.Email, s.d.Clock.Now().UTC()

@@ -194,8 +194,10 @@ func (s *Server) trusted(a netip.Addr) bool {
 	return false
 }
 
-// PurgeLoop removes expired sessions and stale limiter entries until ctx ends.
-func PurgeLoop(ctx context.Context, svc *app.Service, log *slog.Logger, every time.Duration) {
+// PurgeLoop removes expired sessions, old events, mail and decisions, and stale sign-in
+// limiter keys (PLAN 7.1.5) until ctx ends.
+func (s *Server) PurgeLoop(ctx context.Context, every time.Duration) {
+	svc, log := s.svc, s.log
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -203,6 +205,9 @@ func PurgeLoop(ctx context.Context, svc *app.Service, log *slog.Logger, every ti
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			if n := s.limiter.Sweep(); n > 0 {
+				log.DebugContext(ctx, "swept the sign-in limiter", "keys", n)
+			}
 			if n, err := svc.PurgeExpiredSessions(ctx); err != nil {
 				log.WarnContext(ctx, "purging sessions failed", "err", err)
 			} else if n > 0 {

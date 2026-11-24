@@ -1,5 +1,6 @@
-# cactusTrade on k3s / Kubernetes. Rendered by deploy.sh, which fills the ${…} placeholders
-# from .env. The Secret cactustrade-secrets (db_password, db_root_password, master_key,
+# cactusTrade on k3s / Kubernetes. Rendered by deploy.sh (`./deploy.sh --render --k3s` prints
+# it without touching a cluster), which fills the ${…} placeholders from .env and keeps the
+# lines marked "# https" or "# plain-http" for K8S_HTTPS. The Secret cactustrade-secrets (db_password, db_root_password, master_key,
 # metrics_token, etoro_demo_pub, etoro_demo_pk) is created by deploy.sh.
 apiVersion: v1
 kind: Namespace
@@ -22,6 +23,9 @@ data:
   CACTUSTRADE_SECRETS_DIR: /run/secrets
   # TLS ends at the ingress controller; the pod speaks HTTP inside the cluster.
   CACTUSTRADE_TLS: "off"
+  # Go's soft memory limit, under the pod's 512Mi limit (PLAN 7.1.4: at most 3 password
+  # hashes of 64 MiB run at once).
+  GOMEMLIMIT: "400MiB"
   CACTUSTRADE_ADDR: ":8080"
   CACTUSTRADE_LOG_LEVEL: "${CACTUSTRADE_LOG_LEVEL}"
   CACTUSTRADE_COOKIE_SECURE: "${CACTUSTRADE_COOKIE_SECURE}"
@@ -167,8 +171,13 @@ metadata:
   namespace: ${K8S_NAMESPACE}
   labels: { app.kubernetes.io/part-of: cactustrade }
 spec:
-  type: NodePort
-  # Local keeps the client's address, so the sign-in rate limit counts each client.
-  externalTrafficPolicy: Local
+  # K8S_HTTPS=true: reachable only through the ingress (TLS); the pod's plain HTTP never
+  # leaves the cluster (PLAN 7.1.6). deploy.sh keeps the lines marked for the chosen mode.
+  type: ClusterIP # https
+  # K8S_HTTPS=false only: plain HTTP on every node's port (deploy.sh warns loudly). Local
+  # keeps the client's address, so the sign-in rate limit counts each client.
+  type: NodePort # plain-http
+  externalTrafficPolicy: Local # plain-http
   selector: { app.kubernetes.io/name: cactustrade }
-  ports: [{ port: 80, targetPort: http, nodePort: ${K8S_NODE_PORT} }]
+  ports: [{ port: 80, targetPort: http }] # https
+  ports: [{ port: 80, targetPort: http, nodePort: ${K8S_NODE_PORT} }] # plain-http

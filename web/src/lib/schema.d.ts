@@ -149,7 +149,10 @@ export interface paths {
         };
         /** Your e-mail address and e-mail notification choices */
         get: operations["getMyProfile"];
-        /** Change your e-mail address and notification choices (web UI) */
+        /**
+         * Change your e-mail address and notification choices (web UI)
+         * @description Changing the e-mail address (where password-reset links go) needs the current password (PLAN 7.1.11); wrong passwords are rate-limited like sign-ins (429 with Retry-After).
+         */
         put: operations["setMyProfile"];
         post?: never;
         delete?: never;
@@ -219,7 +222,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Change your own password (ends your other sessions) */
+        /**
+         * Change your own password (ends your other sessions)
+         * @description Wrong current passwords are rate-limited like sign-ins (429 with Retry-After; PLAN 7.1.10).
+         */
         post: operations["changePassword"];
         delete?: never;
         options?: never;
@@ -326,31 +332,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Which credentials are set (never their values) */
+        /**
+         * Which deployment credentials are set (never their values)
+         * @description Read-only status. eToro keys are set per account (PUT /api/v1/accounts/{accountId}/keys, owner, web UI); the deployment's demo pair comes from ETORO_DEMO_PUB / ETORO_DEMO_PK (PLAN 7.1.3).
+         */
         get: operations["listCredentials"];
         put?: never;
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/credentials/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: components["schemas"]["CredentialName"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        /** Set a credential (admin, web UI session only); write-only */
-        put: operations["setCredential"];
-        post?: never;
-        /** Delete a credential (admin, web UI session only) */
-        delete: operations["deleteCredential"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1428,6 +1417,13 @@ export interface components {
             email: string;
             notify: components["schemas"]["NotifyPrefs"];
         };
+        ProfileInput: {
+            /** @description empty = no e-mail */
+            email: string;
+            notify: components["schemas"]["NotifyPrefs"];
+            /** @description Your current password; required when the e-mail address changes, never stored or returned */
+            currentPassword?: string;
+        };
         SmtpPreset: {
             id: string;
             label: string;
@@ -1568,10 +1564,6 @@ export interface components {
             envVar?: string;
             /** Format: date-time */
             updatedAt?: string;
-        };
-        SetCredentialRequest: {
-            /** @description Write-only: never returned */
-            value: string;
         };
         /**
          * Format: int64
@@ -2772,7 +2764,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Profile"];
+                "application/json": components["schemas"]["ProfileInput"];
             };
         };
         responses: {
@@ -2788,6 +2780,7 @@ export interface operations {
             400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
         };
     };
     getEmailSetup: {
@@ -2911,6 +2904,7 @@ export interface operations {
             400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
         };
     };
     getSystemStatus: {
@@ -3128,58 +3122,6 @@ export interface operations {
                 };
             };
             401: components["responses"]["Problem"];
-        };
-    };
-    setCredential: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: components["schemas"]["CredentialName"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetCredentialRequest"];
-            };
-        };
-        responses: {
-            /** @description Stored (encrypted) */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: components["responses"]["Problem"];
-            401: components["responses"]["Problem"];
-            403: components["responses"]["Problem"];
-            409: components["responses"]["Problem"];
-        };
-    };
-    deleteCredential: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: components["schemas"]["CredentialName"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            401: components["responses"]["Problem"];
-            403: components["responses"]["Problem"];
-            404: components["responses"]["Problem"];
-            409: components["responses"]["Problem"];
         };
     };
     listAccounts: {

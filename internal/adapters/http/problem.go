@@ -59,6 +59,9 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.As(err, &ve):
 		problemFor(w, r, err, http.StatusBadRequest, "Invalid input", ve.Error(), ve.Field)
+	case errors.Is(err, domain.ErrBusy):
+		w.Header().Set("Retry-After", "1")
+		problemFor(w, r, err, http.StatusTooManyRequests, "Too busy", "the server is busy: try again in a moment", "")
 	case errors.Is(err, domain.ErrUnauthenticated):
 		problemFor(w, r, err, http.StatusUnauthorized, "Unauthorized", "sign in or send a valid API key", "")
 	case errors.Is(err, domain.ErrViewOnly):

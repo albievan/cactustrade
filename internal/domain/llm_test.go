@@ -140,3 +140,39 @@ func TestLLMUsageAdd(t *testing.T) {
 		t.Fatalf("saturating sum = %+v", s)
 	}
 }
+
+// TestMetadataHostsRefused is PLAN 7.1.9 (F9): LLM base URLs and SMTP hosts never point at
+// link-local or cloud metadata addresses.
+func TestMetadataHostsRefused(t *testing.T) {
+	for _, u := range []string{
+		"http://169.254.169.254/v1", "https://169.254.0.1:8443/v1", "http://[fd00:ec2::254]/v1", "http://[fe80::1]/v1",
+		"http://[::ffff:169.254.169.254]/v1", "http://metadata.google.internal/v1", "http://METADATA.GOOGLE.INTERNAL./v1",
+		"http://metadata/v1", "http://instance-data.ec2.internal/v1",
+	} {
+		if err := (LLMConfig{Provider: "ollama", Model: "m", BaseURL: u}).Validate(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("LLM base URL %s: %v", u, err)
+		}
+	}
+	for _, ok := range []string{"http://gpu-box:11434/v1", "https://api.example.com/v1", "http://10.0.0.5:11434/v1", "http://[::1]:11434/v1"} {
+		if err := (LLMConfig{Provider: "ollama", Model: "m", BaseURL: ok}).Validate(); err != nil {
+			t.Errorf("LLM base URL %s refused: %v", ok, err)
+		}
+	}
+	base := SMTPSettings{Enabled: true, Port: 587, TLS: SMTPStartTLS, From: "bot@example.com"}
+	for _, h := range []string{"169.254.169.254", "metadata.google.internal", "169.254.10.10"} {
+		s := base
+		s.Host = h
+		if err := s.Normalize().Validate(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("SMTP host %s: %v", h, err)
+		}
+		s.Enabled = false
+		if err := s.Normalize().Validate(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("SMTP host %s (switched off): %v", h, err)
+		}
+	}
+	s := base
+	s.Host = "smtp.gmail.com"
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

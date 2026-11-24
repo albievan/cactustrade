@@ -61,6 +61,15 @@ func (s *Service) setReconciled(ctx context.Context, a domain.Account, ok bool, 
 	return r
 }
 
+// unreconcile marks an account not reconciled (no new entries until the next clean
+// reconciliation), without an alert: it is the expected result of an owner's action, such as
+// new keys (PLAN 7.1.3).
+func (s *Service) unreconcile(accountID, reason string) {
+	s.rt.mu.Lock()
+	defer s.rt.mu.Unlock()
+	s.rt.reconciled[accountID] = Reconciliation{AccountID: accountID, At: s.d.Clock.Now().UTC(), Reason: reason}
+}
+
 // ReconcileAll reconciles every eToro account that has keys, at start-up before any
 // supervisor or agent loop, then every ReconcileEvery from the supervisor. Real-mode accounts
 // are only read: their orders and positions are matched, nothing is sent. Accounts

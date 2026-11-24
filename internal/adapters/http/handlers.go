@@ -62,6 +62,24 @@ func tooMany(w http.ResponseWriter, r *http.Request, wait time.Duration) {
 	writeProblem(w, r, http.StatusTooManyRequests, "Too many attempts", "try again later", "")
 }
 
+// signInAttempt counts a password check for user from ip before the password is hashed
+// (PLAN 7.1.4, 7.1.5) and waits out the per-user slow-down. false: the answer (429, or the
+// client went away) is written.
+func (s *Server) signInAttempt(w http.ResponseWriter, r *http.Request, ip, user string) bool {
+	ok, wait, delay := s.limiter.SignIn(ip, user)
+	if !ok {
+		tooMany(w, r, wait)
+		return false
+	}
+	if delay > 0 {
+		if err := s.limiter.sleep(r.Context(), delay); err != nil {
+			s.limiter.Refund(ip, user)
+			return false
+		}
+	}
+	return true
+}
+
 // Login signs in and sets the session cookie.
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
@@ -69,21 +87,20 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip, user := state(r).ip, domain.NormalizeUsername(req.Username)
-	if ok, wait := s.limiter.Allow(ip, user); !ok {
-		tooMany(w, r, wait)
+	if !s.signInAttempt(w, r, ip, user) {
 		return
 	}
 	res, err := s.svc.Login(r.Context(), req.Username, req.Password, ip)
 	if err != nil {
 		if errors.Is(err, domain.ErrUnauthenticated) {
-			s.limiter.Fail(ip, user)
 			writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "wrong username or password", "")
 			return
 		}
+		s.limiter.Refund(ip, user)
 		s.fail(w, r, err)
 		return
 	}
-	s.limiter.Success(user)
+	s.limiter.Success(ip, user)
 	s.setCookie(w, res.Token, res.Session)
 	writeJSON(w, http.StatusOK, Me{
 		User: toUser(res.User), Via: Session, CsrfToken: ptr(res.CSRFToken),
@@ -127,16 +144,32 @@ func (s *Server) GetMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, me)
 }
 
-// ChangePassword changes the caller's password; their sessions end.
+// isWrongPassword reports whether err refused a current password (it counts as a failed
+// sign-in attempt; every other refusal is refunded).
+func isWrongPassword(err error) bool {
+	ve, ok := errors.AsType[*domain.ValidationError](err)
+	return ok && ve.Field == "currentPassword"
+}
+
+// ChangePassword changes the caller's password; their sessions end. The current-password
+// check is limited like a sign-in (PLAN 7.1.10).
 func (s *Server) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	var req ChangePasswordRequest
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := s.svc.ChangePassword(r.Context(), state(r).principal, req.CurrentPassword, req.NewPassword); err != nil {
+	st := state(r)
+	if !s.signInAttempt(w, r, st.ip, st.principal.Username) {
+		return
+	}
+	if err := s.svc.ChangePassword(r.Context(), st.principal, req.CurrentPassword, req.NewPassword); err != nil {
+		if !isWrongPassword(err) {
+			s.limiter.Refund(st.ip, st.principal.Username)
+		}
 		s.fail(w, r, err)
 		return
 	}
+	s.limiter.Success(st.ip, st.principal.Username)
 	s.clearCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -273,28 +306,6 @@ func (s *Server) ListCredentials(w http.ResponseWriter, r *http.Request) {
 		out = append(out, x)
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-// SetCredential stores a credential (write-only).
-func (s *Server) SetCredential(w http.ResponseWriter, r *http.Request, name CredentialName) {
-	var req SetCredentialRequest
-	if !decode(w, r, &req) {
-		return
-	}
-	if err := s.svc.SetCredential(r.Context(), state(r).principal, string(name), req.Value); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// DeleteCredential removes a credential.
-func (s *Server) DeleteCredential(w http.ResponseWriter, r *http.Request, name CredentialName) {
-	if err := s.svc.DeleteCredential(r.Context(), state(r).principal, string(name)); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // ListAudit lists audit entries.

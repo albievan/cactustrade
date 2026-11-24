@@ -19,9 +19,25 @@ func (s *Service) ListUsers(ctx context.Context, p Principal) ([]domain.User, er
 	return us, nil
 }
 
-// CreateUser adds a user (admin).
-func (s *Service) CreateUser(ctx context.Context, p Principal, username, password string, role domain.Role) (domain.User, error) {
+// userAdmin checks that p may manage the user target ("" = a new user): the manage-users
+// permission and a web session (PLAN 7.1.1: an API key never creates, changes or deletes a
+// user). As defence in depth, a key is also refused outright when it targets its own owner.
+func (s *Service) userAdmin(p Principal, target string) error {
 	if err := s.authorize(p, domain.PermManageUsers); err != nil {
+		return err
+	}
+	if p.APIKeyID != "" && target == p.UserID {
+		return fmt.Errorf("an API key cannot change its own user: %w", domain.ErrForbidden)
+	}
+	if p.Via != ViaSession {
+		return fmt.Errorf("users are managed in the web UI only: %w", domain.ErrForbidden)
+	}
+	return nil
+}
+
+// CreateUser adds a user (admin, web session).
+func (s *Service) CreateUser(ctx context.Context, p Principal, username, password string, role domain.Role) (domain.User, error) {
+	if err := s.userAdmin(p, ""); err != nil {
 		return domain.User{}, err
 	}
 	u, err := s.newUser(username, password, role)
@@ -42,11 +58,11 @@ type UserUpdate struct {
 	Password *string
 }
 
-// UpdateUser changes a user's role, enabled state or password (admin). The last enabled
+// UpdateUser changes a user's role, enabled state or password (admin, web session). The last enabled
 // admin can be neither demoted nor disabled. A disabled user or a new password ends the
 // user's sessions; disabling or demoting also revokes API keys above the new role.
 func (s *Service) UpdateUser(ctx context.Context, p Principal, id string, up UserUpdate) (domain.User, error) {
-	if err := s.authorize(p, domain.PermManageUsers); err != nil {
+	if err := s.userAdmin(p, id); err != nil {
 		return domain.User{}, err
 	}
 	u, err := s.d.Store.Users().Get(ctx, id)
@@ -123,10 +139,10 @@ func (s *Service) ensureAnotherAdmin(ctx context.Context) error {
 	return nil
 }
 
-// DeleteUser removes a user, their sessions and API keys (admin). Admins cannot delete
-// themselves, and the last enabled admin stays.
+// DeleteUser removes a user, their sessions and API keys (admin, web session). Admins cannot
+// delete themselves, and the last enabled admin stays.
 func (s *Service) DeleteUser(ctx context.Context, p Principal, id string) error {
-	if err := s.authorize(p, domain.PermManageUsers); err != nil {
+	if err := s.userAdmin(p, id); err != nil {
 		return err
 	}
 	if id == p.UserID {

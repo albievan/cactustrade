@@ -426,32 +426,15 @@ func TestAPIKeys(t *testing.T) {
 	}
 }
 
-func TestCredentialsWriteOnly(t *testing.T) {
+// TestCredentialsStatusOnly: the deployment credential list says what is set and where from,
+// never a value; there is no global write any more (PLAN 7.1.3, D27: eToro keys are set per
+// account, see TestKeyChangeOnlyWhenQuiet).
+func TestCredentialsStatusOnly(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	op := e.user(t, "olivia", domain.RoleOperator)
-	apiAdmin := e.admin
-	apiAdmin.Via = ViaAPIKey
-	tests := []struct {
-		name, cred, val string
-		p               Principal
-		want            error
-	}{
-		{"operator", "etoro_demo_api_key", "k", op, domain.ErrForbidden},
-		{"admin via api key", "etoro_demo_api_key", "k", apiAdmin, domain.ErrForbidden},
-		{"unknown name", "aws", "k", e.admin, domain.ErrInvalid},
-		{"empty value", "etoro_demo_api_key", "  ", e.admin, domain.ErrInvalid},
-		{"ok", "etoro_demo_api_key", " super-secret-value\n", e.admin, nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := e.svc.SetCredential(ctx, tt.p, tt.cred, tt.val); !errors.Is(err, tt.want) {
-				t.Fatalf("err = %v, want %v", err, tt.want)
-			}
-		})
-	}
-	if v, _ := e.sec.Get(ctx, domain.CredEtoroDemoAPIKey); v != "super-secret-value" {
-		t.Fatalf("stored %q", v)
+	if err := e.sec.Put(ctx, domain.CredEtoroDemoAPIKey, "super-secret-value"); err != nil {
+		t.Fatal(err)
 	}
 	st, err := e.svc.Credentials(ctx, op)
 	if err != nil || len(st) != len(domain.Credentials) {
@@ -461,32 +444,12 @@ func TestCredentialsWriteOnly(t *testing.T) {
 		if (c.Name == domain.CredEtoroDemoAPIKey) != c.Set {
 			t.Errorf("%s set=%v", c.Name, c.Set)
 		}
-	}
-	for _, a := range e.store.AuditEntries() {
-		if strings.Contains(a.Details+a.Target, "super-secret") {
-			t.Fatal("secret in audit log")
+		if strings.Contains(c.Label+c.Source+c.EnvVar, "super-secret") {
+			t.Fatal("a value in the status")
 		}
-	}
-	if err := e.svc.DeleteCredential(ctx, op, "etoro_demo_api_key"); !errors.Is(err, domain.ErrForbidden) {
-		t.Fatal("operator deleted credential")
-	}
-	if err := e.svc.DeleteCredential(ctx, apiAdmin, "etoro_demo_api_key"); !errors.Is(err, domain.ErrForbidden) {
-		t.Fatal("api key deleted credential")
-	}
-	if err := e.svc.DeleteCredential(ctx, e.admin, "x"); !errors.Is(err, domain.ErrInvalid) {
-		t.Fatal("bad name")
-	}
-	if err := e.svc.DeleteCredential(ctx, e.admin, "etoro_demo_api_key"); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.svc.DeleteCredential(ctx, e.admin, "etoro_demo_api_key"); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatal("double delete")
 	}
 	e.sec.Err = errors.New("store down")
 	if _, err := e.svc.Credentials(ctx, op); err == nil {
-		t.Fatal("store error swallowed")
-	}
-	if err := e.svc.SetCredential(ctx, e.admin, "llm_api_key", "x"); err == nil {
 		t.Fatal("store error swallowed")
 	}
 	if _, err := e.svc.Credentials(ctx, Principal{}); !errors.Is(err, domain.ErrUnauthenticated) {

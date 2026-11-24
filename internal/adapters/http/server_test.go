@@ -232,25 +232,13 @@ func TestDefaultAdminLoginCSRFAndRBAC(t *testing.T) {
 		t.Fatal("revoked key still works")
 	}
 
-	// credentials: write-only
-	if code, _, _ := x.do("PUT", "/api/v1/credentials/etoro_real_api_key", `{"value":"top-secret"}`, "X-CSRF-Token", x.csrf); code != 204 {
-		t.Fatal("set credential")
-	}
-	if code, _, _ := x.do("PUT", "/api/v1/credentials/aws", `{"value":"x"}`, "X-CSRF-Token", x.csrf); code != 400 {
-		t.Fatal("unknown credential")
-	}
+	// credentials: a read-only status (PLAN 7.1.3: eToro keys are set per account)
 	req, _ = http.NewRequestWithContext(context.Background(), "GET", x.srv.URL+"/api/v1/credentials", nil)
 	resp, _ = x.c.Do(req)
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if strings.Contains(string(b), "top-secret") || !strings.Contains(string(b), `"set":true`) {
-		t.Fatalf("credentials leak or missing: %s", b)
-	}
-	if code, _, _ := x.do("DELETE", "/api/v1/credentials/etoro_real_api_key", "", "X-CSRF-Token", x.csrf); code != 204 {
-		t.Fatal("delete credential")
-	}
-	if code, _, _ := x.do("DELETE", "/api/v1/credentials/etoro_real_api_key", "", "X-CSRF-Token", x.csrf); code != 404 {
-		t.Fatal("delete missing credential")
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"set":false`) {
+		t.Fatalf("credentials status: %d %s", resp.StatusCode, b)
 	}
 	for _, a := range x.store.AuditEntries() {
 		if strings.Contains(a.Details, "top-secret") {
@@ -414,23 +402,57 @@ func TestLimiterWindowAndDetail(t *testing.T) {
 	l := newLoginLimiter()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	l.now = func() time.Time { return now }
-	for range 5 {
-		l.Fail("1.1.1.1", "bob")
+	for range 5 { // five wrong passwords for bob from 1.1.1.1 (counted before the check)
+		if ok, _, _ := l.SignIn("1.1.1.1", "bob"); !ok {
+			t.Fatal("limited too early")
+		}
 	}
-	if ok, wait := l.Allow("2.2.2.2", "bob"); ok || wait <= 0 {
-		t.Fatal("user limit")
+	if ok, wait, _ := l.SignIn("1.1.1.1", "bob"); ok || wait <= 0 {
+		t.Fatal("the (user, address) limit")
 	}
-	if ok, _ := l.Allow("2.2.2.2", "alice"); !ok {
-		t.Fatal("other user limited")
+	// PLAN 7.1.5: another address is not locked out, only slowed down
+	if ok, _, delay := l.SignIn("2.2.2.2", "bob"); !ok || delay != time.Second {
+		t.Fatalf("bob from elsewhere: ok=%v delay=%s", ok, delay)
+	}
+	if ok, _, delay := l.SignIn("2.2.2.2", "alice"); !ok || delay != 0 {
+		t.Fatal("other user limited or slowed")
+	}
+	for n, want := range map[int]time.Duration{0: 0, 4: 0, 5: time.Second, 6: 2 * time.Second, 8: 8 * time.Second, 50: 8 * time.Second} {
+		if got := slowDelay(n); got != want {
+			t.Errorf("slowDelay(%d) = %s, want %s", n, got, want)
+		}
 	}
 	now = now.Add(16 * time.Minute)
-	if ok, _ := l.Allow("2.2.2.2", "bob"); !ok {
+	if ok, _, delay := l.SignIn("1.1.1.1", "bob"); !ok || delay != 0 {
 		t.Fatal("window did not slide")
 	}
-	l.Fail("3.3.3.3", "carol")
-	l.Success("carol")
-	if ok, _ := l.Allow("3.3.3.3", "carol"); !ok {
-		t.Fatal("success must clear the user counter")
+	// a right password takes the attempt back and clears that address's failures
+	for range 4 {
+		l.SignIn("3.3.3.3", "carol")
+	}
+	l.SignIn("3.3.3.3", "carol")
+	l.Success("3.3.3.3", "carol")
+	if ok, _, _ := l.SignIn("3.3.3.3", "carol"); !ok {
+		t.Fatal("success must clear the (user, address) counter")
+	}
+	// a refund (busy server) leaves nothing behind
+	before := l.Len()
+	l.SignIn("4.4.4.4", "dave")
+	l.Refund("4.4.4.4", "dave")
+	if l.Len() != before {
+		t.Fatalf("refund left keys: %d → %d", before, l.Len())
+	}
+	// reset requests and confirms have their own buckets
+	for range 5 {
+		if ok, _ := l.ResetRequest("5.5.5.5", "erin"); !ok {
+			t.Fatal("reset limited too early")
+		}
+	}
+	if ok, _ := l.ResetRequest("6.6.6.6", "erin"); ok {
+		t.Fatal("per-user reset cap")
+	}
+	if ok, _, delay := l.SignIn("5.5.5.5", "erin"); !ok || delay != 0 {
+		t.Fatal("reset requests counted as sign-ins")
 	}
 	if d := detail(fmt.Errorf("app.UpdateUser: %w", fmt.Errorf("the last enabled admin must stay: %w", domain.ErrConflict)), domain.ErrConflict); d != "the last enabled admin must stay" {
 		t.Fatalf("detail = %q", d)

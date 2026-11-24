@@ -73,7 +73,7 @@ func TestEmailEndpoints(t *testing.T) {
 	if code, p, _ := x.do("PUT", "/api/v1/me/profile", `{"email":"nope","notify":{"trades":true,"watchlist":false,"alerts":true}}`, csrf...); code != 400 || p["field"] != "email" {
 		t.Fatalf("bad profile %d %v", code, p)
 	}
-	if code, p, _ := x.do("PUT", "/api/v1/me/profile", `{"email":"admin@example.com","notify":{"trades":false,"watchlist":true,"alerts":true}}`, csrf...); code != 200 || p["notify"].(map[string]any)["watchlist"] != true {
+	if code, p, _ := x.do("PUT", "/api/v1/me/profile", `{"email":"admin@example.com","currentPassword":"a long password","notify":{"trades":false,"watchlist":true,"alerts":true}}`, csrf...); code != 200 || p["notify"].(map[string]any)["watchlist"] != true {
 		t.Fatalf("profile %d %v", code, p)
 	}
 	var out []map[string]any

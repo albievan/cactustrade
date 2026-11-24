@@ -136,26 +136,26 @@ func TestNotificationsAndOutbox(t *testing.T) {
 	_ = e.user(t, "nobody", domain.RoleViewer) // no access to the account: never mailed
 
 	// profiles
-	if _, err := e.svc.SetMyProfile(ctx, e.admin, Profile{Email: "bad"}); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := e.svc.SetMyProfile(ctx, e.admin, Profile{Email: "bad"}, ""); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatal("bad e-mail accepted")
 	}
 	api := vera
 	api.Via = ViaAPIKey
-	if _, err := e.svc.SetMyProfile(ctx, api, Profile{}); !errors.Is(err, domain.ErrForbidden) {
+	if _, err := e.svc.SetMyProfile(ctx, api, Profile{}, ""); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatal("API key changed a profile")
 	}
 	fresh := e.admin
 	fresh.MustChangePassword = true
-	if _, err := e.svc.SetMyProfile(ctx, fresh, Profile{}); !errors.Is(err, domain.ErrPasswordChangeRequired) {
+	if _, err := e.svc.SetMyProfile(ctx, fresh, Profile{}, ""); !errors.Is(err, domain.ErrPasswordChangeRequired) {
 		t.Fatal("default password changed a profile")
 	}
 	if p, err := e.svc.MyProfile(ctx, vera); err != nil || p.Email != "" || !p.Notify[domain.NotifyTrades] || p.Notify[domain.NotifyWatchlist] {
 		t.Fatalf("default profile = %+v %v", p, err)
 	}
-	if _, err := e.svc.SetMyProfile(ctx, e.admin, Profile{Email: "admin@example.com", Notify: domain.NotifyPrefs{domain.NotifyWatchlist: true, domain.NotifyAlerts: true}}); err != nil {
+	if _, err := e.svc.SetMyProfile(ctx, e.admin, Profile{Email: "admin@example.com", Notify: domain.NotifyPrefs{domain.NotifyWatchlist: true, domain.NotifyAlerts: true}}, "admin password 1"); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := e.svc.SetMyProfile(ctx, vera, Profile{Email: "vera@example.com", Notify: domain.NotifyPrefs{domain.NotifyTrades: true}}); err != nil || p.Email != "vera@example.com" {
+	if p, err := e.svc.SetMyProfile(ctx, vera, Profile{Email: "vera@example.com", Notify: domain.NotifyPrefs{domain.NotifyTrades: true}}, "vera password!"); err != nil || p.Email != "vera@example.com" {
 		t.Fatalf("vera = %+v %v", p, err)
 	}
 	_ = e.store.Settings().Set(ctx, notifyKey("garbage-user"), "garbage", e.clock.T)
@@ -254,7 +254,7 @@ func TestPasswordReset(t *testing.T) {
 	if out, _ := e.svc.Outbox(ctx, e.admin, 0); len(out) != 0 {
 		t.Fatal("mail without an address")
 	}
-	_, _ = e.svc.SetMyProfile(ctx, vera, Profile{Email: "vera@example.com"})
+	_, _ = e.svc.SetMyProfile(ctx, vera, Profile{Email: "vera@example.com"}, "vera password!")
 	if err := e.svc.RequestPasswordReset(ctx, " Vera ", "1.2.3.4"); err != nil {
 		t.Fatal(err)
 	}

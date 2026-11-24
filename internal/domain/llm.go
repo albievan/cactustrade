@@ -89,8 +89,32 @@ func (c LLMConfig) Validate() error {
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return Invalid("baseUrl", "must be an http(s) URL without credentials, query or fragment")
 		}
+		if ForbiddenHost(u.Hostname()) {
+			return Invalid("baseUrl", "must not be a link-local or cloud metadata address")
+		}
 	} else if p.DefaultBaseURL == "" && !p.Anthropic {
 		return Invalid("baseUrl", "this provider needs the server's address")
+	}
+	return nil
+}
+
+// ValidateKeyTransport checks that an API key for c travels encrypted (PLAN 7.1.9): the
+// endpoint must be https, except for Ollama on this machine and loopback addresses. The key
+// stays bound to its provider and endpoint (SaveLLMProfile).
+func (c LLMConfig) ValidateKeyTransport() error {
+	if c.Provider == "ollama_local" {
+		return nil
+	}
+	e := c.Endpoint()
+	if e == "" { // the provider's SDK default (Anthropic): https
+		return nil
+	}
+	u, err := url.Parse(e)
+	if err != nil {
+		return Invalid("baseUrl", "is not a URL")
+	}
+	if u.Scheme != "https" && !IsLoopbackHost(u.Hostname()) {
+		return Invalid("baseUrl", "must be an https address when an API key is set (plain http only for this machine)")
 	}
 	return nil
 }

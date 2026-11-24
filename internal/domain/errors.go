@@ -56,6 +56,9 @@ var (
 	// ErrRealModeGated means an order for a real-money account was refused: real trading is
 	// behind the phase-7 gate. It wraps ErrForbidden.
 	ErrRealModeGated = fmt.Errorf("real mode is gated (phase 7): only demo accounts trade: %w", ErrForbidden)
+	// ErrBusy means a bounded resource (the password-hashing slots, PLAN 7.1.4) is in use:
+	// nothing was done; try again shortly. The HTTP adapter answers 429 with Retry-After.
+	ErrBusy = errors.New("busy: try again in a moment")
 	// ErrTooLarge means a request asks for more rows than one answer may hold (e.g. an export
 	// over ExportMaxRows): the caller must narrow it. The HTTP adapter answers 422.
 	ErrTooLarge = errors.New("too many rows: narrow the date range")

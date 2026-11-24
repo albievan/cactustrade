@@ -15,6 +15,8 @@
 #                        encrypted credentials and password hashes, not their plaintext)
 #   --uninstall          stop and remove cactusTrade, KEEPING the database, data and secrets
 #   --delete-uninstall   remove cactusTrade AND DELETE all its data (asks for confirmation)
+#   --render             k3s/k8s: print the manifest that --install would apply (nothing is
+#                        built, pushed or applied; a dry run)
 #
 # TARGET
 #   --dockerdesktop      Docker Desktop, or Docker Engine on a Linux host (docker compose)
@@ -46,7 +48,7 @@ usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit "${1:-0}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --install | --uninstall | --delete-uninstall | --status | --backup-now | --upgrade | --version | --check-data)
+    --install | --uninstall | --delete-uninstall | --status | --backup-now | --upgrade | --version | --check-data | --render)
       [[ -z "$ACTION" ]] || die "choose one action"; ACTION="${1#--}" ;;
     --to) UPGRADE_TO="${2:-}"; shift; [[ -n "$UPGRADE_TO" && "$UPGRADE_TO" != --* ]] || die "--to needs a tag, branch or commit" ;;
     --migrate-down-to)
@@ -408,14 +410,43 @@ rollout() {
   die "deploy/$name did not become ready (ImagePullBackOff/ErrImageNeverPull = image not imported; Pending = volume or resources; CrashLoopBackOff = see its log)"
 }
 
-# render substitutes ${VAR} in the manifest template from the environment.
+# render substitutes ${VAR} in the manifest template from the environment. Lines marked
+# "# https" are kept only with K8S_HTTPS=true (the app's Service is ClusterIP: reachable only
+# through the ingress), lines marked "# plain-http" only without it (PLAN 7.1.6).
 render() {
-  local tpl="$ROOT/deploy/k8s/cactustrade.yaml"
+  local tpl="$ROOT/deploy/k8s/cactustrade.yaml" drop=' # https$'
+  [[ "${K8S_HTTPS:-false}" == true ]] && drop=' # plain-http$'
   if [[ -z "${K8S_STORAGE_CLASS:-}" ]]; then
     grep -v 'storageClassName: \${K8S_STORAGE_CLASS}' "$tpl"
   else
     cat "$tpl"
-  fi | perl -pe 's/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/exists $ENV{$1} ? $ENV{$1} : die "unset variable $1\n"/ge'
+  fi | grep -Ev -- "$drop" | sed -E 's/ # (https|plain-http)$//' |
+    perl -pe 's/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/exists $ENV{$1} ? $ENV{$1} : die "unset variable $1\n"/ge'
+}
+
+# plain_http_warning says, loudly, that K8S_HTTPS=false publishes plain HTTP on every node.
+plain_http_warning() {
+  warn "K8S_HTTPS is not true: cactusTrade is published as PLAIN HTTP on port ${K8S_NODE_PORT} of EVERY node."
+  warn "Passwords, session cookies and API keys cross the network UNENCRYPTED. Use this only on a trusted"
+  warn "lab network; set K8S_HTTPS=true (the default) to serve HTTPS through the ingress controller instead."
+}
+
+# k8s_env exports the settings the manifest needs beyond .env (shared by --install and --render).
+k8s_env() {
+  # no Mailpit in the cluster: without a real fallback server mail waits for Setup → E-mail
+  [[ "${CACTUSTRADE_SMTP_HOST:-}" == mailpit ]] && export CACTUSTRADE_SMTP_HOST=""
+  if [[ -z "${CACTUSTRADE_PUBLIC_URL:-}" && "${K8S_HTTPS:-false}" == true && -n "${K8S_HTTPS_HOST:-}" ]]; then
+    export CACTUSTRADE_PUBLIC_URL="https://${K8S_HTTPS_HOST}"
+  fi
+  export CACTUSTRADE_PUBLIC_URL="${CACTUSTRADE_PUBLIC_URL:-}" CACTUSTRADE_SMTP_HOST="${CACTUSTRADE_SMTP_HOST:-}"
+}
+
+# k8s_render prints the manifest --install would apply, touching no cluster.
+k8s_render() {
+  export IMAGE="${IMAGE:-$CACTUSTRADE_IMAGE}" IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-IfNotPresent}"
+  k8s_env
+  [[ "${K8S_HTTPS:-false}" == true ]] || plain_http_warning
+  render
 }
 
 target_arch() {
@@ -556,12 +587,16 @@ k8s_install() {
   info "applying manifests to namespace ${K8S_NAMESPACE}"
   kc create namespace "$K8S_NAMESPACE" --dry-run=client -o yaml | kc apply -f - >/dev/null
   k8s_secrets
-  # no Mailpit in the cluster: without a real fallback server mail waits for Setup → E-mail
-  [[ "${CACTUSTRADE_SMTP_HOST:-}" == mailpit ]] && export CACTUSTRADE_SMTP_HOST=""
-  if [[ -z "${CACTUSTRADE_PUBLIC_URL:-}" && "${K8S_HTTPS:-false}" == true && -n "${K8S_HTTPS_HOST:-}" ]]; then
-    export CACTUSTRADE_PUBLIC_URL="https://${K8S_HTTPS_HOST}"
+  k8s_env
+  if [[ "${K8S_HTTPS:-false}" == true ]]; then
+    # an install from before PLAN 7.1.6 has a NodePort Service: replace it, never keep it
+    if [[ "$(kc -n "$K8S_NAMESPACE" get svc cactustrade -o 'jsonpath={.spec.type}' </dev/null 2>/dev/null || true)" == NodePort ]]; then
+      info "replacing the NodePort Service with a ClusterIP one (HTTPS only through the ingress)"
+      kc -n "$K8S_NAMESPACE" delete svc cactustrade </dev/null >/dev/null
+    fi
+  else
+    plain_http_warning
   fi
-  export CACTUSTRADE_PUBLIC_URL="${CACTUSTRADE_PUBLIC_URL:-}" CACTUSTRADE_SMTP_HOST="${CACTUSTRADE_SMTP_HOST:-}"
   render | kc apply -f -
   k8s_https
   info "waiting for the rollout"
@@ -572,6 +607,7 @@ k8s_install() {
     ok "cactusTrade is running at https://${K8S_HTTPS_HOST:-$host}/"
   else
     ok "cactusTrade is running at http://${host}:${K8S_NODE_PORT} (sign-in needs HTTPS unless CACTUSTRADE_COOKIE_SECURE=false)"
+    plain_http_warning
   fi
   [[ $NEW_INSTALL -eq 1 ]] && echo "$FIRST_RUN_NOTE"
   echo "    master_key:    copy it OFF the cluster: kubectl -n ${K8S_NAMESPACE} get secret cactustrade-secrets -o jsonpath='{.data.master_key}' | base64 -d"
@@ -638,9 +674,11 @@ main() {
       version) docker_version ;;
       migrate-down-to) docker_migrate_down_to ;;
       check-data) docker_preflight; docker_data_guard ;;
+      render) die "--render is for --k3s and --k8s" ;;
     esac
   else
     case "$ACTION" in
+      render) k8s_render ;;
       install) k8s_install ;;
       uninstall) k8s_uninstall ;;
       delete-uninstall) k8s_delete_uninstall ;;

@@ -95,6 +95,11 @@ func New(cfg Config) (*Client, error) {
 	if cfg.HTTP == nil {
 		cfg.HTTP = &http.Client{}
 	}
+	// Never follow a redirect (PLAN 7.1.7): it would carry the credentials to another host.
+	// A 3xx is answered like any other unexpected status. The caller's client is not changed.
+	hc := *cfg.HTTP
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	cfg.HTTP = &hc
 	if cfg.Log == nil {
 		cfg.Log = slog.New(slog.DiscardHandler)
 	}

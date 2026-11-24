@@ -41,11 +41,14 @@ services:
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
+    # GOMEMLIMIT (below) stays under this: at most 3 password hashes of 64 MiB at once.
+    mem_limit: 512m
     depends_on:
       mariadb: { condition: service_healthy }
       volume-init: { condition: service_completed_successfully }
     environment:
       TZ: ${TZ}
+      GOMEMLIMIT: 400MiB
       CACTUSTRADE_DB_DRIVER: mariadb
       CACTUSTRADE_DB_HOST: mariadb
       CACTUSTRADE_DB_NAME: ${MARIADB_DATABASE}

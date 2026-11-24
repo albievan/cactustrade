@@ -294,14 +294,29 @@ container deployment). One SQL dialect subset serves both:
   the host.
 - **API keys:** `ctk_<id>_<secret>`; only SHA-256(secret) is stored and compared in constant
   time. A key's role never exceeds its owner's (demotion revokes keys above the new role).
-  Keys cannot create keys or change credentials.
-- **Rate limits:** sign-in is limited per client IP (20 failures / 15 min) and per
-  username (5). A limited request is refused before any password check.
+  Keys cannot create keys, change credentials, or create, change or delete users (PLAN 7.1.1).
+- **Rate limits (PLAN 7.1.4, 7.1.5, D28, D29):** every password check (sign-in, the current
+  password in change-password and in an e-mail change) is counted *before* hashing, and taken
+  back when it was right: 20 per client IP and 5 per (username, IP) in 15 min, then 429 with
+  `Retry-After`. Across addresses a username is never locked out, only slowed down (1 s, 2 s,
+  4 s, then 8 s per attempt after 5 recent ones). Password-reset requests (20 per IP / 15 min,
+  5 per username / hour) and bad reset tokens (10 per IP / 15 min) have their own buckets. At
+  most 3 argon2 hashes run at once (2 s wait, then 429 `ErrBusy`); the containers set
+  `GOMEMLIMIT=400MiB` under a 512 MiB limit. The limiter holds at most 10 000 keys and is
+  swept by `PurgeLoop`.
+- **Accounts under the supervisor (PLAN 7.1.2, 7.1.3, D30):** an account is deleted, or its
+  eToro keys changed, only while its agent is stopped and no agent position or non-final
+  order of ours is open; new keys leave the account unreconciled until the next clean pass.
+- **Outbound HTTP (PLAN 7.1.7, 7.1.9):** every client (eToro, Trading 212, Saxo, Tiger, LLM)
+  refuses redirects. An LLM key travels only over https (except Ollama on this machine and
+  loopback); LLM base URLs and SMTP hosts never name a link-local or cloud-metadata address.
 - **First run:** the server creates `admin` / `admin`, which must choose a new password
   before it can do anything else (403 "Password change required").
 - **One port:** with TLS on, plain HTTP on the same port gets a 308 redirect to HTTPS.
 - **Credentials:** write-only. Encrypted with AES-256-GCM under the master key (env, file or
   generated 0600). The ciphertext is bound to its name. Never logged, audited or returned.
+  eToro keys are set per account by its owner (web session); `/api/v1/credentials` is a
+  read-only status of the deployment's credentials (D27).
 - **Headers:** strict CSP (`default-src 'self'`), `X-Frame-Options: DENY`, `nosniff`,
   `no-referrer`, HSTS over TLS, and `Cache-Control: no-store` on the API.
 - **Errors:** problem+json. Internal errors are logged, and the client gets a generic 500.

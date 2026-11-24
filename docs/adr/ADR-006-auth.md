@@ -17,6 +17,10 @@
   changed, the account (and any API key it owns) can only read `/auth/me`, change its
   password or sign out; everything else is 403 "Password change required". Creation is
   atomic across replicas (`CreateFirst`).
-- Sign-in is rate-limited per IP and per username.
+- Sign-in is rate-limited per IP and per (username, IP), counted before the password is
+  hashed; a username is only slowed down across addresses, never locked out everywhere. At
+  most 3 argon2 hashes run at once (PLAN 7.1.4, 7.1.5; ARCHITECTURE "Rate limits").
+- User management (create, update, delete users) needs a web session: API keys are refused
+  (PLAN 7.1.1).
 
 **Consequences.** The last enabled admin cannot be deleted, disabled or demoted.

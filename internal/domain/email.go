@@ -75,6 +75,8 @@ func (s SMTPSettings) Validate() error {
 		return Invalid("host", "value too long")
 	case strings.ContainsAny(s.Username+s.From, "\r\n"):
 		return Invalid("from", "no line breaks")
+	case ForbiddenHost(s.Host):
+		return Invalid("host", "must not be a link-local or cloud metadata address")
 	}
 	if !s.Enabled {
 		return nil

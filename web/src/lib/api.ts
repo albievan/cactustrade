@@ -42,6 +42,7 @@ export type EmailSetup = components["schemas"]["EmailSetup"];
 export type EmailSetupInput = components["schemas"]["EmailSetupInput"];
 export type OutboxMail = components["schemas"]["OutboxMail"];
 export type Profile = components["schemas"]["Profile"];
+export type ProfileInput = components["schemas"]["ProfileInput"];
 export type LlmTestResult = components["schemas"]["LlmTestResult"];
 export type Platform = components["schemas"]["Platform"];
 export type Overview = components["schemas"]["Overview"];
@@ -159,9 +160,6 @@ export const api = {
     request<CreatedApiKey>("POST", "/api/v1/api-keys", { name, role, expiresInDays }),
   revokeApiKey: (id: string) => request<void>("DELETE", `/api/v1/api-keys/${encodeURIComponent(id)}`),
   credentials: () => request<Credential[]>("GET", "/api/v1/credentials"),
-  setCredential: (name: string, value: string) =>
-    request<void>("PUT", `/api/v1/credentials/${encodeURIComponent(name)}`, { value }),
-  deleteCredential: (name: string) => request<void>("DELETE", `/api/v1/credentials/${encodeURIComponent(name)}`),
   audit: (limit = 100) => request<AuditEntry[]>("GET", `/api/v1/audit?limit=${limit}`),
   testBroker: () => request<BrokerCheck>("POST", "/api/v1/broker/test"),
   portfolio: () => request<Portfolio>("GET", "/api/v1/broker/portfolio"),
@@ -189,7 +187,7 @@ export const api = {
   sendTestEmail: (to: string) => request<void>("POST", "/api/v1/email/test", { to }),
   outbox: () => request<OutboxMail[]>("GET", "/api/v1/email/outbox"),
   myProfile: () => request<Profile>("GET", "/api/v1/me/profile"),
-  setMyProfile: (p: Profile) => request<Profile>("PUT", "/api/v1/me/profile", p),
+  setMyProfile: (p: ProfileInput) => request<Profile>("PUT", "/api/v1/me/profile", p),
   requestPasswordReset: (username: string) => request<void>("POST", "/api/v1/public/password-reset", { username }),
   confirmPasswordReset: (token: string, password: string) =>
     request<void>("POST", "/api/v1/public/password-reset/confirm", { token, password }),

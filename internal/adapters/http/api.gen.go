@@ -1812,6 +1812,16 @@ type Profile struct {
 	Notify NotifyPrefs `json:"notify"`
 }
 
+// ProfileInput defines model for ProfileInput.
+type ProfileInput struct {
+	// CurrentPassword Your current password; required when the e-mail address changes, never stored or returned
+	CurrentPassword *string `json:"currentPassword,omitempty"`
+
+	// Email empty = no e-mail
+	Email  string      `json:"email"`
+	Notify NotifyPrefs `json:"notify"`
+}
+
 // PublicStatus defines model for PublicStatus.
 type PublicStatus struct {
 	// PasswordResetAvailable "Forgot password" works (mail server and public address set)
@@ -1964,12 +1974,6 @@ type SetAccountKeysRequest struct {
 
 	// Values credentials by key (CredentialSpec.key); empty = keep
 	Values *map[string]string `json:"values,omitempty"`
-}
-
-// SetCredentialRequest defines model for SetCredentialRequest.
-type SetCredentialRequest struct {
-	// Value Write-only: never returned
-	Value string `json:"value"`
 }
 
 // ShareAccountRequest defines model for ShareAccountRequest.
@@ -2290,9 +2294,6 @@ type LoginJSONRequestBody = LoginRequest
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody = ChangePasswordRequest
 
-// SetCredentialJSONRequestBody defines body for SetCredential for application/json ContentType.
-type SetCredentialJSONRequestBody = SetCredentialRequest
-
 // SetEmailSetupJSONRequestBody defines body for SetEmailSetup for application/json ContentType.
 type SetEmailSetupJSONRequestBody = EmailSetupInput
 
@@ -2312,7 +2313,7 @@ type CreateLlmProfileJSONRequestBody = LlmProfileInput
 type UpdateLlmProfileJSONRequestBody = LlmProfileInput
 
 // SetMyProfileJSONRequestBody defines body for SetMyProfile for application/json ContentType.
-type SetMyProfileJSONRequestBody = Profile
+type SetMyProfileJSONRequestBody = ProfileInput
 
 // RequestPasswordResetJSONRequestBody defines body for RequestPasswordReset for application/json ContentType.
 type RequestPasswordResetJSONRequestBody = PasswordResetRequest
@@ -2430,15 +2431,9 @@ type ServerInterface interface {
 	// TestBrokerConnection Test the eToro connection with the current mode's keys (admin; one read-only call)
 	// (POST /api/v1/broker/test)
 	TestBrokerConnection(w http.ResponseWriter, r *http.Request)
-	// ListCredentials Which credentials are set (never their values)
+	// ListCredentials Which deployment credentials are set (never their values)
 	// (GET /api/v1/credentials)
 	ListCredentials(w http.ResponseWriter, r *http.Request)
-	// DeleteCredential Delete a credential (admin, web UI session only)
-	// (DELETE /api/v1/credentials/{name})
-	DeleteCredential(w http.ResponseWriter, r *http.Request, name CredentialName)
-	// SetCredential Set a credential (admin, web UI session only); write-only
-	// (PUT /api/v1/credentials/{name})
-	SetCredential(w http.ResponseWriter, r *http.Request, name CredentialName)
 	// ListDecisions The account's decision log, newest first (viewer; one entry per candidate the agent handled)
 	// (GET /api/v1/decisions)
 	ListDecisions(w http.ResponseWriter, r *http.Request, params ListDecisionsParams)
@@ -3310,58 +3305,6 @@ func (siw *ServerInterfaceWrapper) ListCredentials(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListCredentials(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteCredential operation middleware
-func (siw *ServerInterfaceWrapper) DeleteCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "name" -------------
-	var name CredentialName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteCredential(w, r, name)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SetCredential operation middleware
-func (siw *ServerInterfaceWrapper) SetCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "name" -------------
-	var name CredentialName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SetCredential(w, r, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4874,8 +4817,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/api-keys", wrapper.CreateApiKey)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/api-keys/{keyId}", wrapper.RevokeApiKey)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/credentials", wrapper.ListCredentials)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/credentials/{name}", wrapper.DeleteCredential)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/credentials/{name}", wrapper.SetCredential)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts", wrapper.ListAccounts)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts", wrapper.CreateAccount)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/current", wrapper.SetCurrentAccount)

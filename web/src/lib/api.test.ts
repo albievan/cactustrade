@@ -18,7 +18,7 @@ describe("api client", () => {
     await api.login("albie", "a long password");
     mockFetch(204);
     const g = vi.mocked(globalThis.fetch);
-    await request("PUT", "/api/v1/credentials/llm_api_key", { value: "x" });
+    await request("PUT", "/api/v1/me/profile", { email: "", notify: {} });
     const headers = g.mock.calls.at(-1)![1]!.headers as Record<string, string>;
     expect(headers["X-CSRF-Token"]).toBe("c1");
     expect(f).toHaveBeenCalled();

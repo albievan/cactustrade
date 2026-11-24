@@ -40,12 +40,15 @@ type Client struct {
 
 var _ ports.Reviewer = (*Client)(nil)
 
-// New builds a client.
+// New builds a client. It never follows a redirect (PLAN 7.1.7: the key would go to another
+// host); h itself is not changed.
 func New(h *http.Client) *Client {
 	if h == nil {
 		h = &http.Client{}
 	}
-	return &Client{HTTP: h}
+	hc := *h
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Client{HTTP: &hc}
 }
 
 // systemPrompt is the reviewer's whole job description.
