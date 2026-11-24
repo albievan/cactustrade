@@ -1356,6 +1356,13 @@ U1–U11 (demo, step 4.17) must be settled first.
 | S11 | HTTP `ErrRealModeGated` → 403 (`handlers_agent.go:30`) | API | `TestAgentRolesAndRealAccounts` | stays (still used when not armed) |
 | — | **Not lifted:** `set_sl_tp` (`executable` map, `ErrNotEnabled`); `cmd backtest` refusing a real account; `streamAccount` preferring demo keys | — | existing | never in phase 7 |
 
+**Pre-consent proof (7.17):** every site above also refuses with a gate *armed* (through
+`armLocked`), a reconciled real account with keys, real limits, its agent forced to running and
+`CACTUSTRADE_REAL_TRADING=on` set: `TestRealRefusalDomain` (S1, S2), `TestRealRefusalEtoroClient`
+(S3, every mutating allowlist op, 0 requests), `TestRealRefusalApp` (S4–S10, 0 mutating broker
+calls), `TestRealRefusalHTTP` (S11). `TestRealRefusalModeReferences` (`cmd/cactustrade`) lists
+every `ModeReal`/`ModeDemo` reference in non-test code with its role and fails on a new one.
+
 | ID | Step | Files | Acceptance tests | Status |
 |---|---|---|---|---|
 | 7.1 | **Security review pass (reviewer agent, read-only).** Scope: auth/sessions/CSRF, the SSE stream, CSV exports, authorization per account, secrets in logs/errors/fixtures, allowlists of all 4 broker adapters, depguard layering, SSRF (LLM base URL, SMTP host, Saxo redirect), headers, container settings, `deploy.sh`. Ranked findings go into PLAN ("Phase 7 security review") with a fix step `7.1.n` per BLOCKER/MAJOR (planned after the review). | PLAN | Findings table exists; every BLOCKER/MAJOR has a step id; `make check` green | done (findings: "Phase 7 security review"; 7.1.1–7.1.12 fixed, 7.1.13–7.1.17 planned) |
@@ -1368,14 +1375,14 @@ U1–U11 (demo, step 4.17) must be settled first.
 | 7.7 | **Dependency audit.** `make audit`: `go mod verify`, govulncheck, a licence check over `go list -m -json all` + each module's LICENSE (allowed: MIT, BSD-2/3, ISC, Apache-2.0, MPL-2.0, public domain/Unlicense; others fail with the module name), `pnpm licenses list --prod` with the same rule, `pnpm audit --prod --audit-level=moderate`. Joins `make check`. PLAN dependency table brought up to date. | `tools/licencecheck/` (Go, stdlib only), `Makefile`, PLAN | `make audit` green; the licence checker's own test fails on a GPL-3.0 fixture module. | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
 | 7.8 | **Vault `SecretStore` (optional, OD30).** KV v2 over `net/http` (no SDK). Token from a file or Kubernetes auth (JWT file); CA file; no redirects; write-only (Get only for the app's own use, never returned by the API); env overlay still wins. `CACTUSTRADE_SECRETS=db\|vault` (default db). `cactustrade secrets migrate --to vault`. | `internal/adapters/vault/`, `cmd/cactustrade/main.go`, `.golangci.yml` (depguard), ADR-003 update | `go test ./internal/adapters/vault`: fake Vault (`httptest`) for get/put/delete/list, 403/404/5xx, token renewal; no token in any error or log; a redirect is refused; coverage ≥ 90 %. | todo |
 | 7.9 | **Releases and runbook.** `make dist` (linux/darwin/windows × amd64/arm64, `SHA256SUMS`, signature per OD31), `setup.sh` / `setup.ps1` as cactusInv. `docs/RUNBOOK.md`: eToro API down, kill switch tripped, reconciliation mismatch, lease held by a dead process, restore, **disarm real trading now**. | `Makefile`, `scripts/`, `docs/RUNBOOK.md` | `make dist` builds 6 binaries; signature verifies in a script test; `make check`. | todo |
-| 7.10 | **Domain: demo evidence and the gate (real still impossible).** `const RealTradingEnabled = false` ("needs the owner's written consent, PLAN 7.18"). `DayFacts{Day RiskDate, Decisions, FilledOpens, OpenedPositions, ClosedSameDay}` → `QualifyingDays(facts, rule)` per OD19. `GateEvidence{Days, Count, First, Last}`. `GateChecks(in) []GateCheck{Name, Pass, Detail}`: real account (eToro, mode real, keys, reconciled, not killed, agent stopped, limits valid and ≤ real ceilings); linked demo account (eToro, mode demo, same owner, OD21); ≥ 20 qualifying days in the last 60 risk days, the latest ≤ 7 days old (OD20); arming user is admin and owner (OD22); phrase `ENABLE REAL TRADING <account name>`. `CanArm` = every check passes **and** `RealTradingEnabled`, else `ErrRealModeGated`. `RealGate` aggregate (locked / armed, linked demo id, armed at/by, evidence, disarmed at/by/reason, expires at (OD24), version). | `internal/domain/{realgate.go,realgate_test.go}` | `go test ./internal/domain -run 'Gate\|QualifyingDays\|RealTradingDisabled'`. `TestRealTradingDisabledInThisBuild` asserts the constant is false (changing it changes this test: a visible, reviewed edit). Properties: a day without a decision, without a filled demo open, or with a position held past its risk day never qualifies; adding facts never lowers the count; 19 days → fails; 20 days but the latest 8 days old → fails; every check passing still gives `ErrRealModeGated`. | todo |
-| 7.11 | **Domain: real-mode limits (OD25).** `DefaultRealRiskLimits` and `RealCeilings`; `RiskLimits.ValidateFor(mode)`. Raising any limit on a real account is a disarm reason (`RaisesAny(old, new)`). | `internal/domain/{risk.go,risk_test.go}` | `go test ./internal/domain -run 'RealLimits\|RaisesAny'`: every field over the ceiling is refused; a real account's MaxShort > 25 % refused (D19 unchanged); `RaisesAny` property against field-by-field comparison. | todo |
-| 7.12 | **Migration 00012 `real_gates` + repositories.** `real_gates` (account_id PK FK cascade, state, demo_account_id, armed_at, armed_by, expires_at, evidence TEXT JSON, disarmed_at, disarmed_by, disarm_reason, version, updated_at). `RealGates{Get, Put(versioned)}`; `Orders.ListSince(account, since)`, `AgentPositions.ListSince(account, since)`, `Decisions.CountByDay`? → no: the app folds rows from `Decisions.List` paged (≤ 60 days) into `DayFacts`. | `migrations/{sqlite,mariadb}/00012_real_gate.sql`, `internal/ports/ports.go`, fakes, `internal/adapters/sqlstore/realgate.go`, `storetest/realgate.go` | `make test && make test-int`, `TestMigrationParity`; shared suite: a stale version → `ErrConflict` (a disarm is never overwritten by an older arm); cascade; `ListSince` bounds. | todo |
-| 7.13 | **App: gate use cases (arming still refused).** `RealGateStatus(p, realAcct)` (view access): checks + evidence days. `ArmReal(p, realAcct, demoAcct, confirm, password)`: `mode.switch` permission (admin), web session, owner, password re-entered (argon2 verify, counted by the sign-in limiter), phrase, `GateChecks`, then `CanArm` → **`ErrRealModeGated` while the constant is false**. Audit `real.arm_refused` with the failing checks. Internal `s.armLocked` (persist, audit `real.arm`, danger event, e-mail admins + owner) exists for tests only via `CanArm`. `DisarmReal(p, acct, reason)`: trade access + `agent.kill`, session or API key; idempotent; agent → stopped if running/paused (entries stop, **exits continue**); audit, danger event, e-mail. Auto-disarm: kill trip, key change, `RaisesAny`, `restore.at` newer than `armed_at`, expiry. `Status` adds `RealArmed []{id, name}` for visible accounts. | `internal/app/{realgate.go,realgate_test.go,agent_control.go,supervisor.go,risk.go,accounts.go,system.go}` | `go test -race ./internal/app -run 'RealGate\|ArmReal\|DisarmReal'`. Role × via × owner matrix; wrong phrase 422; wrong password 403 and limited after 5; 19 qualifying days → refused with that check; 20 days → `ErrRealModeGated` and **no row stored as armed**; using `armLocked` directly: a key change, a kill, a limit raise, a restore and expiry each disarm; disarm from an API key works; disarm never cancels a close in flight. | todo |
-| 7.14 | **Contract and handlers.** `GET /api/v1/accounts/{id}/real-gate`, `POST …/real-gate/arm` `{demoAccountId, confirm, password}` (session only), `POST …/real-gate/disarm` `{reason}` (session or key); `SystemStatus.realArmed`. `ErrRealModeGated` → 403 "Real trading is not enabled in this build". | `api/openapi/cactustrade.yaml`, `internal/adapters/http/{handlers_realgate.go,realgate_test.go}`, `schema.d.ts` | `make gen && go test ./internal/adapters/http -run RealGate`: 200/403/409/422; CSRF on both mutations; API key refused for arm, allowed for disarm; the password never appears in logs (captured handler); drift green. | todo |
-| 7.15 | **Web: Real trading page and banner.** Admin page *Real trading* (Settings): one card per real account with the server's checklist (pass/fail + detail), the evidence days, the demo account picker, an arm dialog (typed phrase + password; shows the server's refusal: "not enabled in this build"), and Disarm for trade-access users (`ConfirmDialog`). **Banner on every authenticated page** from `status.realArmed`: red, not dismissible, "REAL MONEY — real trading armed on: …", in addition to R3's frame (OD27). | `web/src/pages/RealTrading.tsx` + test, `components/{Layout.tsx,RealBanner.tsx}` + tests, `lib/{api.ts,mode.tsx}` | `pnpm -C web check`. Vitest renders `Layout` with every route: the banner is present when `realArmed` is non-empty and absent otherwise; the arm button needs both fields; no gate logic in React (only server checks shown). | todo |
-| 7.16 | **Docs.** ARCHITECTURE "Real-mode gate"; ADR-007 (gate, evidence rule, two keys + consent); README warning; RUNBOOK disarm. | docs | `make check` | todo |
-| 7.17 | **Real refusal matrix (pre-consent proof).** One test per layer with a real account that has keys, a gate made `armed` through `armLocked`, is reconciled, has its agent forced to running, valid limits and a deployment opt-in set: S1–S11 all still refuse; `AgentTick` → 0 `Open`; `placeEntry`, `closePosition`, `cancelOrder` → 0 broker calls; `Supervise` skipped; `flatten` and `ForceClose` → 0 calls; `controls.gated = true`; HTTP 403; `etoro.Client` → 0 HTTP requests; a source test lists every reference to `ModeReal`/`ModeDemo` in non-test code and fails on any new site not in this table. | `internal/app/real_refusal_test.go`, `internal/domain/real_refusal_test.go`, `internal/adapters/etoro/real_refusal_test.go`, `internal/adapters/http/realgate_test.go` | `go test -race ./... -run RealRefusal`; `make check`. | todo |
+| 7.10 | **Domain: demo evidence and the gate (real still impossible).** `const RealTradingEnabled = false` ("needs the owner's written consent, PLAN 7.18"). `DayFacts{Day RiskDate, Decisions, FilledOpens, OpenedPositions, ClosedSameDay}` → `QualifyingDays(facts, rule)` per OD19. `GateEvidence{Days, Count, First, Last}`. `GateChecks(in) []GateCheck{Name, Pass, Detail}`: real account (eToro, mode real, keys, reconciled, not killed, agent stopped, limits valid and ≤ real ceilings); linked demo account (eToro, mode demo, same owner, OD21); ≥ 20 qualifying days in the last 60 risk days, the latest ≤ 7 days old (OD20); arming user is admin and owner (OD22); phrase `ENABLE REAL TRADING <account name>`. `CanArm` = every check passes **and** `RealTradingEnabled`, else `ErrRealModeGated`. `RealGate` aggregate (locked / armed, linked demo id, armed at/by, evidence, disarmed at/by/reason, expires at (OD24), version). | `internal/domain/{realgate.go,realgate_test.go}` | `go test ./internal/domain -run 'Gate\|QualifyingDays\|RealTradingDisabled'`. `TestRealTradingDisabledInThisBuild` asserts the constant is false (changing it changes this test: a visible, reviewed edit). Properties: a day without a decision, without a filled demo open, or with a position held past its risk day never qualifies; adding facts never lowers the count; 19 days → fails; 20 days but the latest 8 days old → fails; every check passing still gives `ErrRealModeGated`. | done (2026-11-24; `TestRealTradingDisabledInThisBuild`, `TestQualifyingDays*`, `TestGateChecks`, `TestGateProperties`, `TestRealGate`; decisions below) |
+| 7.11 | **Domain: real-mode limits (OD25).** `DefaultRealRiskLimits` and `RealCeilings`; `RiskLimits.ValidateFor(mode)`. Raising any limit on a real account is a disarm reason (`RaisesAny(old, new)`). | `internal/domain/{risk.go,risk_test.go}` | `go test ./internal/domain -run 'RealLimits\|RaisesAny'`: every field over the ceiling is refused; a real account's MaxShort > 25 % refused (D19 unchanged); `RaisesAny` property against field-by-field comparison. | done (2026-11-24; `TestRealLimits`, `TestRaisesAny`) |
+| 7.12 | **Migration 00012 `real_gates` + repositories.** `real_gates` (account_id PK FK cascade, state, demo_account_id, armed_at, armed_by, expires_at, evidence TEXT JSON, disarmed_at, disarmed_by, disarm_reason, version, updated_at). `RealGates{Get, Put(versioned)}`; `Orders.ListSince(account, since)`, `AgentPositions.ListSince(account, since)`, `Decisions.CountByDay`? → no: the app folds rows from `Decisions.List` paged (≤ 60 days) into `DayFacts`. | `migrations/{sqlite,mariadb}/00012_real_gate.sql`, `internal/ports/ports.go`, fakes, `internal/adapters/sqlstore/realgate.go`, `storetest/realgate.go` | `make test && make test-int`, `TestMigrationParity`; shared suite: a stale version → `ErrConflict` (a disarm is never overwritten by an older arm); cascade; `ListSince` bounds. | done (2026-11-24; shared suite `real_gates`, `evidence_windows`, `real_gates_cascade` on SQLite and MariaDB) |
+| 7.13 | **App: gate use cases (arming still refused).** `RealGateStatus(p, realAcct)` (view access): checks + evidence days. `ArmReal(p, realAcct, demoAcct, confirm, password)`: `mode.switch` permission (admin), web session, owner, password re-entered (argon2 verify, counted by the sign-in limiter), phrase, `GateChecks`, then `CanArm` → **`ErrRealModeGated` while the constant is false**. Audit `real.arm_refused` with the failing checks. Internal `s.armLocked` (persist, audit `real.arm`, danger event, e-mail admins + owner) exists for tests only via `CanArm`. `DisarmReal(p, acct, reason)`: trade access + `agent.kill`, session or API key; idempotent; agent → stopped if running/paused (entries stop, **exits continue**); audit, danger event, e-mail. Auto-disarm: kill trip, key change, `RaisesAny`, `restore.at` newer than `armed_at`, expiry. `Status` adds `RealArmed []{id, name}` for visible accounts. | `internal/app/{realgate.go,realgate_test.go,agent_control.go,supervisor.go,risk.go,accounts.go,system.go}` | `go test -race ./internal/app -run 'RealGate\|ArmReal\|DisarmReal'`. Role × via × owner matrix; wrong phrase 422; wrong password 403 and limited after 5; 19 qualifying days → refused with that check; 20 days → `ErrRealModeGated` and **no row stored as armed**; using `armLocked` directly: a key change, a kill, a limit raise, a restore and expiry each disarm; disarm from an API key works; disarm never cancels a close in flight. | done (2026-11-24; `TestArmRealRoleViaOwnerMatrix`, `TestArmRealRefusals`, `TestRealGateStatus`, `TestDisarmReal`, `TestRealGateAutoDisarm`, `TestRealGateDisarmLatched`, `TestRealGateBannerAndHealth`, `TestRealGateMail`, `TestDemoEvidenceReadsADayAtATime`) |
+| 7.14 | **Contract and handlers.** `GET /api/v1/accounts/{id}/real-gate`, `POST …/real-gate/arm` `{demoAccountId, confirm, password}` (session only), `POST …/real-gate/disarm` `{reason}` (session or key); `SystemStatus.realArmed`. `ErrRealModeGated` → 403 "Real trading is not enabled in this build". | `api/openapi/cactustrade.yaml`, `internal/adapters/http/{handlers_realgate.go,realgate_test.go}`, `schema.d.ts` | `make gen && go test ./internal/adapters/http -run RealGate`: 200/403/409/422; CSRF on both mutations; API key refused for arm, allowed for disarm; the password never appears in logs (captured handler); drift green. | done (2026-11-24; `TestRealGateEndpoints`, `TestRealGateAPIKeys`, `TestRealGateWrongPasswordsAreLimited`, `TestRateLimitNeverThrottlesDisarm`; drift green) |
+| 7.15 | **Web: Real trading page and banner.** Admin page *Real trading* (Settings): one card per real account with the server's checklist (pass/fail + detail), the evidence days, the demo account picker, an arm dialog (typed phrase + password; shows the server's refusal: "not enabled in this build"), and Disarm for trade-access users (`ConfirmDialog`). **Banner on every authenticated page** from `status.realArmed`: red, not dismissible, "REAL MONEY — real trading armed on: …", in addition to R3's frame (OD27). | `web/src/pages/RealTrading.tsx` + test, `components/{Layout.tsx,RealBanner.tsx}` + tests, `lib/{api.ts,mode.tsx}` | `pnpm -C web check`. Vitest renders `Layout` with every route: the banner is present when `realArmed` is non-empty and absent otherwise; the arm button needs both fields; no gate logic in React (only server checks shown). | done (2026-11-24; `RealTrading.test.tsx`, `RealBanner.test.tsx` over every route of `App.tsx`) |
+| 7.16 | **Docs.** ARCHITECTURE "Real-mode gate"; ADR-007 (gate, evidence rule, two keys + consent); README warning; RUNBOOK disarm. | docs | `make check` | done (2026-11-24; ARCHITECTURE "Real-mode gate", ADR-007, README "Real money"; the RUNBOOK disarm procedure is 7.9's, see decisions) |
+| 7.17 | **Real refusal matrix (pre-consent proof).** One test per layer with a real account that has keys, a gate made `armed` through `armLocked`, is reconciled, has its agent forced to running, valid limits and a deployment opt-in set: S1–S11 all still refuse; `AgentTick` → 0 `Open`; `placeEntry`, `closePosition`, `cancelOrder` → 0 broker calls; `Supervise` skipped; `flatten` and `ForceClose` → 0 calls; `controls.gated = true`; HTTP 403; `etoro.Client` → 0 HTTP requests; a source test lists every reference to `ModeReal`/`ModeDemo` in non-test code and fails on any new site not in this table. | `internal/app/real_refusal_test.go`, `internal/domain/real_refusal_test.go`, `internal/adapters/etoro/real_refusal_test.go`, `internal/adapters/http/realgate_test.go` | `go test -race ./... -run RealRefusal`; `make check`. | done (2026-11-24; `go test -race ./... -run RealRefusal`; "Pre-consent proof" under the refusal table) |
 | 7.18 | **OWNER: written consent to enable real trading.** Only the owner can complete this. Preconditions, all `done`: 2.7, 3.6, 4.17 (U1–U11 settled), 5.8; RU1–RU10 settled read-only with the owner's real **read** keys (owner run); every 7.1 BLOCKER/MAJOR fixed; OD19–OD28 answered. Record the owner's words, date and the accepted limits as a new D-number. Nothing after this row starts before it. | PLAN, `docs/adr/ADR-007` | The owner's written consent in PLAN | **blocked: needs the owner** |
 | 7.19 | *(after 7.18)* **Domain lift.** `RealTradingEnabled = true` (the consent quoted in the commit). `RealPermit` built only by `PermitEntry(gate, account, now)` (armed, not expired, same account, ≤ 60 s old) and `PermitExit(account, ours)`. `AssessEntry` allows real only with a valid entry permit and limits within `RealCeilings`; `IntentFor(o, permit)`. | `internal/domain/{realgate.go,risk.go,orders.go}` + tests | Properties: real is never allowed without a valid entry permit (missing, other account, expired, exit-only, locked or expired gate); demo behaviour unchanged (existing properties green). | blocked by 7.18 |
 | 7.20 | *(after 7.18)* **Adapter lift.** `ports.WithPermit(ctx, p)`; `mutate` accepts real only with a permit for this account and op class (open needs entry; close/cancel accept exit or entry); real path from the allowlist, real keys only. SimBroker mirrors it. | `internal/adapters/etoro/{execute.go,execute_test.go}`, `internal/ports/{ports.go,fakes/simbroker.go}` | Golden real paths equal `Allowlist[op].Real`; bodies byte-identical in shape to demo (two shapes, leverage 1); without a permit → 0 requests; allowlist tests unchanged. | blocked by 7.18 |
@@ -1568,3 +1575,103 @@ in-container images are `tag@sha256:<multi-arch index digest>` (resolved 2026-11
 `docker buildx imagetools inspect`). `TestImagesPinnedByDigest` fails on any unpinned image in
 those files (checked by un-pinning one by hand). Updating an image = new digest in the same
 places. The testcontainers images in `make test-int` stay by tag (test only).
+
+### Steps 7.10–7.17: decisions (2026-11-24)
+
+`make check` green on 2026-11-24 (incl. MariaDB `test-int` with 00012 and `make audit`); coverage
+domain 97.9 %, app 89.4 %. Real trading stays **impossible**: `domain.RealTradingEnabled = false`; no refusal site S1–S11
+was lifted, and the matrix above proves it with a gate armed. No new dependency, no new eToro
+path (the allowlist and its tests are unchanged). New migration 00012 (`real_gates`) in both
+dialects. Every OD19–OD28 default applies (the owner has not answered them yet).
+
+**7.10 domain gate** (`internal/domain/realgate.go`).
+- `QualifyingDays(facts, today, rule)` takes today's risk day: only *completed* risk days count
+  (today's is not over — a position may still be held past it), within the `WindowDays` days
+  before today; the latest must be at most `MaxAgeDays` old (`GateEvidence.Sufficient`).
+- OD19 strict, read literally plus one: a day also needs at least one position opened (a fill
+  with no recorded position is not evidence). Facts given twice for one day are added up
+  before judging (stricter: a held position on either disqualifies the day); the property test
+  checks that adding a *new* day never lowers the count.
+- `FoldDayFacts(decisionDays, orders, positions)`: open orders in demo mode with `Sends ≥ 1`
+  and state filled / partially_filled, on the risk day they were sent.
+- `GateChecks` returns ten named checks (`real_account` … `confirm_phrase`); the arming user's
+  check covers admin, owner **and** web session. `CanArm`: a failing check →
+  `*GateRefusal` (matches `ErrRealModeGated` and `ErrConflict`; HTTP 409 naming the checks);
+  all passing → `ErrRealTradingDisabled` (wraps `ErrRealModeGated`; HTTP 403 "Real trading is
+  not enabled in this build"). `TestRealTradingDisabledInThisBuild` guards the constant.
+- `RealGate`: `Arm` / `Disarm` keep the arming record (who, when, evidence) after a disarm for
+  the audit; `Live(now, restoredAt)` is false at or after the expiry and when a restore
+  happened at or after the arming. `domain.SettingRestoreAt` is now the one name of
+  `restore.at` (sqlstore uses it).
+
+**7.11 real limits** (`internal/domain/risk.go`). `LimitCeilings` with `RealCeilings` (OD25);
+`ValidateFor(real)` also requires a position cap (0 = off would exceed every ceiling);
+`WithBudgetCap` is the optional deployment cap (not wired: 7.23). `RaisesAny` counts a larger
+budget, loss, drawdown, position cap (or the cap switched off), position count, short share,
+portfolio or quote age, and a *shorter* no-entry or flatten window. In the app, a real
+account's limits default to `DefaultRealRiskLimits` (`riskLimitsFor`) and `SetRiskLimits`
+validates with `ValidateFor(mode)`; stored real limits over the ceilings (set before 7.11) are
+shown as stored and fail the gate's `real_limits` check (never silently reset).
+
+**7.12 storage.** `real_gates` as planned; `demo_account_id` has **no** foreign key (the arming
+record outlives a deleted demo account; the gate's check fails for it); `evidence` is JSON
+`{"days":[…]}`, the count derived on read. Two indexes for the evidence window:
+`orders(account_id, created_at)`, `agent_positions(account_id, opened_at)`. `Orders.ListSince`,
+`AgentPositions.ListSince` (closed positions included), `RealGates{Get, Put}` versioned like
+`risk_state` (shared suite: a stale arm after a disarm is `ErrConflict`, cascade, bounds).
+
+**7.13 app** (`internal/app/realgate.go`).
+- Order in `ArmReal`: `mode.switch` → web session → owner (`AccessOwner`) → password
+  (`checkPassword`, now taking the refusal's audit action: `real.arm_refused`) → phrase (422,
+  audited) → checklist → `CanArm`. Every refusal after the password is audited with the failing
+  check names. `armLocked` is called only after `CanArm` passes, i.e. never in this build; the
+  tests call it directly to build the worst case.
+- The demo evidence reads the decision log **one row per risk day** (`List(before, limit 1)`,
+  then jump to that day's start): at most 61 reads, whatever the volume.
+- `RealGateStatus` (view access) drops the phrase check from the list and shows the phrase;
+  `CanArm` = the arming-user check; `CanDisarm` = `agent.kill` + trade access. Demo candidates
+  are the owner's eToro demo accounts the caller can see.
+- `DisarmReal` and every automatic disarm go through `disarmLocked` (control lock held):
+  **latched in memory first** (a gate armed before the latch is not in force even if the write
+  fails — `real.disarm_failed` is audited), the running entry tick cancelled, the gate stored
+  locked, a running or paused agent stopped (also when the gate was already locked), nothing
+  cancelled or closed. Only a change is audited (`real.disarm`), announced (danger event) and
+  e-mailed. Idempotent; runs on `WithoutCancel` like the kill.
+- Automatic disarm (OD24): `tripLocked` (manual kill and the supervisor's drawdown trip),
+  `SetAccountCredentials` (under the lock it already takes), `SetRiskLimits` when `RaisesAny`;
+  expiry and restore are checked on **every read** (never in force afterwards) and persisted by
+  `sweepRealGates` on each supervisor tick and by the status read, each with `TryLock` (a busy
+  account is swept next time). An unreadable `restore.at` is "not in force".
+- E-mail: `emitFor` mails the owner and shares who chose alerts; `mailGateChange` adds every
+  admin and the owner who did not get it that way, **whatever their notification choices**.
+- `Status.RealArmed` (accounts the caller can see, in force) feeds the banner;
+  `AccountHealth.RealGateArmed` (and the `real_gate_armed` metric) now come from the gate.
+- OD26 needs no change: a real agent marked running comes back paused through `startable` (S8).
+
+**7.14 contract and HTTP.** `GET /api/v1/accounts/{accountId}/real-gate[?demoAccountId=]`,
+`POST …/real-gate/arm` `{demoAccountId, confirm, password}`, `POST …/real-gate/disarm`
+`{reason?}` (the never-throttled pattern of D32); `SystemStatus.realArmed` (optional in the
+schema, always sent). Risk days are plain `YYYY-MM-DD` strings (not `format: date`). The
+"not enabled in this build" title is used by the gate endpoints only; the agent endpoints keep
+"Real trading needs the phase-7 gate" (`TestAgentRolesAndRealAccounts` unchanged). The arm
+runs under `passwordChecked` (sign-in limiter; 429 after 5 wrong).
+
+**7.15 web.** *Setup → Real trading* is in everyone's menu (disarm is for operators too); the
+page lists the real eToro accounts and shows only what the server returns (checks, evidence,
+`canArm`, `canDisarm`, refusals); a source test bans role / access / threshold logic in it.
+`RealBanner` sits in `Layout` above R3's real strip; a test renders it on every route declared
+in `App.tsx` (checked against its source) with and without armed accounts.
+
+**7.16 docs.** ARCHITECTURE "Real-mode gate", ADR-007, README "Real money". **RUNBOOK not
+edited here:** 7.9 (another worktree) owns `docs/RUNBOOK.md` including "disarm real trading
+now"; the procedure is `POST /api/v1/accounts/<id>/real-gate/disarm` with `{"reason":"…"}`
+(web UI: Real trading → Disarm; or an API key with `agent.kill` and trade access), never rate
+limited.
+
+**7.17 matrix.** See "Pre-consent proof" under the refusal table. The OD28 opt-in does not exist
+before 7.23, so the tests set `CACTUSTRADE_REAL_TRADING=on` in the environment to show nothing
+reads it. Reads of a real account (its portfolio for a view) stay allowed and are not counted;
+mutating calls are. `TestRealRefusalModeReferences` lives in `cmd/cactustrade` (depguard bans
+`os` in `internal/app`, also in tests), compares per-file multisets of trimmed lines (a second
+copy of a listed line fails too), and skips `storetest` (the shared suite's fixtures); a planted
+`var _ = domain.ModeReal` in `internal/app/executor.go` failed it (checked by hand, reverted).

@@ -335,6 +335,38 @@ container deployment). One SQL dialect subset serves both:
 - **Containers:** distroless, non-root (65532), read-only root filesystem, all capabilities
   dropped, `no-new-privileges`, and secrets as files.
 
+## Real-mode gate (phase 7, ADR-007)
+
+Real trading is **impossible in this build**: `domain.RealTradingEnabled` is false until the
+owner's written consent (PLAN 7.18), and every refusal site S1–S11 (PLAN, Phase 7) refuses a
+real-money account whatever the gate says. What exists is the gate's machinery:
+
+- **Domain** (`internal/domain/realgate.go`, `risk.go`): `DayFacts` → `QualifyingDays` (OD19
+  strict, OD20: 20 completed risk days in the last 60, the latest ≤ 7 days old); `GateChecks`
+  (real account, keys, reconciled, not killed, agent stopped, limits within `RealCeilings`;
+  linked demo account of the same owner; evidence; admin owner in a web session; the phrase);
+  `CanArm` (`*GateRefusal` naming failing checks, else `ErrRealTradingDisabled`); the
+  `RealGate` aggregate (locked / armed, 30-day expiry, `Live(now, restoredAt)`);
+  `DefaultRealRiskLimits`, `RealCeilings`, `ValidateFor(mode)`, `RaisesAny`.
+- **Storage:** `real_gates` (migration 00012, both dialects), versioned like the risk state, so
+  a disarm is never overwritten by an older arm; `Orders.ListSince` and
+  `AgentPositions.ListSince` read the evidence window; the decisions are read one per risk day.
+- **App** (`internal/app/realgate.go`): `RealGateStatus` (view), `ArmReal` (refused),
+  `DisarmReal` (trade access + `agent.kill`, session or API key, idempotent; the agent stops,
+  nothing is cancelled or closed), the automatic disarms (kill trip in `tripLocked`, key change
+  in `SetAccountCredentials`, a raised limit in `SetRiskLimits`, a restore and the expiry on
+  every read and in the supervisor loop's sweep), an in-memory disarm latch (fail closed), and
+  `armLocked`, which only `ArmReal` calls after `CanArm` — unreachable here, used by tests to
+  build the worst case of the refusal matrix. `Status.RealArmed` feeds the banner;
+  `TradingHealth` reports `RealGateArmed` per account.
+- **HTTP:** `GET /api/v1/accounts/{id}/real-gate`, `POST …/arm` (web session, password under
+  the sign-in limiter, CSRF), `POST …/disarm` (session or key, CSRF for cookies, never rate
+  limited). A failing check is 409, every other real-mode refusal 403 "Real trading is not
+  enabled in this build".
+- **Web:** *Setup → Real trading* shows the server's checklist, the evidence days, the demo
+  account picker, the arm dialog (phrase + password) and Disarm; a red, non-dismissible
+  banner on every signed-in page while any visible account is armed (OD27).
+
 ## Observability
 
 JSON logs (`log/slog`): one line per request with method, path, status, duration, client IP

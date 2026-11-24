@@ -91,8 +91,9 @@ func (s *Service) forceClosableAll(ctx context.Context, p Principal) ([]domain.A
 }
 
 // checkPassword verifies the caller's own password (argon2id through the bounded hasher,
-// D29). A wrong one is audited and refused with domain.ErrWrongPassword.
-func (s *Service) checkPassword(ctx context.Context, p Principal, password, target string) error {
+// D29). A wrong one is audited as the action refused (e.g. agent.force_close_refused) and
+// refused with domain.ErrWrongPassword.
+func (s *Service) checkPassword(ctx context.Context, p Principal, password, target, refused string) error {
 	u, err := s.d.Store.Users().Get(ctx, p.UserID)
 	if err != nil {
 		return fmt.Errorf("app.checkPassword: %w", err)
@@ -102,7 +103,7 @@ func (s *Service) checkPassword(ctx context.Context, p Principal, password, targ
 		return fmt.Errorf("app.checkPassword: %w", err)
 	}
 	if !ok || u.Disabled {
-		s.audit(ctx, p, "agent.force_close_refused", target, "wrong password")
+		s.audit(ctx, p, refused, target, "wrong password")
 		return domain.ErrWrongPassword
 	}
 	return nil
@@ -182,7 +183,7 @@ func (s *Service) ForceClose(ctx context.Context, p Principal, accountID, passwo
 	if err != nil {
 		return ForceCloseReport{}, err
 	}
-	if err := s.checkPassword(ctx, p, password, v.ID); err != nil {
+	if err := s.checkPassword(ctx, p, password, v.ID, "agent.force_close_refused"); err != nil {
 		return ForceCloseReport{}, err
 	}
 	rep, err := s.forceClose(ctx, p, v)
@@ -200,7 +201,7 @@ func (s *Service) ForceCloseAll(ctx context.Context, p Principal, password strin
 	if err != nil {
 		return nil, err
 	}
-	if err := s.checkPassword(ctx, p, password, "all accounts"); err != nil {
+	if err := s.checkPassword(ctx, p, password, "all accounts", "agent.force_close_refused"); err != nil {
 		return nil, err
 	}
 	out := make([]ForceCloseReport, 0, len(vs))

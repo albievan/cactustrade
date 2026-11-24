@@ -192,6 +192,11 @@ func (s *Server) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 	if st.Account != nil {
 		out.Account = ptr(toAccount(*st.Account))
 	}
+	armed := make([]RealArmedAccount, 0, len(st.RealArmed))
+	for _, a := range st.RealArmed {
+		armed = append(armed, RealArmedAccount{Id: a.ID, Name: a.Name})
+	}
+	out.RealArmed = &armed
 	writeJSON(w, http.StatusOK, out)
 }
 

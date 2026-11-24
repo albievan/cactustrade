@@ -75,22 +75,41 @@ func (s *Service) agentState(ctx context.Context, accountID string) domain.Agent
 // riskLimits returns the stored limits, or the defaults with a zero budget. A stored value
 // that no longer validates is replaced by the defaults with a zero budget (nothing trades).
 func (s *Service) riskLimits(ctx context.Context, accountID string) domain.RiskLimits {
-	def := domain.DefaultRiskLimits
+	if l, ok := s.storedLimits(ctx, accountID); ok {
+		return l
+	}
+	return domain.DefaultRiskLimits
+}
+
+// storedLimits reads the stored limits; ok is false when there are none or they are
+// unreadable or invalid (logged).
+func (s *Service) storedLimits(ctx context.Context, accountID string) (domain.RiskLimits, bool) {
 	v, err := s.d.Store.Settings().Get(ctx, riskLimitsKey(accountID))
 	if err != nil {
-		return def
+		return domain.RiskLimits{}, false
 	}
 	var j limitsJSON
 	if err := json.Unmarshal([]byte(v), &j); err != nil {
 		s.d.Log.ErrorContext(ctx, "stored risk limits are unreadable; using defaults with no budget", "err", err)
-		return def
+		return domain.RiskLimits{}, false
 	}
 	l := j.domain()
 	if err := l.Validate(); err != nil {
 		s.d.Log.ErrorContext(ctx, "stored risk limits are invalid; using defaults with no budget", "err", err)
-		return def
+		return domain.RiskLimits{}, false
 	}
-	return l
+	return l, true
+}
+
+// riskLimitsFor is riskLimits with the defaults of the account's mode: a real-money account
+// without stored (or with unreadable) limits gets domain.DefaultRealRiskLimits (OD25). Stored
+// limits are returned as they are (a real account's limits over the real ceilings stay
+// visible; the gate's checklist refuses them).
+func (s *Service) riskLimitsFor(ctx context.Context, a domain.Account) domain.RiskLimits {
+	if l, ok := s.storedLimits(ctx, a.ID); ok {
+		return l
+	}
+	return domain.DefaultLimitsFor(accountMode(a))
 }
 
 // RiskLimits returns the current account's limits (view).
@@ -99,13 +118,14 @@ func (s *Service) RiskLimits(ctx context.Context, p Principal) (domain.RiskLimit
 	if err != nil {
 		return domain.RiskLimits{}, err
 	}
-	return s.riskLimits(ctx, v.ID), nil
+	return s.riskLimitsFor(ctx, v.Account), nil
 }
 
 // SetRiskLimits changes the current account's limits (owner, web session only). Only while
 // its agent is stopped; the trading budget may not exceed the account's equity as eToro
-// reports it now (a budget above zero therefore needs a working eToro connection). Audited
-// with the old and new values.
+// reports it now (a budget above zero therefore needs a working eToro connection). On a
+// real-money account the limits must stay within domain.RealCeilings (OD25), and raising any
+// of them disarms real trading (OD24). Audited with the old and new values.
 func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskLimits) (domain.RiskLimits, error) {
 	v, err := s.account(ctx, p, "", domain.AccessOwner)
 	if err != nil {
@@ -117,7 +137,7 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	if err := s.limitsChangeable(ctx, v.ID); err != nil {
 		return domain.RiskLimits{}, err
 	}
-	if err := l.Validate(); err != nil {
+	if err := l.ValidateFor(accountMode(v.Account)); err != nil {
 		return domain.RiskLimits{}, err
 	}
 	// eToro's equity is read before the control lock is taken (review m5): a Kill never
@@ -142,7 +162,7 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	if err := s.limitsChangeable(ctx, v.ID); err != nil {
 		return domain.RiskLimits{}, err
 	}
-	old := s.riskLimits(ctx, v.ID)
+	old := s.riskLimitsFor(ctx, v.Account)
 	b, err := json.Marshal(toLimitsJSON(l))
 	if err != nil {
 		return domain.RiskLimits{}, fmt.Errorf("app.SetRiskLimits: %w", err)
@@ -153,6 +173,9 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	ob, _ := json.Marshal(toLimitsJSON(old))
 	s.audit(ctx, p, "risk.limits_changed", v.ID, "old="+string(ob)+" new="+string(b))
 	s.emitFor(ctx, v.ID, p.Username, "risk.limits_changed", domain.SeverityWarning, "Risk limits of "+v.Name+" changed", "trading budget $"+l.TradingBudget.String())
+	if domain.RaisesAny(old, l) {
+		s.disarmIfArmed(ctx, v.Account, p, domain.DisarmLimits)
+	}
 	return l, nil
 }
 
@@ -210,7 +233,7 @@ func (s *Service) RiskLimitsView(ctx context.Context, p Principal) (RiskLimitsVi
 	if err != nil {
 		return RiskLimitsView{}, err
 	}
-	out := RiskLimitsView{Limits: s.riskLimits(ctx, v.ID), EditBlocked: s.limitsEditBlocked(ctx, p, v)}
+	out := RiskLimitsView{Limits: s.riskLimitsFor(ctx, v.Account), EditBlocked: s.limitsEditBlocked(ctx, p, v)}
 	out.CanEdit = out.EditBlocked == ""
 	return out, nil
 }

@@ -18,6 +18,7 @@ type execState struct {
 	risk      map[string]domain.AccountRiskState
 	blocks    map[string]map[domain.InstrumentID]domain.InstrumentBlock
 	leases    map[string]domain.AgentLease
+	gates     map[string]domain.RealGate
 }
 
 func (e *execState) init() {
@@ -27,6 +28,7 @@ func (e *execState) init() {
 		e.risk = map[string]domain.AccountRiskState{}
 		e.blocks = map[string]map[domain.InstrumentID]domain.InstrumentBlock{}
 		e.leases = map[string]domain.AgentLease{}
+		e.gates = map[string]domain.RealGate{}
 	}
 }
 
@@ -38,6 +40,7 @@ func (e *execState) deleteAccount(id string) {
 	delete(e.risk, id)
 	delete(e.blocks, id)
 	delete(e.leases, id)
+	delete(e.gates, id)
 }
 
 // Orders returns the in-memory orders repository.
@@ -51,6 +54,9 @@ func (s *Store) RiskStates() ports.RiskStates { return riskRepo{s} }
 
 // InstrumentBlocks returns the in-memory instrument blocks.
 func (s *Store) InstrumentBlocks() ports.InstrumentBlocks { return blockRepo{s} }
+
+// RealGates returns the in-memory real-mode gates (PLAN 7.12).
+func (s *Store) RealGates() ports.RealGates { return gateRepo{s} }
 
 // AgentLeases returns the in-memory leases.
 func (s *Store) AgentLeases() ports.AgentLeases { return leaseRepo{s} }
@@ -138,6 +144,20 @@ func (r orderRepo) List(_ context.Context, accountID string, limit int) ([]domai
 	return out, nil
 }
 
+func (r orderRepo) ListSince(_ context.Context, accountID string, since time.Time) ([]domain.Order, error) {
+	defer r.s.lock()()
+	var out []domain.Order
+	for _, o := range r.s.exec.orders {
+		if o.AccountID == accountID && !o.CreatedAt.Before(since) {
+			out = append(out, o)
+		}
+	}
+	slices.SortFunc(out, func(a, b domain.Order) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.RequestID, b.RequestID))
+	})
+	return out, nil
+}
+
 type agentPosRepo struct{ s *Store }
 
 func (r agentPosRepo) Add(_ context.Context, p domain.AgentPosition) error {
@@ -180,6 +200,20 @@ func (r agentPosRepo) ListOpen(_ context.Context, accountID string) ([]domain.Ag
 	var out []domain.AgentPosition
 	for _, p := range r.s.exec.positions[accountID] {
 		if p.Open() {
+			out = append(out, p)
+		}
+	}
+	slices.SortFunc(out, func(a, b domain.AgentPosition) int {
+		return cmp.Or(a.OpenedAt.Compare(b.OpenedAt), cmp.Compare(a.PositionID, b.PositionID))
+	})
+	return out, nil
+}
+
+func (r agentPosRepo) ListSince(_ context.Context, accountID string, since time.Time) ([]domain.AgentPosition, error) {
+	defer r.s.lock()()
+	var out []domain.AgentPosition
+	for _, p := range r.s.exec.positions[accountID] {
+		if !p.OpenedAt.Before(since) {
 			out = append(out, p)
 		}
 	}
@@ -275,4 +309,40 @@ func (r leaseRepo) Get(_ context.Context, accountID string) (domain.AgentLease, 
 		return domain.AgentLease{}, domain.ErrNotFound
 	}
 	return l, nil
+}
+
+type gateRepo struct{ s *Store }
+
+func (r gateRepo) Get(_ context.Context, accountID string) (domain.RealGate, error) {
+	defer r.s.lock()()
+	if r.s.GatesErr != nil {
+		return domain.RealGate{}, r.s.GatesErr
+	}
+	g, ok := r.s.exec.gates[accountID]
+	if !ok {
+		return domain.RealGate{}, domain.ErrNotFound
+	}
+	g.Evidence.Days = slices.Clone(g.Evidence.Days)
+	return g, nil
+}
+
+func (r gateRepo) Put(_ context.Context, g domain.RealGate) (domain.RealGate, error) {
+	defer r.s.lock()()
+	if r.s.GatesErr != nil {
+		return domain.RealGate{}, r.s.GatesErr
+	}
+	if err := g.Validate(); err != nil {
+		return domain.RealGate{}, err
+	}
+	if _, ok := r.s.accounts[g.AccountID]; !ok {
+		return domain.RealGate{}, domain.ErrNotFound
+	}
+	cur, ok := r.s.exec.gates[g.AccountID]
+	if (ok && cur.Version != g.Version) || (!ok && g.Version != 0) {
+		return domain.RealGate{}, domain.ErrConflict
+	}
+	g.Version++
+	g.Evidence.Days = slices.Clone(g.Evidence.Days)
+	r.s.exec.gates[g.AccountID] = g
+	return g, nil
 }

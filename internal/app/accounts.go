@@ -377,6 +377,7 @@ func (s *Service) SetAccountCredentials(ctx context.Context, p Principal, id str
 	if len(puts) > 0 {
 		if tradable {
 			s.unreconcile(v.ID, "the account's keys changed: reconcile again")
+			s.disarmIfArmed(ctx, v.Account, p, domain.DisarmKeys) // OD24; the ctl lock is held
 		}
 		s.audit(ctx, p, "account.keys_set", v.ID, fmt.Sprintf("credentials=%d", len(puts))) // never the values
 	}

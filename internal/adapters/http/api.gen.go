@@ -164,6 +164,48 @@ func (e EventSeverity) Valid() bool {
 	}
 }
 
+// Defines values for GateCheckName.
+const (
+	ArmingUser       GateCheckName = "arming_user"
+	ConfirmPhrase    GateCheckName = "confirm_phrase"
+	DemoAccount      GateCheckName = "demo_account"
+	DemoEvidence     GateCheckName = "demo_evidence"
+	RealAccount      GateCheckName = "real_account"
+	RealAgentStopped GateCheckName = "real_agent_stopped"
+	RealKeys         GateCheckName = "real_keys"
+	RealLimits       GateCheckName = "real_limits"
+	RealNotKilled    GateCheckName = "real_not_killed"
+	RealReconciled   GateCheckName = "real_reconciled"
+)
+
+// Valid indicates whether the value is a known member of the GateCheckName enum.
+func (e GateCheckName) Valid() bool {
+	switch e {
+	case ArmingUser:
+		return true
+	case ConfirmPhrase:
+		return true
+	case DemoAccount:
+		return true
+	case DemoEvidence:
+		return true
+	case RealAccount:
+		return true
+	case RealAgentStopped:
+		return true
+	case RealKeys:
+		return true
+	case RealLimits:
+		return true
+	case RealNotKilled:
+		return true
+	case RealReconciled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	Ok          HealthStatus = "ok"
@@ -302,6 +344,24 @@ func (e Platform) Valid() bool {
 	case Tiger:
 		return true
 	case Trading212:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RealGateState.
+const (
+	Armed  RealGateState = "armed"
+	Locked RealGateState = "locked"
+)
+
+// Valid indicates whether the value is a known member of the RealGateState enum.
+func (e RealGateState) Valid() bool {
+	switch e {
+	case Armed:
+		return true
+	case Locked:
 		return true
 	default:
 		return false
@@ -719,6 +779,16 @@ type ApiKey struct {
 	Role       Role       `json:"role"`
 }
 
+// ArmRealRequest defines model for ArmRealRequest.
+type ArmRealRequest struct {
+	// Confirm ENABLE REAL TRADING <account name>
+	Confirm       string `json:"confirm"`
+	DemoAccountId string `json:"demoAccountId"`
+
+	// Password the caller's current password (never logged or stored)
+	Password string `json:"password"`
+}
+
 // AuditEntry defines model for AuditEntry.
 type AuditEntry struct {
 	Action   string    `json:"action"`
@@ -939,6 +1009,11 @@ type DecisionDetail struct {
 	Decision Decision `json:"decision"`
 }
 
+// DisarmRealRequest defines model for DisarmRealRequest.
+type DisarmRealRequest struct {
+	Reason *string `json:"reason,omitempty"`
+}
+
 // Eligibility defines model for Eligibility.
 type Eligibility struct {
 	CheckedAt *time.Time `json:"checkedAt,omitempty"`
@@ -1031,6 +1106,13 @@ type EventFeed struct {
 	Unread int     `json:"unread"`
 }
 
+// EvidenceRule defines model for EvidenceRule.
+type EvidenceRule struct {
+	MaxAgeDays int `json:"maxAgeDays"`
+	MinDays    int `json:"minDays"`
+	WindowDays int `json:"windowDays"`
+}
+
 // FlattenTime defines model for FlattenTime.
 type FlattenTime struct {
 	Closes *time.Time `json:"closes,omitempty"`
@@ -1079,6 +1161,30 @@ type ForceCloseReport struct {
 type ForceCloseRequest struct {
 	// Password the caller's current password (never logged or stored)
 	Password string `json:"password"`
+}
+
+// GateCheck defines model for GateCheck.
+type GateCheck struct {
+	Detail string        `json:"detail"`
+	Name   GateCheckName `json:"name"`
+	Pass   bool          `json:"pass"`
+}
+
+// GateCheckName defines model for GateCheck.Name.
+type GateCheckName string
+
+// GateEvidence defines model for GateEvidence.
+type GateEvidence struct {
+	Count int `json:"count"`
+
+	// Days the qualifying risk days (YYYY-MM-DD, named after the day a 22:00 UTC risk day ends), oldest first
+	Days []string `json:"days"`
+
+	// First YYYY-MM-DD
+	First *string `json:"first,omitempty"`
+
+	// Last YYYY-MM-DD
+	Last *string `json:"last,omitempty"`
 }
 
 // Health defines model for Health.
@@ -1932,6 +2038,66 @@ type Quote struct {
 	InstrumentId int64   `json:"instrumentId"`
 }
 
+// RealArmedAccount defines model for RealArmedAccount.
+type RealArmedAccount struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// RealGate defines model for RealGate.
+type RealGate struct {
+	AccountId string     `json:"accountId"`
+	ArmedAt   *time.Time `json:"armedAt,omitempty"`
+
+	// ArmedBy user id
+	ArmedBy *string `json:"armedBy,omitempty"`
+
+	// DemoAccountId the linked demo account of the latest arming
+	DemoAccountId *string    `json:"demoAccountId,omitempty"`
+	DisarmReason  *string    `json:"disarmReason,omitempty"`
+	DisarmedAt    *time.Time `json:"disarmedAt,omitempty"`
+
+	// DisarmedBy user id; absent with disarmedAt = the system
+	DisarmedBy *string `json:"disarmedBy,omitempty"`
+
+	// EvidenceDays qualifying demo days recorded when armed
+	EvidenceDays int           `json:"evidenceDays"`
+	ExpiresAt    *time.Time    `json:"expiresAt,omitempty"`
+	State        RealGateState `json:"state"`
+	Version      int64         `json:"version"`
+}
+
+// RealGateState defines model for RealGate.State.
+type RealGateState string
+
+// RealGateStatus defines model for RealGateStatus.
+type RealGateStatus struct {
+	Account Account `json:"account"`
+
+	// Armed armed and in force now
+	Armed bool `json:"armed"`
+
+	// CanArm the caller may submit an arm request (the server still checks everything)
+	CanArm    bool        `json:"canArm"`
+	CanDisarm bool        `json:"canDisarm"`
+	Checks    []GateCheck `json:"checks"`
+
+	// DemoAccountId the demo account the checklist is for; absent = none
+	DemoAccountId *string `json:"demoAccountId,omitempty"`
+
+	// DemoCandidates the owner's eToro demo accounts the caller can see
+	DemoCandidates []Account `json:"demoCandidates"`
+
+	// Enabled this build may arm real trading at all (false until the owner's written consent)
+	Enabled  bool         `json:"enabled"`
+	Evidence GateEvidence `json:"evidence"`
+	Gate     RealGate     `json:"gate"`
+
+	// Phrase what to type to arm
+	Phrase string       `json:"phrase"`
+	Rule   EvidenceRule `json:"rule"`
+}
+
 // Reconciliation defines model for Reconciliation.
 type Reconciliation struct {
 	AccountId string `json:"accountId"`
@@ -2108,8 +2274,11 @@ type SystemStatus struct {
 	Database   SystemStatusDatabase `json:"database"`
 	Mode       TradingMode          `json:"mode"`
 	Now        time.Time            `json:"now"`
-	StartedAt  time.Time            `json:"startedAt"`
-	Version    string               `json:"version"`
+
+	// RealArmed the accounts the caller can see whose real trading is armed (the banner on every page); always empty in this build
+	RealArmed *[]RealArmedAccount `json:"realArmed,omitempty"`
+	StartedAt time.Time           `json:"startedAt"`
+	Version   string              `json:"version"`
 }
 
 // SystemStatusDatabase defines model for SystemStatus.Database.
@@ -2213,6 +2382,12 @@ type HistoryDays = int
 
 // AgentStatus defines model for AgentStatus.
 type AgentStatus = AgentStatusResult
+
+// GetRealGateParams defines parameters for GetRealGate.
+type GetRealGateParams struct {
+	// DemoAccountId the demo account the checklist is for (default: the one last armed with, else the owner's first)
+	DemoAccountId *string `form:"demoAccountId,omitempty" json:"demoAccountId,omitempty"`
+}
 
 // GetAgentParams defines parameters for GetAgent.
 type GetAgentParams struct {
@@ -2401,6 +2576,12 @@ type RenameAccountJSONRequestBody = RenameAccountRequest
 // SetAccountKeysJSONRequestBody defines body for SetAccountKeys for application/json ContentType.
 type SetAccountKeysJSONRequestBody = SetAccountKeysRequest
 
+// ArmRealGateJSONRequestBody defines body for ArmRealGate for application/json ContentType.
+type ArmRealGateJSONRequestBody = ArmRealRequest
+
+// DisarmRealGateJSONRequestBody defines body for DisarmRealGate for application/json ContentType.
+type DisarmRealGateJSONRequestBody = DisarmRealRequest
+
 // ShareAccountJSONRequestBody defines body for ShareAccount for application/json ContentType.
 type ShareAccountJSONRequestBody = ShareAccountRequest
 
@@ -2496,6 +2677,15 @@ type ServerInterface interface {
 	// SetAccountKeys Store the account's credentials, write-only (owner, web UI); an empty value keeps the stored one
 	// (PUT /api/v1/accounts/{accountId}/keys)
 	SetAccountKeys(w http.ResponseWriter, r *http.Request, accountId string)
+	// GetRealGate The real-trading gate of a real-money account, its checklist and the demo evidence (view access)
+	// (GET /api/v1/accounts/{accountId}/real-gate)
+	GetRealGate(w http.ResponseWriter, r *http.Request, accountId string, params GetRealGateParams)
+	// ArmRealGate Ask to arm real trading (admin who owns the account, web session only, password and phrase) — refused in this build
+	// (POST /api/v1/accounts/{accountId}/real-gate/arm)
+	ArmRealGate(w http.ResponseWriter, r *http.Request, accountId string)
+	// DisarmRealGate Disarm real trading now (trade access and agent.kill; web session or API key; never rate limited)
+	// (POST /api/v1/accounts/{accountId}/real-gate/disarm)
+	DisarmRealGate(w http.ResponseWriter, r *http.Request, accountId string)
 	// ConnectSaxoAccount Start connecting a Saxo account — returns Saxo's sign-in address (owner, web UI)
 	// (GET /api/v1/accounts/{accountId}/saxo/connect)
 	ConnectSaxoAccount(w http.ResponseWriter, r *http.Request, accountId string)
@@ -2902,6 +3092,100 @@ func (siw *ServerInterfaceWrapper) SetAccountKeys(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetAccountKeys(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRealGate operation middleware
+func (siw *ServerInterfaceWrapper) GetRealGate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRealGateParams
+
+	// ------------- Optional query parameter "demoAccountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "demoAccountId", r.URL.Query(), &params.DemoAccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "demoAccountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "demoAccountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRealGate(w, r, accountId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ArmRealGate operation middleware
+func (siw *ServerInterfaceWrapper) ArmRealGate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ArmRealGate(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisarmRealGate operation middleware
+func (siw *ServerInterfaceWrapper) DisarmRealGate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisarmRealGate(w, r, accountId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5118,6 +5402,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ShareAccount)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares/{userId}", wrapper.UnshareAccount)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/saxo/connect", wrapper.ConnectSaxoAccount)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/real-gate", wrapper.GetRealGate)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts/{accountId}/real-gate/arm", wrapper.ArmRealGate)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts/{accountId}/real-gate/disarm", wrapper.DisarmRealGate)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/oauth/saxo/callback", wrapper.SaxoCallback)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platforms", wrapper.ListPlatforms)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/overview", wrapper.GetOverview)

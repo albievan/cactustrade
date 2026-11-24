@@ -158,6 +158,8 @@ type Store struct {
 	LLMCallsErr  error
 	// TradesErr makes every Trades call fail.
 	TradesErr error
+	// GatesErr makes every RealGates call fail.
+	GatesErr error
 }
 
 type instrRec struct {

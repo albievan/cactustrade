@@ -184,6 +184,9 @@ type Orders interface {
 	ListOpen(ctx context.Context, accountID string) ([]domain.Order, error)
 	// List returns the account's orders, newest first, at most limit.
 	List(ctx context.Context, accountID string, limit int) ([]domain.Order, error)
+	// ListSince returns the account's orders created at or after since, oldest first (the
+	// demo evidence of the real-mode gate, PLAN 7.12).
+	ListSince(ctx context.Context, accountID string, since time.Time) ([]domain.Order, error)
 }
 
 // LLMCalls stores every call to an LLM reviewer (OD12: kept 400 days). AccountID "" is a call
@@ -228,6 +231,9 @@ type AgentPositions interface {
 	Update(ctx context.Context, p domain.AgentPosition) error
 	// ListOpen returns the account's positions not closed yet, oldest first.
 	ListOpen(ctx context.Context, accountID string) ([]domain.AgentPosition, error)
+	// ListSince returns the account's positions opened at or after since, open or closed,
+	// oldest first (the demo evidence of the real-mode gate, PLAN 7.12).
+	ListSince(ctx context.Context, accountID string, since time.Time) ([]domain.AgentPosition, error)
 }
 
 // TradeFilter selects an account's stored trades by their close time: From ≤ closed < To
@@ -262,6 +268,18 @@ type RiskStates interface {
 	// Put stores s if the stored version still equals s.Version (0 = not stored yet) and
 	// returns s with the new version. A stale version is ErrConflict: read again, re-apply.
 	Put(ctx context.Context, s domain.AccountRiskState) (domain.AccountRiskState, error)
+}
+
+// RealGates stores each real-money account's real-mode gate (PLAN 7.12). A gate goes with its
+// account.
+type RealGates interface {
+	// Get returns the stored gate (ErrNotFound when there is none: the gate is locked).
+	Get(ctx context.Context, accountID string) (domain.RealGate, error)
+	// Put stores a validated gate if the stored version still equals g.Version (0 = not
+	// stored yet) and returns g with the new version. A stale version is ErrConflict (read
+	// again, re-apply: a disarm is never overwritten by an older arm); an unknown account
+	// is ErrNotFound.
+	Put(ctx context.Context, g domain.RealGate) (domain.RealGate, error)
 }
 
 // InstrumentBlocks stores the instruments the agent may not enter, per account.
@@ -308,6 +326,7 @@ type Store interface {
 	LLMCalls() LLMCalls
 	Decisions() Decisions
 	Trades() Trades
+	RealGates() RealGates
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
