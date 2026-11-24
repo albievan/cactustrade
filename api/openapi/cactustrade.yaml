@@ -278,6 +278,29 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SystemStatus" }
         "401": { $ref: "#/components/responses/Problem" }
+  /api/v1/system/health:
+    get:
+      tags: [system]
+      operationId: getSystemHealth
+      summary: Trading health (admin) — 503 when a loop is not alive
+      description: >
+        Every trading loop is alive: the supervisor loop ticked and every account it covers
+        (an eToro demo account with keys) had a supervisor pass within the last 60 seconds,
+        and the agent loop runs. Answers 503 with the same body, naming the account, when
+        not. The accounts the caller can see carry their names; the others only their ids.
+      responses:
+        "200":
+          description: Every loop is alive
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemHealth" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503":
+          description: A loop is not alive (problems name the account)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemHealth" }
   /api/v1/users:
     get:
       tags: [users]
@@ -1691,6 +1714,39 @@ components:
         startedAt: { type: string, format: date-time }
         now: { type: string, format: date-time }
         account: { $ref: "#/components/schemas/Account" }
+    SystemHealth:
+      type: object
+      required: [ok, at, startedAt, agentLoop, accounts, problems]
+      properties:
+        ok: { type: boolean }
+        at: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        lastSupervisorTick: { type: string, format: date-time, description: "absent = the supervisor loop has not ticked yet" }
+        agentLoop: { type: boolean, description: "false when the start-up resume failed and the agent loop does not run" }
+        accounts:
+          type: array
+          items: { $ref: "#/components/schemas/AccountHealth" }
+        problems:
+          type: array
+          items: { type: string }
+    AccountHealth:
+      type: object
+      required: [accountId, mode, supervised, agentState, killed, reconciled, leaseHeld, nonFinalOrders, realGateArmed, ok]
+      properties:
+        accountId: { type: string }
+        name: { type: string, description: "only for accounts the caller can see" }
+        mode: { $ref: "#/components/schemas/TradingMode" }
+        supervised: { type: boolean, description: "the supervisor is expected to pass over it" }
+        agentState: { $ref: "#/components/schemas/AgentState" }
+        killed: { type: boolean }
+        reconciled: { type: boolean }
+        lastSupervisorPass: { type: string, format: date-time, description: "absent = none in this process" }
+        lastCleanSupervisorPass: { type: string, format: date-time, description: "latest pass without errors; absent = none" }
+        leaseHeld: { type: boolean }
+        nonFinalOrders: { type: integer, description: "our orders that are not final" }
+        realGateArmed: { type: boolean }
+        ok: { type: boolean }
+        problem: { type: string }
     LoginRequest:
       type: object
       required: [username, password]

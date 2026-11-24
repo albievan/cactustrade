@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -179,4 +181,40 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 func fileExists(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && !st.IsDir()
+}
+
+// metricsTokenFile is the generated /metrics bearer token's file in the data folder.
+const metricsTokenFile = "metrics.token"
+
+// ensureMetricsToken returns the /metrics bearer token kept in path, creating it (32 random
+// bytes, hex, mode 0600) when the file does not exist yet (PLAN 7.1.14: /metrics always needs
+// a token). created reports that it was generated now. The token is never logged.
+func ensureMetricsToken(path string) (token string, created bool, err error) {
+	b, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if token = strings.TrimSpace(string(b)); token == "" {
+			return "", false, fmt.Errorf("the metrics token file %s is empty: delete it to generate a new one", path)
+		}
+		return token, false, nil
+	case !errors.Is(err, os.ErrNotExist):
+		return "", false, fmt.Errorf("metrics token: %w", err)
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", false, fmt.Errorf("metrics token: %w", err)
+	}
+	token = hex.EncodeToString(raw)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", false, fmt.Errorf("metrics token: %w", err)
+	}
+	if _, err := f.WriteString(token + "\n"); err != nil {
+		_ = f.Close()
+		return "", false, fmt.Errorf("metrics token: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return "", false, fmt.Errorf("metrics token: %w", err)
+	}
+	return token, true, nil
 }

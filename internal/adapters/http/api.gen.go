@@ -495,6 +495,34 @@ type AccountCredential struct {
 	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
 }
 
+// AccountHealth defines model for AccountHealth.
+type AccountHealth struct {
+	AccountId  string     `json:"accountId"`
+	AgentState AgentState `json:"agentState"`
+	Killed     bool       `json:"killed"`
+
+	// LastCleanSupervisorPass latest pass without errors; absent = none
+	LastCleanSupervisorPass *time.Time `json:"lastCleanSupervisorPass,omitempty"`
+
+	// LastSupervisorPass absent = none in this process
+	LastSupervisorPass *time.Time  `json:"lastSupervisorPass,omitempty"`
+	LeaseHeld          bool        `json:"leaseHeld"`
+	Mode               TradingMode `json:"mode"`
+
+	// Name only for accounts the caller can see
+	Name *string `json:"name,omitempty"`
+
+	// NonFinalOrders our orders that are not final
+	NonFinalOrders int     `json:"nonFinalOrders"`
+	Ok             bool    `json:"ok"`
+	Problem        *string `json:"problem,omitempty"`
+	RealGateArmed  bool    `json:"realGateArmed"`
+	Reconciled     bool    `json:"reconciled"`
+
+	// Supervised the supervisor is expected to pass over it
+	Supervised bool `json:"supervised"`
+}
+
 // AccountHoldings defines model for AccountHoldings.
 type AccountHoldings struct {
 	Account Account `json:"account"`
@@ -1994,6 +2022,21 @@ type SmtpPreset struct {
 	Tls   string `json:"tls"`
 }
 
+// SystemHealth defines model for SystemHealth.
+type SystemHealth struct {
+	Accounts []AccountHealth `json:"accounts"`
+
+	// AgentLoop false when the start-up resume failed and the agent loop does not run
+	AgentLoop bool      `json:"agentLoop"`
+	At        time.Time `json:"at"`
+
+	// LastSupervisorTick absent = the supervisor loop has not ticked yet
+	LastSupervisorTick *time.Time `json:"lastSupervisorTick,omitempty"`
+	Ok                 bool       `json:"ok"`
+	Problems           []string   `json:"problems"`
+	StartedAt          time.Time  `json:"startedAt"`
+}
+
 // SystemStatus defines model for SystemStatus.
 type SystemStatus struct {
 	Account    *Account             `json:"account,omitempty"`
@@ -2551,6 +2594,9 @@ type ServerInterface interface {
 	// RunScanner Review the current account's themes and watchlist now (trade access; read-only on eToro)
 	// (POST /api/v1/scanner/run)
 	RunScanner(w http.ResponseWriter, r *http.Request)
+	// GetSystemHealth Trading health (admin) — 503 when a loop is not alive
+	// (GET /api/v1/system/health)
+	GetSystemHealth(w http.ResponseWriter, r *http.Request)
 	// ReloadSettings Re-read credentials from the environment and secret files (admin, web UI)
 	// (POST /api/v1/system/reload)
 	ReloadSettings(w http.ResponseWriter, r *http.Request)
@@ -4375,6 +4421,20 @@ func (siw *ServerInterfaceWrapper) RunScanner(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// GetSystemHealth operation middleware
+func (siw *ServerInterfaceWrapper) GetSystemHealth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSystemHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ReloadSettings operation middleware
 func (siw *ServerInterfaceWrapper) ReloadSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -4809,6 +4869,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/email/outbox", wrapper.ListOutbox)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/password", wrapper.ChangePassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/system/status", wrapper.GetSystemStatus)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/system/health", wrapper.GetSystemHealth)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users", wrapper.ListUsers)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users", wrapper.CreateUser)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/{userId}", wrapper.DeleteUser)

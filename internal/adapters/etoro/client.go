@@ -41,6 +41,14 @@ type Config struct {
 	RequestTimeout time.Duration
 	Now            func() time.Time
 	Sleep          func(context.Context, time.Duration) error
+	// Observe, when set, is told about every request that left for eToro (PLAN 7.5): the
+	// allowlisted operation, the account's mode and the outcome class ("2xx", "3xx", "4xx",
+	// "429", "5xx", or "error" when no complete answer came back). It is called on the
+	// request's goroutine and must not block. It never sees a key, a path or a body.
+	Observe func(op Op, mode domain.TradingMode, class string)
+	// ObserveWait, when set, is told each time the client-side limiter holds a request back:
+	// the quota group and how long it waits. It must not block.
+	ObserveWait func(quota QuotaGroup, wait time.Duration)
 }
 
 // Client talks to the eToro Public API through the allowlist only.
@@ -96,6 +104,7 @@ func (c *Client) limiter(accountID string) *limiter {
 	l, ok := c.lims[accountID]
 	if !ok {
 		l = newLimiter(c.cfg.Now, c.cfg.Sleep)
+		l.onWait = c.cfg.ObserveWait
 		c.lims[accountID] = l
 	}
 	return l
@@ -288,9 +297,11 @@ func (c *Client) roundTrip(ctx context.Context, op Op, ep Endpoint, mode domain.
 	start := c.cfg.Now()
 	resp, err := c.cfg.HTTP.Do(req)
 	if err != nil {
+		c.observe(op, mode, 0)
 		c.cfg.Log.WarnContext(ctx, "eToro request failed", "op", string(op), "mode", string(mode), "request_id", reqID, "err", err)
 		return trip{kind: tripLost, err: err}
 	}
+	c.observe(op, mode, resp.StatusCode)
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	c.cfg.Log.DebugContext(ctx, "eToro request", "op", string(op), "mode", string(mode), "request_id", reqID,
@@ -302,6 +313,25 @@ func (c *Client) roundTrip(ctx context.Context, op Op, ep Endpoint, mode domain.
 		return trip{kind: tripLost, tooLarge: true, err: fmt.Errorf("response larger than %d bytes", maxResponse)}
 	}
 	return trip{kind: tripAnswered, status: resp.StatusCode, header: resp.Header, data: data}
+}
+
+// observe reports one request to Config.Observe; status 0 = no answer.
+func (c *Client) observe(op Op, mode domain.TradingMode, status int) {
+	if c.cfg.Observe != nil {
+		c.cfg.Observe(op, mode, StatusClass(status))
+	}
+}
+
+// StatusClass is the outcome class of an HTTP status for metrics: "429" on its own (eToro's
+// rate limit), else "2xx", "3xx", "4xx", "5xx"; "error" for 0 (no answer) or anything else.
+func StatusClass(status int) string {
+	switch {
+	case status == http.StatusTooManyRequests:
+		return "429"
+	case status >= 200 && status < 600:
+		return strconv.Itoa(status/100) + "xx"
+	}
+	return "error"
 }
 
 // expand fills a path template; values are path-escaped and none may be left unfilled.

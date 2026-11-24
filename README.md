@@ -208,7 +208,7 @@ account currency is shown as *unknown*, never converted or guessed.
 | `CACTUSTRADE_MASTER_KEY` / `_FILE` | generated (standalone only) | 64 hex characters |
 | `CACTUSTRADE_SECRETS_DIR` | — | Folder holding `db_password`, `master_key`, `metrics_token` |
 | `CACTUSTRADE_DB_HOST`, `_NAME`, `_USER`, `_PASSWORD[_FILE]` | `localhost`, `cactustrade`, `cactustrade` | MariaDB connection |
-| `CACTUSTRADE_METRICS_TOKEN[_FILE]` | — | Bearer token that `/metrics` requires, when set |
+| `CACTUSTRADE_METRICS_TOKEN[_FILE]` | generated into `<data>/metrics.token` | Bearer token that `/metrics` always requires (generated on first start when unset; read it from the file) |
 | `CACTUSTRADE_COOKIE_SECURE` | `true` | Secure session cookie `__Host-cactustrade_session` (keep it on; `false` names it `cactustrade_session` for a plain-HTTP test) |
 | `CACTUSTRADE_TRUSTED_PROXIES` | — | CIDRs allowed to set `X-Forwarded-For` |
 | `CACTUSTRADE_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (JSON logs) |
@@ -234,7 +234,9 @@ The API is OpenAPI-first ([`api/openapi/cactustrade.yaml`](api/openapi/cactustra
 Swagger UI is at `/api/docs` and the contract at `/api/openapi.yaml`. Programs use API keys
 (`Authorization: Bearer ctk_…`) created on the *API keys* page. A key's role never exceeds its
 owner's. Roles: `viewer` (read-only), `operator` (also start/stop/kill switch), `admin`.
-Health and monitoring endpoints: `/healthz`, `/readyz`, `/metrics` (Prometheus).
+Health and monitoring endpoints: `/healthz`, `/readyz`, `/metrics` (Prometheus, always
+behind the metrics token) and `GET /api/v1/system/health` (admin: 503 when a trading loop
+is not alive, naming the account). Alert rules: [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 Every `/api/` route is rate-limited per user or API key and per address: reads 600/min,
 other methods 60/min, CSV exports 10/min, live-stream connects 30/min; over a limit the

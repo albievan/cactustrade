@@ -250,6 +250,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trading health (admin) — 503 when a loop is not alive
+         * @description Every trading loop is alive: the supervisor loop ticked and every account it covers (an eToro demo account with keys) had a supervisor pass within the last 60 seconds, and the agent loop runs. Answers 503 with the same body, naming the account, when not. The accounts the caller can see carry their names; the others only their ids.
+         */
+        get: operations["getSystemHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users": {
         parameters: {
             query?: never;
@@ -1483,6 +1503,49 @@ export interface components {
             /** Format: date-time */
             now: string;
             account?: components["schemas"]["Account"];
+        };
+        SystemHealth: {
+            ok: boolean;
+            /** Format: date-time */
+            at: string;
+            /** Format: date-time */
+            startedAt: string;
+            /**
+             * Format: date-time
+             * @description absent = the supervisor loop has not ticked yet
+             */
+            lastSupervisorTick?: string;
+            /** @description false when the start-up resume failed and the agent loop does not run */
+            agentLoop: boolean;
+            accounts: components["schemas"]["AccountHealth"][];
+            problems: string[];
+        };
+        AccountHealth: {
+            accountId: string;
+            /** @description only for accounts the caller can see */
+            name?: string;
+            mode: components["schemas"]["TradingMode"];
+            /** @description the supervisor is expected to pass over it */
+            supervised: boolean;
+            agentState: components["schemas"]["AgentState"];
+            killed: boolean;
+            reconciled: boolean;
+            /**
+             * Format: date-time
+             * @description absent = none in this process
+             */
+            lastSupervisorPass?: string;
+            /**
+             * Format: date-time
+             * @description latest pass without errors; absent = none
+             */
+            lastCleanSupervisorPass?: string;
+            leaseHeld: boolean;
+            /** @description our orders that are not final */
+            nonFinalOrders: number;
+            realGateArmed: boolean;
+            ok: boolean;
+            problem?: string;
         };
         LoginRequest: {
             username: string;
@@ -2926,6 +2989,37 @@ export interface operations {
                 };
             };
             401: components["responses"]["Problem"];
+        };
+    };
+    getSystemHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every loop is alive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemHealth"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            /** @description A loop is not alive (problems name the account) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemHealth"];
+                };
+            };
         };
     };
     listUsers: {

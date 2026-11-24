@@ -112,6 +112,9 @@ type Service struct {
 	// loop is whether this process's agent loop runs (PLAN 6.13; loopStarting until
 	// SetAgentLoop is called): no agent may be started while it does not.
 	loop atomic.Int32
+	// health is the bookkeeping behind TradingHealth (PLAN 7.5): supervisor ticks and passes,
+	// LLM call counts.
+	health *healthLog
 }
 
 // New builds the service.
@@ -132,7 +135,7 @@ func New(d Deps, cfg Config) (*Service, error) {
 	if d.Sleep == nil {
 		d.Sleep = sleepCtx
 	}
-	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates()}, nil
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog()}, nil
 }
 
 // sleepCtx waits for d with a real timer, or until ctx ends.

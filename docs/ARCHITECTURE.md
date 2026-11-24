@@ -332,4 +332,21 @@ container deployment). One SQL dialect subset serves both:
 JSON logs (`log/slog`): one line per request with method, path, status, duration, client IP
 and user. Every line carries the trading mode, and no line contains a body, cookie or token.
 `/healthz` is liveness. `/readyz` checks that the database answers. `/metrics` serves
-Prometheus HTTP, Go and process metrics, behind a bearer token when one is configured.
+Prometheus HTTP, Go and process metrics and the trading metrics, always behind a bearer
+token (`CACTUSTRADE_METRICS_TOKEN`, else generated into `<data>/metrics.token`; PLAN 7.1.14).
+
+Trading metrics (PLAN 7.5). `internal/app` never imports Prometheus (depguard):
+`app.TradingHealth(ctx)` returns a plain snapshot (per eToro account: agent state, killed,
+reconciled, last supervisor pass and last clean pass, lease held, non-final orders by state,
+real gate armed; the supervisor loop's last tick; the agent loop; LLM calls by purpose and
+outcome), and a `prometheus.Collector` in the HTTP adapter reads it at scrape time. The
+other counters live in `httpapi.Observers`, which `cmd` feeds: eToro requests by operation,
+status class and mode (`etoro.Config.Observe`), client limiter waits per quota group
+(`etoro.Config.ObserveWait`) and order transitions counted from the live bus
+(`Observers.CountOrders`; a view only — an order never waits for it). Labels are account
+ids or values from fixed sets, never a name, key, path or amount.
+`GET /api/v1/system/health` (admin) is the same snapshot: 503, naming the account, when the
+supervisor loop has not ticked or an account it covers has had no pass for 60 s
+(`app.SupervisorStale`), or the agent loop is down. `/healthz` stays a plain liveness check,
+so an orchestrator never restarts the process for a stalled account. Alert rules:
+`docs/RUNBOOK.md`.

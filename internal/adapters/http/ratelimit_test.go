@@ -119,7 +119,7 @@ func TestRateLimitBoundedMemory(t *testing.T) {
 
 // TestRateLimitHTTP: per class over HTTP; 429 is problem+json with Retry-After and counted.
 func TestRateLimitHTTP(t *testing.T) {
-	x := newAgentTCServer(t, func(*app.Deps) {}, Config{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}, slog.New(slog.DiscardHandler))
+	x := newAgentTCServer(t, func(*app.Deps) {}, Config{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, MetricsToken: "mt"}, slog.New(slog.DiscardHandler))
 	x.h.rates = newRateLimiter(RateLimits{Read: 3, Mutation: 2, Export: 1, Stream: 1})
 	codes := func(n int, method, path string, hdr ...string) string {
 		var out []string
@@ -154,6 +154,7 @@ func TestRateLimitHTTP(t *testing.T) {
 		t.Fatalf("healthz %d", code)
 	}
 	req, _ := http.NewRequestWithContext(context.Background(), "GET", x.srv.URL+"/metrics", nil)
+	req.Header.Set("Authorization", "Bearer mt")
 	resp, err := x.c.Do(req)
 	if err != nil {
 		t.Fatal(err)

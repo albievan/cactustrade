@@ -17,6 +17,8 @@ type limiter struct {
 	sleep   func(context.Context, time.Duration) error
 	sent    map[QuotaGroup][]time.Time
 	blocked map[QuotaGroup]time.Time
+	// onWait, when set, is told each time a request is held back (Config.ObserveWait).
+	onWait func(QuotaGroup, time.Duration)
 }
 
 func newLimiter(now func() time.Time, sleep func(context.Context, time.Duration) error) *limiter {
@@ -50,6 +52,9 @@ func (l *limiter) Wait(ctx context.Context, g QuotaGroup) error {
 		}
 		l.sent[g] = ts
 		l.mu.Unlock()
+		if l.onWait != nil {
+			l.onWait(g, wait)
+		}
 		if err := l.sleep(ctx, wait); err != nil {
 			return err
 		}

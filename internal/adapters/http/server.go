@@ -46,7 +46,8 @@ type Config struct {
 	CookieSecure bool
 	// TrustedProxies may set X-Forwarded-For (the ingress / reverse proxy).
 	TrustedProxies []netip.Prefix
-	// MetricsToken, when set, must be sent as a bearer token to read /metrics.
+	// MetricsToken must be sent as a bearer token to read /metrics. Empty = /metrics always
+	// answers 401 (PLAN 7.1.14: cmd generates one into the data folder when none is set).
 	MetricsToken string
 	// Web is the built web app (nil = API only).
 	Web fs.FS
@@ -76,7 +77,8 @@ var (
 	_ http.Handler    = (*Server)(nil)
 )
 
-// New builds the HTTP handler. reg receives the HTTP metrics (nil = a private registry).
+// New builds the HTTP handler. reg receives the HTTP metrics and the trading health
+// collector, read at scrape time (PLAN 7.5; nil = a private registry).
 // Register CloseStreams with the http.Server's RegisterOnShutdown so that open live streams
 // do not hold up a shutdown.
 func New(svc *app.Service, log *slog.Logger, cfg Config, reg *prometheus.Registry) *Server {
@@ -86,6 +88,7 @@ func New(svc *app.Service, log *slog.Logger, cfg Config, reg *prometheus.Registr
 	cfg.Live = cfg.Live.withDefaults()
 	s := &Server{svc: svc, log: log, cfg: cfg, limiter: newLoginLimiter(), rates: newRateLimiter(cfg.RateLimits), metrics: newMetrics(reg)}
 	s.streams = newLiveStreams(cfg.Live, s.metrics.liveStreams)
+	reg.MustRegister(newTradingCollector(svc))
 	mux := http.NewServeMux()
 	HandlerWithOptions(s, StdHTTPServerOptions{
 		BaseRouter:       mux,
@@ -125,12 +128,11 @@ func (s *Server) chain(h http.Handler) http.Handler {
 func (s *Server) metricsHandler(reg *prometheus.Registry) http.Handler {
 	inner := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.MetricsToken != "" {
-			got, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.MetricsToken)) != 1 {
-				writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "metrics need the metrics token", "")
-				return
-			}
+		// Always behind the token (PLAN 7.1.14); without one configured nothing matches.
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || s.cfg.MetricsToken == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.MetricsToken)) != 1 {
+			writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "metrics need the metrics token", "")
+			return
 		}
 		inner.ServeHTTP(w, r)
 	})

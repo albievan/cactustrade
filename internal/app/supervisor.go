@@ -71,8 +71,13 @@ func (s *Service) superviseTick(ctx context.Context, wg *sync.WaitGroup) {
 		s.d.Log.ErrorContext(ctx, "supervisor: listing accounts failed", "err", err)
 		return
 	}
+	s.health.tick(s.d.Clock.Now())
 	for _, a := range as {
-		if !a.Tradable() || a.Mode != domain.ModeDemo || !s.hasKeys(ctx, a) || !s.rt.claim(a.ID) {
+		if !s.supervisable(ctx, a) {
+			continue
+		}
+		s.health.want(a.ID, s.d.Clock.Now())
+		if !s.rt.claim(a.ID) {
 			continue
 		}
 		wg.Go(func() {
@@ -114,6 +119,12 @@ func (r *runtimeState) release(accountID string) {
 // open orders pending for over a minute (all pending ones when killed), and reconcile every
 // ReconcileEvery. Only cactusTrade's own positions are ever closed (OD1).
 func (s *Service) Supervise(ctx context.Context, accountID string) (SupervisorReport, error) {
+	rep, err := s.supervise(ctx, accountID)
+	s.health.pass(accountID, s.d.Clock.Now(), rep, err) // TradingHealth (PLAN 7.5)
+	return rep, err
+}
+
+func (s *Service) supervise(ctx context.Context, accountID string) (SupervisorReport, error) {
 	rep := SupervisorReport{AccountID: accountID}
 	a, err := s.d.Store.Accounts().Get(ctx, accountID)
 	if err != nil {

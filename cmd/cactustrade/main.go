@@ -149,6 +149,17 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("data folder: %w", err)
 	}
+	if cfg.MetricsToken == "" { // /metrics always needs a token (PLAN 7.1.14)
+		f := filepath.Join(cfg.DataDir, metricsTokenFile)
+		tok, created, err := ensureMetricsToken(f)
+		if err != nil {
+			return err
+		}
+		if created {
+			log.Info("generated the /metrics bearer token (CACTUSTRADE_METRICS_TOKEN unset)", "file", f)
+		}
+		cfg.MetricsToken = tok
+	}
 	store, err := openStore(ctx, cfg)
 	if err != nil {
 		return err
@@ -176,8 +187,16 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	// The eToro client asks the service for the mode on every call (demo unless the gated
 	// switch set real); svc is assigned just below, before the server takes any request.
 	var svc *app.Service
+	// Metrics (PLAN 7.5): the HTTP adapter owns every Prometheus series; the eToro client
+	// reports its requests and limiter waits through plain hooks.
+	reg := prometheus.NewRegistry()
+	obs := httpapi.NewObservers(reg)
 	broker, err := etoro.New(etoro.Config{
 		HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Random: system.Random{}, Log: log,
+		Observe: func(op etoro.Op, mode domain.TradingMode, class string) {
+			obs.EtoroRequest(string(op), mode, class)
+		},
+		ObserveWait: func(q etoro.QuotaGroup, wait time.Duration) { obs.LimiterWait(string(q), wait) },
 	})
 	if err != nil {
 		return err
@@ -272,7 +291,6 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		log.Info("created the eToro account \"Demo (environment)\" from the environment's demo keys")
 	}
 
-	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		prometheus.NewCounterFunc(prometheus.CounterOpts{
 			Name: "cactustrade_live_bus_dropped_total",
@@ -300,6 +318,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return err
 	}
 	go handler.PurgeLoop(ctx, 10*time.Minute)
+	obs.CountOrders(ctx, svc) // subscribed before trading starts
 	if ids, err := store.Watchlist().Watched(ctx); err == nil {
 		stream.Watch(ids...)
 	}

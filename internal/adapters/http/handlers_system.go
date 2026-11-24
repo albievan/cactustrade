@@ -112,3 +112,52 @@ func (s *Server) SetRiskLimits(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, toRiskLimits(l))
 }
+
+// GetSystemHealth answers the trading health (PLAN 7.5): 200 when every loop is alive, else
+// 503 with the same body naming the account.
+func (s *Server) GetSystemHealth(w http.ResponseWriter, r *http.Request) {
+	h, err := s.svc.SystemHealth(r.Context(), state(r).principal)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := SystemHealth{
+		Ok: h.OK(), At: h.At, StartedAt: h.StartedAt, AgentLoop: h.AgentLoop,
+		LastSupervisorTick: optTime(h.LastTick), Accounts: make([]AccountHealth, 0, len(h.Accounts)), Problems: h.Problems,
+	}
+	if out.Problems == nil {
+		out.Problems = []string{}
+	}
+	for _, a := range h.Accounts {
+		ah := AccountHealth{
+			AccountId: a.AccountID, Mode: TradingMode(a.Mode), Supervised: a.Supervised, AgentState: AgentState(a.AgentState),
+			Killed: a.Killed, Reconciled: a.Reconciled, LeaseHeld: a.LeaseHeld, RealGateArmed: a.RealGateArmed,
+			LastSupervisorPass: optTime(a.LastPass), LastCleanSupervisorPass: optTime(a.LastCleanPass), Ok: a.Problem == "",
+		}
+		for _, n := range a.Orders {
+			ah.NonFinalOrders += n
+		}
+		if a.Name != "" {
+			ah.Name = ptr(a.Name)
+		}
+		if a.Problem != "" {
+			ah.Problem = ptr(a.Problem)
+		}
+		out.Accounts = append(out.Accounts, ah)
+	}
+	code := http.StatusOK
+	if !out.Ok {
+		code = http.StatusServiceUnavailable
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, code, out)
+}
+
+// optTime is nil for the zero time.
+func optTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	u := t.UTC()
+	return &u
+}

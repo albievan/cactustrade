@@ -32,6 +32,7 @@ func (s *Service) logCall(ctx context.Context, c *domain.LLMCall, accountID stri
 	if c.Model == "" {
 		c.Model = pr.Model
 	}
+	s.health.llmCall(purpose, c.Error != "") // counted even when the log write fails (PLAN 7.5)
 	c.CostMicros = pr.Cost(c.InputTokens, c.OutputTokens)
 	if c.Latency <= 0 {
 		c.Latency = max(s.d.Clock.Now().Sub(at), 0) // the adapter measures it; a fake may not

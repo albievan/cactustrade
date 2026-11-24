@@ -159,7 +159,7 @@ func newLiveTC(t *testing.T, lim LiveLimits) *liveTC {
 	bus := &fakes.Bus{}
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	x := newAgentTCServer(t, func(d *app.Deps) { d.Bus = bus }, Config{Live: lim}, log)
+	x := newAgentTCServer(t, func(d *app.Deps) { d.Bus = bus }, Config{Live: lim, MetricsToken: "mt"}, log)
 	u, err := x.store.Users().GetByUsername(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -494,6 +494,7 @@ func TestLiveStreamCaps(t *testing.T) {
 func gauge(t *testing.T, x *liveTC) float64 {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, x.srv.URL+"/metrics", nil)
+	req.Header.Set("Authorization", "Bearer mt")
 	resp, err := x.c.Do(req)
 	if err != nil {
 		t.Fatal(err)
