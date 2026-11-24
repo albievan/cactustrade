@@ -769,4 +769,5 @@ func Run(t *testing.T, s ports.Store) {
 
 	runExecution(t, s, admin.ID, t0)
 	runDecisionLog(t, s, admin.ID, t0)
+	runTrades(t, s, admin.ID, t0)
 }

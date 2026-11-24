@@ -844,11 +844,11 @@ Each is the **default until the owner answers**. OD14–OD18 shape phase 6; OD19
 
 | ID | Step | Files | Acceptance tests | Status |
 |---|---|---|---|---|
-| 6.1 | **Domain: live figures.** `LimitDistances(pf Portfolio, st AccountRiskState, l RiskLimits, r Reservation, now, sessions)` → equity, cash, reserved, budget used / remaining, day P&L (equity − start-of-day equity), distance to the daily floor and the drawdown floor, open + pending vs the position cap, short exposure vs `MaxShort`, time to no-entry and flatten per market. Integer cents/bp only, saturating arithmetic, reusing `DailyFloor`, `DrawdownFloor`, `FlattenAt` and `Reservation`. | `internal/domain/live.go`, `live_test.go` | `go test ./internal/domain -run 'LimitDistances'`. Table tests. Property `TestLimitDistancesAgreeWithAssessEntry` (20 000 random inputs): if any distance is ≤ 0 then `AssessEntry` refuses a minimal entry, and if `AssessEntry` allows one then every distance is > 0. Huge values checked against `math/big`. | todo |
-| 6.2 | **Domain: history statistics.** `ClosedTrade` gains `Fees, Investment Cents`, `Units` (micros), `OrderID`, `StopLoss, TakeProfit Micros`. `TradeStats(trades)` → count, wins, losses, breakeven, win rate (bp; none when there are no trades), gross, fees, net. `DailyPnL(trades, snapshots)` grouped by `RiskDay` (22:00 UTC): realised, fees, equity change, labelled as including deposits and withdrawals. `Drawdown(snapshots)` → peak, max drawdown (cents and bp), current drawdown. | `internal/domain/{trading.go,history.go,history_test.go}` | `go test ./internal/domain -run 'TradeStats\|DailyPnL\|Drawdown'`. Properties: wins+losses+breakeven = count; net = Σ net; drawdown ≥ 0 and ≤ peak; a non-decreasing series has drawdown 0; trades at 21:59:59 and 22:00:00 UTC fall on different days; no overflow (saturating). | todo |
-| 6.3 | **eToro adapter: read the full trade history (read-only).** Parse `fees`, `investment`, `initialInvestment`, `units`, `orderId`, `stopLossRate`, `takeProfitRate`. Split lookbacks over 1 year − 1 day into windows (spec), at most 50 pages per window. Missing `fees` = unknown (kept apart, never 0). | `internal/adapters/etoro/{read.go,client_test.go}`, `testdata/history*.json` (synthetic, spec-shaped) | `go test ./internal/adapters/etoro/...`, coverage ≥ 90 %. The fixture with fees parses to cents. A 400-day request makes 2 windows. A missing `fees` field is flagged unknown. `TestAllowlist*` unchanged and green (no new path). | todo |
-| 6.4 | **Migration 00011 `trades` + repository.** `trades` (account_id FK cascade, position_id, PK (account_id, position_id); mode, instrument_id, direction, leverage, ours, open_request_id, opened_at, closed_at, units_micros, invested_cents, open/close/stop/tp micros, net_profit_cents, fees_cents, fees_known, etoro_order_id, synced_at; index (account_id, closed_at)). `ports.Trades{Upsert (update-then-insert in Go), List(account, from, to, ours filter, before, limit), LastClosedAt}`. No purge (OD16). | `migrations/{sqlite,mariadb}/00011_trades.sql`, `internal/ports/ports.go`, `internal/ports/fakes/*`, `internal/adapters/sqlstore/trades.go`, `storetest/trades.go` | `make test && make test-int`, `TestMigrationParity`. Shared suite: upsert twice = one row with the newer values; `List` newest first, `before` exclusive, filters; other account → empty; cascade on account delete; MariaDB up→down→up. | todo |
-| 6.5 | **App: trade sync and history use cases.** `SyncTrades(ctx, accountID)` (system, read-only; eToro accounts with keys, demo and real): since `LastClosedAt − 2 days` (first run: OD18). `ours` = position in `agent_positions`, plus `open_request_id`. `SyncTradesAll` with per-account timeout. Viewer use cases with view access: `Trades(p, acct, from, to, ours, before, limit 1–500)`, `DailyPnL(p, acct, days 1–400)`, `HistorySummary(p, acct, days)` (`TradeStats` + `Drawdown` over `equity_snapshots`), `ExportRows(p, acct, kind, from, to)` (≤ 50 000 rows, kinds trades / daily / equity / orders / decisions). | `internal/app/history.go`, `history_test.go` | `go test -race ./internal/app -run 'History\|SyncTrades\|Export'`. Tables: another account → 404; viewer allowed; trade access not needed; a broker error leaves the stored rows unchanged and returns the error; syncing twice is idempotent; ours / foreign marked correctly (OD1); a view-only platform → `ErrViewOnly`; export over the cap → 422. | todo |
+| 6.1 | **Domain: live figures.** `LimitDistances(pf Portfolio, st AccountRiskState, l RiskLimits, r Reservation, now, sessions)` → equity, cash, reserved, budget used / remaining, day P&L (equity − start-of-day equity), distance to the daily floor and the drawdown floor, open + pending vs the position cap, short exposure vs `MaxShort`, time to no-entry and flatten per market. Integer cents/bp only, saturating arithmetic, reusing `DailyFloor`, `DrawdownFloor`, `FlattenAt` and `Reservation`. | `internal/domain/live.go`, `live_test.go` | `go test ./internal/domain -run 'LimitDistances'`. Table tests. Property `TestLimitDistancesAgreeWithAssessEntry` (20 000 random inputs): if any distance is ≤ 0 then `AssessEntry` refuses a minimal entry, and if `AssessEntry` allows one then every distance is > 0. Huge values checked against `math/big`. | done |
+| 6.2 | **Domain: history statistics.** `ClosedTrade` gains `Fees, Investment Cents`, `Units` (micros), `OrderID`, `StopLoss, TakeProfit Micros`. `TradeStats(trades)` → count, wins, losses, breakeven, win rate (bp; none when there are no trades), gross, fees, net. `DailyPnL(trades, snapshots)` grouped by `RiskDay` (22:00 UTC): realised, fees, equity change, labelled as including deposits and withdrawals. `Drawdown(snapshots)` → peak, max drawdown (cents and bp), current drawdown. | `internal/domain/{trading.go,history.go,history_test.go}` | `go test ./internal/domain -run 'TradeStats\|DailyPnL\|Drawdown'`. Properties: wins+losses+breakeven = count; net = Σ net; drawdown ≥ 0 and ≤ peak; a non-decreasing series has drawdown 0; trades at 21:59:59 and 22:00:00 UTC fall on different days; no overflow (saturating). | done |
+| 6.3 | **eToro adapter: read the full trade history (read-only).** Parse `fees`, `investment`, `initialInvestment`, `units`, `orderId`, `stopLossRate`, `takeProfitRate`. Split lookbacks over 1 year − 1 day into windows (spec), at most 50 pages per window. Missing `fees` = unknown (kept apart, never 0). | `internal/adapters/etoro/{read.go,client_test.go}`, `testdata/history*.json` (synthetic, spec-shaped) | `go test ./internal/adapters/etoro/...`, coverage ≥ 90 %. The fixture with fees parses to cents. A 400-day request makes 2 windows. A missing `fees` field is flagged unknown. `TestAllowlist*` unchanged and green (no new path). | done |
+| 6.4 | **Migration 00011 `trades` + repository.** `trades` (account_id FK cascade, position_id, PK (account_id, position_id); mode, instrument_id, direction, leverage, ours, open_request_id, opened_at, closed_at, units_micros, invested_cents, open/close/stop/tp micros, net_profit_cents, fees_cents, fees_known, etoro_order_id, synced_at; index (account_id, closed_at)). `ports.Trades{Upsert (update-then-insert in Go), List(account, from, to, ours filter, before, limit), LastClosedAt}`. No purge (OD16). | `migrations/{sqlite,mariadb}/00011_trades.sql`, `internal/ports/ports.go`, `internal/ports/fakes/*`, `internal/adapters/sqlstore/trades.go`, `storetest/trades.go` | `make test && make test-int`, `TestMigrationParity`. Shared suite: upsert twice = one row with the newer values; `List` newest first, `before` exclusive, filters; other account → empty; cascade on account delete; MariaDB up→down→up. | done |
+| 6.5 | **App: trade sync and history use cases.** `SyncTrades(ctx, accountID)` (system, read-only; eToro accounts with keys, demo and real): since `LastClosedAt − 2 days` (first run: OD18). `ours` = position in `agent_positions`, plus `open_request_id`. `SyncTradesAll` with per-account timeout. Viewer use cases with view access: `Trades(p, acct, from, to, ours, before, limit 1–500)`, `DailyPnL(p, acct, days 1–400)`, `HistorySummary(p, acct, days)` (`TradeStats` + `Drawdown` over `equity_snapshots`), `ExportRows(p, acct, kind, from, to)` (≤ 50 000 rows, kinds trades / daily / equity / orders / decisions). | `internal/app/history.go`, `history_test.go` | `go test -race ./internal/app -run 'History\|SyncTrades\|Export'`. Tables: another account → 404; viewer allowed; trade access not needed; a broker error leaves the stored rows unchanged and returns the error; syncing twice is idempotent; ours / foreign marked correctly (OD1); a view-only platform → `ErrViewOnly`; export over the cap → 422. | done |
 | 6.6a | **App: portfolio view cache (MINOR 1).** `runtimeState` keeps the last portfolio per account (value + read time). The supervisor stores its read there (no extra eToro call); `viewPortfolio` refreshes only when the cache is older than 10 s, with one read per account in flight (`sync.Mutex` + waiter; no new dependency). `AgentStatusView` uses it. **Only view use cases may read it.** | `internal/app/{viewcache.go,agent_view.go,supervisor.go}`, `viewcache_test.go` | `go test -race ./internal/app -run 'ViewCache\|AgentStatusView\|EntriesNeverUseTheViewCache'`. 50 concurrent `AgentStatusView` calls in 10 s → ≤ 1 `Portfolio` read. **Guardrail §2.2:** `TestEntriesNeverUseTheViewCache` primes the cache with 100× the cash; `AgentTick`'s `Open` amount is still ≤ the SimBroker's fresh cash − reserved. A source test fails if `agent.go`, `executor.go`, `supervisor.go` (except the store call) or `risk.go` read the cache. | todo |
 | 6.6b | **App: event bus and live snapshot.** `Deps.Bus ports.EventBus` (nil = no-op). `emitFor` publishes after the DB write. Bus-only events: `order.updated` after every stored order transition (executor and reconcile), `agent.state` on every state write, `account.portfolio` after the supervisor's read. `LiveSnapshot(p, acct)` = `LimitDistances` + positions (ours flag, stop, take-profit, flatten time) + open orders + the last 20 orders + the latest regime per watchlist share (from `reviews`) + agent state, reconciliation, kill, latch, lease + freshness (`portfolioAt`, `stale` after 30 s). `LiveFilter(p)` = the account ids the caller may view. | `internal/app/{live.go,events.go,executor.go,reconcile.go,agent_control.go}`, `live_test.go`, `internal/ports/fakes` (recording bus) | `go test -race ./internal/app -run 'Live\|Publish'`. Every executor table case publishes the same transitions it stores, in order. A bus that drops events never blocks an order (full subscriber). `LiveFilter` excludes unshared accounts and view-only rules are kept. The snapshot uses only cached or stored data. | todo |
 | 6.7 | **Contract and handlers: history and exports.** Contract first: `GET /api/v1/history/summary?accountId&days`, `/history/trades?accountId&from&to&ours&before&limit`, `/history/daily?accountId&days`, `/history/export/{kind}.csv?accountId&from&to` (kinds trades / daily / equity / orders / decisions). Then `make gen` and the handlers. CSV: `encoding/csv`; money as decimal strings from cents; times UTC RFC 3339; any cell starting with `= + - @ \t \r` prefixed with `'`; `Content-Disposition: attachment`, `nosniff`, `no-store`; written while streaming rows. | `api/openapi/cactustrade.yaml`, `internal/adapters/http/{api.gen.go,handlers_history.go,csv.go,history_test.go}`, `web/src/lib/schema.d.ts` | `make gen && go test ./internal/adapters/http -run 'History\|CSV'`. Status codes 200/400/403/404/422; an API key (viewer) may export; the injection table (`=1+1`, `-2`, `@SUM`, tab) is neutralised; amounts are exact for ±9e15 cents; contract drift green. | todo |
@@ -862,6 +862,90 @@ Each is the **default until the owner answers**. OD14–OD18 shape phase 6; OD19
 | 6.15 | **MINOR 5: no `window.confirm`.** Extract `AgentPanel`'s modal into `ConfirmDialog` and use it in System, ApiKeys, Themes, Users and Accounts. ESLint `no-restricted-properties` bans `window.confirm`, `alert` and `prompt`. | `web/src/components/{ConfirmDialog.tsx,AgentPanel.tsx}`, `web/src/pages/{System,ApiKeys,Themes,Users,Accounts}.tsx` + tests, `web/eslint.config.*` | `pnpm -C web check`. A planted `window.confirm` fails lint. Vitest per page: cancel does nothing, confirm calls the API once. | todo |
 | 6.16 | **Wording guard and docs.** `TestNoProfitabilityClaims` scans `web/src`, `README.md`, `docs/`, `api/openapi` for a banned-phrase list (profitable, guaranteed, beat the market, make money, winning strategy, "returns of"…). Allowed lines are listed in the test with a reason (e.g. this rule itself). ARCHITECTURE "Live view and history (phase 6)"; `docs/etoro-api.md` corrected (resends per M3; position cap 8 default / 15 hard; trade-history fields); README. | `internal/docs_test.go` (or `cmd/cactustrade/docs_test.go`), docs | `make check`. A planted "profitable strategy" in a page fails. | todo |
 | 6.17 | **Phase verification and owner review.** `make check` green (coverage domain/app ≥ 80 %, MariaDB `test-int` incl. `trades`); smoke: dashboard live for 35 min across a stream lifetime, CSV opens in a spreadsheet without formulas, kill works while streams are open. Stop for the owner. | PLAN | `make check` | todo |
+
+### Steps 6.1–6.5: decisions (2026-11-24)
+
+No new dependency, no new eToro path (the allowlist and its tests are unchanged), no change to
+any order path. New migration 00011 (`trades`) in both dialects.
+
+- **6.1-a `LimitDistances(pf, st, l, r, now, sessions map[Market]MarketSession) LiveFigures`.**
+  Sessions are per market (the step said "per market"); the figures are equity, cash,
+  reserved, cash left, budget (min(budget, equity), 0 without one), budget used / left, day
+  P&L and the distance to the daily floor (only when the stored risk state is today's risk
+  day with a start-of-day equity: `DayKnown`; else 0, which AssessEntry refuses anyway), the
+  drawdown floor and its distance, open + pending vs the position cap, short exposure vs
+  `MaxShort` of the budget, and per market the no-entry and flatten times and the time left
+  (never negative). The distances that gate an entry are cash left, budget left, the two
+  floor distances, slots left and the market's time to no-entry, plus short left for a short.
+  The property test (20 000 inputs, a 1-cent entry with no eToro minimum and no per-position
+  cap, which is a size limit and not a distance) holds both ways.
+- **6.1-b Exact sums.** Every sum is exact (a split hi·2³² + lo accumulator, no unsigned
+  conversions) and clamped to the int64 range once; floors take the clamped equity.
+  **`BasisPoints.of` (domain/risk.go) is now computed in 128 bits** (`mulDivTrunc`): the old
+  `c × bp / 10 000` wrapped for amounts above ~9.2 × 10¹⁴ cents. Results are identical
+  wherever the old product did not overflow, so `AssessEntry`, `Observe` and the floors behave
+  the same in every realistic range (their tests are unchanged and green). Checked against
+  `math/big` on 20 000 inputs over the whole int64 range.
+- **6.2-a Names.** `TradeStats(trades) TradeSummary`, `DailyPnL(trades, snapshots) []DayPnL`,
+  `Drawdown(snapshots) DrawdownFigures`; the stored aggregate is `domain.Trade` (eToro's
+  `ClosedTrade` + account, mode, ours, open request id, synced at). `ClosedTrade` gained
+  `Fees`, `FeesKnown`, `Investment`, `Units`, `OrderID`, `StopLoss`, `TakeProfit` and
+  `Direction()`.
+- **6.2-b Fees and gross.** Unknown fees are counted in `FeesUnknown` and never as 0. Net is
+  the sum of eToro's `netProfit`; **gross = net + known fees, assuming `netProfit` is after
+  fees (RU5, unverified)**. The win rate is absent (`HasWinRate` false) without trades.
+- **6.2-c Daily figures.** Grouped by `RiskDay` of the close (22:00 UTC). A day's equity change
+  is its last snapshot minus the last snapshot of the previous day that has one (the first
+  day: minus its own first snapshot); it includes deposits, withdrawals and positions
+  cactusTrade did not open, and is labelled so (CSV column
+  `equity_change_usd_incl_deposits_withdrawals`).
+- **6.2-d Drawdown.** Negative equity counts as 0 (a drawdown is never more than its peak).
+  `MaxDrawdown` (cents) and `MaxDrawdownBp` are separate maxima and may come from different
+  falls. New helpers `RiskDayStart(t)` (the 22:00 UTC that began t's risk day),
+  `ExportMaxRows` = 50 000 and the sentinel **`domain.ErrTooLarge`** (6.7 maps it to 422; until
+  then no endpoint returns it).
+- **6.3-a Windows.** `TradeHistory(since)` reads windows of 364 days ("1 year − 1 day", also
+  in a leap year) from `since` (UTC date). A trade is kept by the window its close falls in
+  (the last window up to now) and once per position id, so the result is the same whether
+  eToro answers a window up to its end or up to now (**unverified which; for 4.17/RU**). At
+  most 50 pages of 100 per window; a 50th full page ends that window without a flag (the first
+  sync reads 90 days, later ones a few days, far below 5 000 trades). Any failing page fails
+  the whole read, so nothing partial is stored.
+- **6.3-b Fields.** A missing or null `fees` is unknown (`FeesKnown` false, fees 0).
+  `Investment` = `initialInvestment` when present and > 0, else `investment`. Fixture
+  `testdata/history_fees.json` (synthetic, spec-shaped).
+- **6.4-a Port.** `Trades{Upsert(t), List(account, TradeFilter{From, To, Ours *bool, Before,
+  Limit}), LastClosedAt(account)}`: `From ≤ closed < To`, `Before` exclusive, newest close
+  first with ties by position id descending (the 5.7-b paging caveat applies), `LastClosedAt`
+  zero when there is none. `Upsert` validates (`Trade.Validate`) and answers `ErrNotFound` for
+  an unknown account. No purge (OD16); rows go with their account (FK cascade). The fake
+  brokers gained a scripted `History` (`fakes.Broker` also `HistoryErr`, `HistoryCalls`).
+- **6.5-a Sync.** `SyncTrades(ctx, account)` (system): eToro accounts with keys, demo and real,
+  read-only (`TradeHistory` only; a SimBroker test proves no open, close or cancel). Refuses a
+  view-only platform (`ErrViewOnly`), no client (`ErrUnavailable`), no keys
+  (`ErrCredentialsMissing` + `ErrUnavailable`). Since = latest stored close − 2 days, else now
+  − 90 days (OD18). `ours` = the position is in `agent_positions` (with its open request id);
+  a store error while checking that aborts the sync (a trade is never stored with a guessed
+  owner). Trades without a position id or close time are skipped with a warning.
+  `SyncTradesAll` runs the accounts one after another (they share the default 60/min quota),
+  2 min each, and returns the context's error on shutdown.
+- **6.5-b Views.** `Trades`, `DailyPnL`, `HistorySummary`, `ExportRows` need view permission
+  and view access only (viewer, API key included); another account is 404, a view-only
+  platform `ErrViewOnly`. A period of N days is the last N risk days including today. Daily
+  realised figures and the summary statistics are over cactusTrade's own trades (OD15);
+  `HistorySummary.ForeignTrades` counts the others in the period; the drawdown is over the
+  whole account's snapshots. More than 50 000 trades in a period is `ErrTooLarge`.
+- **6.5-c Exports.** `Export{Kind, Columns, Rows [][]any}` with typed cells (string, int,
+  int64, bool, `Cents`, `Micros`, `BasisPoints`, `time.Time`, nil) for 6.7's CSV writer;
+  oldest first; `to` zero = now, `from` zero = all. Trades include foreign ones (column
+  `ours`) and write unknown fees as `unknown`. Orders and decisions have no time-bounded
+  list, so 50 001 are read newest first and the export is refused (`ErrTooLarge`) when the
+  range may reach past them: never a silently short file.
+
+Verification (2026-11-24): `make check` green — gofumpt, golangci-lint 0 issues, vet,
+`go test -race` with coverage domain 99.8 % / app 88.7 %, MariaDB `test-int` (incl. `trades`,
+`trades_cascade`, migrations up→down→up), govulncheck (no vulnerabilities), contracts in sync,
+`pnpm -C web check`. `internal/adapters/etoro` coverage 95.2 %.
 
 ## Phase 7 — hardening and the real-mode gate — `todo`
 

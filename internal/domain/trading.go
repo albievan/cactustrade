@@ -198,7 +198,8 @@ type CostItem struct {
 	Currency string
 }
 
-// ClosedTrade is a position eToro reports as closed (trade history).
+// ClosedTrade is a position eToro reports as closed (trade history). Amounts are USD cents;
+// rates are in the instrument's own quote currency.
 type ClosedTrade struct {
 	PositionID int64
 	Instrument InstrumentID
@@ -206,9 +207,30 @@ type ClosedTrade struct {
 	ClosedAt   time.Time
 	OpenRate   Micros
 	CloseRate  Micros
-	NetProfit  Cents
-	Long       bool
-	Leverage   int
+	// NetProfit is eToro's netProfit of the trade. Whether it is after Fees is not verified
+	// (RU5), so TradeStats takes it as the net figure and adds Fees back for the gross.
+	NetProfit Cents
+	Long      bool
+	Leverage  int
+	// Fees are eToro's fees of the trade; FeesKnown is false when eToro did not report them
+	// (unknown is kept apart and never counted as 0).
+	Fees      Cents
+	FeesKnown bool
+	// Investment is the amount invested when the position was opened (eToro's
+	// initialInvestment, else investment).
+	Investment Cents
+	Units      Micros
+	OrderID    int64 // eToro's order id of the open (0 = not reported)
+	StopLoss   Micros
+	TakeProfit Micros
+}
+
+// Direction of the trade.
+func (t ClosedTrade) Direction() Direction {
+	if t.Long {
+		return Long
+	}
+	return Short
 }
 
 // Quote is a bid/ask snapshot.

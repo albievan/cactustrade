@@ -97,6 +97,9 @@ type SimBroker struct {
 	// TradeHistory) fail; PortfolioErr only Portfolio.
 	ReadErr      error
 	PortfolioErr error
+	// History is the trade history TradeHistory returns (the trades closed at or after its
+	// since).
+	History []domain.ClosedTrade
 
 	// Records.
 	Intents        []domain.OrderIntent // every Open call, in order
@@ -498,11 +501,20 @@ func (b *SimBroker) Costs(context.Context, domain.InstrumentID, domain.Direction
 	return []domain.CostItem{{Type: "marketSpread", Value: 100_000, Currency: "USD"}}, nil
 }
 
-// TradeHistory returns nothing.
-func (b *SimBroker) TradeHistory(context.Context, time.Time) ([]domain.ClosedTrade, error) {
+// TradeHistory returns the History trades closed at or after since.
+func (b *SimBroker) TradeHistory(_ context.Context, since time.Time) ([]domain.ClosedTrade, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return nil, b.ReadErr
+	if b.ReadErr != nil {
+		return nil, b.ReadErr
+	}
+	var out []domain.ClosedTrade
+	for _, t := range b.History {
+		if !t.ClosedAt.Before(since) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 // RequireOrderRow is an OnOpen hook: the order must already be persisted as an open order

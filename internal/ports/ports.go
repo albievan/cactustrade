@@ -230,6 +230,30 @@ type AgentPositions interface {
 	ListOpen(ctx context.Context, accountID string) ([]domain.AgentPosition, error)
 }
 
+// TradeFilter selects an account's stored trades by their close time: From ≤ closed < To
+// (zero = no bound) and, for paging, closed < Before (zero = no bound). Ours nil = every
+// trade, true = only cactusTrade's, false = only the others (OD15). Limit caps the rows.
+type TradeFilter struct {
+	From, To time.Time
+	Ours     *bool
+	Before   time.Time
+	Limit    int
+}
+
+// Trades stores the closed trades read from eToro's trade history (PLAN 6.4). They are kept
+// for as long as the account exists (OD16): there is no purge; they go with their account.
+type Trades interface {
+	// Upsert stores a validated trade (domain.Trade.Validate), replacing the stored one with
+	// the same account and position id (update, else insert). ErrNotFound when the account
+	// does not exist.
+	Upsert(ctx context.Context, t domain.Trade) error
+	// List returns the account's trades matching f, newest close first (ties: higher
+	// position id first), at most f.Limit.
+	List(ctx context.Context, accountID string, f TradeFilter) ([]domain.Trade, error)
+	// LastClosedAt is the latest close time stored for the account (zero = none).
+	LastClosedAt(ctx context.Context, accountID string) (time.Time, error)
+}
+
 // RiskStates stores each account's risk state (risk day, start-of-day equity, high-water
 // mark, daily latch, kill switch).
 type RiskStates interface {
@@ -283,6 +307,7 @@ type Store interface {
 	AgentLeases() AgentLeases
 	LLMCalls() LLMCalls
 	Decisions() Decisions
+	Trades() Trades
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error

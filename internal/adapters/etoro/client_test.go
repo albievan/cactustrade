@@ -674,3 +674,162 @@ func TestIndustriesAndScreen(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTradeHistoryFields(t *testing.T) {
+	e := newEnv(t)
+	e.fake.route = func(r *http.Request, _ int) (int, string, http.Header) {
+		b, err := os.ReadFile("testdata/history_fees.json")
+		if err != nil {
+			t.Error(err)
+		}
+		return 200, string(b), nil
+	}
+	got, err := e.c.TradeHistory(e.ctx(), time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC))
+	want := []domain.ClosedTrade{
+		{
+			PositionID: 901, Instrument: 1001, OpenedAt: time.Date(2026, 11, 21, 15, 0, 0, 0, time.UTC), ClosedAt: time.Date(2026, 11, 21, 20, 30, 0, 0, time.UTC),
+			OpenRate: 189_500_000, CloseRate: 191_250_000, NetProfit: 1_234, Long: true, Leverage: 1,
+			Fees: 107, FeesKnown: true, Investment: 50_000, Units: 2_645_503, OrderID: 555, StopLoss: 185_000_000, TakeProfit: 195_500_000,
+		},
+		{
+			PositionID: 902, Instrument: 2002, OpenedAt: time.Date(2026, 11, 21, 16, 0, 0, 0, time.UTC), ClosedAt: time.Date(2026, 11, 21, 19, 0, 0, 0, time.UTC),
+			OpenRate: 48_800_000, CloseRate: 49_100_000, NetProfit: -450, Leverage: 1,
+			Investment: 25_000, Units: 5_122_951, OrderID: 556, StopLoss: 50_000_000,
+		},
+	}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("history = %+v %v\nwant %+v", got, err, want)
+	}
+	if got[1].FeesKnown || got[1].Fees != 0 {
+		t.Fatal("a trade without fees must be flagged unknown, not 0")
+	}
+	if p := e.last().URL.Path; p != "/api/v1/trading/info/trade/demo/history" {
+		t.Fatalf("path %s", p)
+	}
+}
+
+// historyRoute answers trade-history pages: per minDate, full pages up to pages (then a
+// short one), each trade closing at closeAt(minDate, page, i).
+func historyRoute(t *testing.T, pages map[string]int, closeAt func(minDate string, page, i int) time.Time) func(*http.Request, int) (int, string, http.Header) {
+	return func(r *http.Request, _ int) (int, string, http.Header) {
+		q := r.URL.Query()
+		minDate := q.Get("minDate")
+		page := 0
+		_, _ = fmt.Sscan(q.Get("page"), &page)
+		if q.Get("pageSize") != "100" {
+			t.Errorf("pageSize = %q", q.Get("pageSize"))
+		}
+		n := 0
+		switch {
+		case page < pages[minDate]:
+			n = 100
+		case page == pages[minDate]:
+			n = 3
+		}
+		var rows []string
+		for i := range n {
+			id := int64(len(minDate))*1_000_000 + int64(page)*1_000 + int64(i) // unique per (window, page, i)
+			id += int64(minDate[len(minDate)-1]) * 100_000_000
+			rows = append(rows, fmt.Sprintf(`{"positionId":%d,"instrumentId":1,"isBuy":true,"leverage":1,"netProfit":1,"fees":0.01,"closeTimestamp":%q}`,
+				id, closeAt(minDate, page, i).Format(time.RFC3339)))
+		}
+		return 200, "[" + strings.Join(rows, ",") + "]", nil
+	}
+}
+
+func TestTradeHistoryWindows(t *testing.T) {
+	e := newEnv(t) // now = 2026-11-23 15:00 UTC
+	now := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
+	since := now.Add(-400 * 24 * time.Hour) // 2025-10-19
+	first, second := "2025-10-19", "2026-10-18"
+	e.fake.route = historyRoute(t, map[string]int{first: 1, second: 1}, func(minDate string, _, i int) time.Time {
+		if minDate == first && i == 0 { // eToro answering beyond the window: counted in the second
+			return now.Add(-time.Hour)
+		}
+		d, _ := time.Parse(time.DateOnly, minDate)
+		return d.Add(time.Duration(i+1) * time.Hour)
+	})
+	got, err := e.c.TradeHistory(e.ctx(), since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var minDates []string
+	for _, r := range e.fake.requests() {
+		minDates = append(minDates, r.URL.Query().Get("minDate"))
+	}
+	if !reflect.DeepEqual(minDates, []string{first, second}) {
+		t.Fatalf("a 400-day request must make 2 windows: %v", minDates)
+	}
+	if len(got) != 5 { // 2 from the first window (its third closes after the window), 3 from the second
+		t.Fatalf("%d trades: %+v", len(got), got)
+	}
+	for _, tr := range got {
+		if !tr.FeesKnown || tr.Fees != 1 {
+			t.Fatalf("fees = %d known %v", tr.Fees, tr.FeesKnown)
+		}
+	}
+	// A short lookback is one window.
+	e2 := newEnv(t)
+	e2.fake.route = historyRoute(t, map[string]int{"2026-11-21": 1}, func(string, int, int) time.Time { return now })
+	if got, err := e2.c.TradeHistory(e2.ctx(), now.Add(-50*time.Hour)); err != nil || len(got) != 3 || len(e2.fake.requests()) != 1 {
+		t.Fatalf("2-day lookback: %d trades, %d requests, %v", len(got), len(e2.fake.requests()), err)
+	}
+	// A start in the future still asks once.
+	e3 := newEnv(t)
+	e3.fake.route = historyRoute(t, nil, func(string, int, int) time.Time { return now })
+	if got, err := e3.c.TradeHistory(e3.ctx(), now.Add(48*time.Hour)); err != nil || len(got) != 0 || len(e3.fake.requests()) != 1 {
+		t.Fatalf("future start: %d trades, %d requests, %v", len(got), len(e3.fake.requests()), err)
+	}
+}
+
+func TestTradeHistoryPagesAndRepeats(t *testing.T) {
+	e := newEnv(t)
+	now := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
+	e.fake.route = historyRoute(t, map[string]int{"2026-11-01": 99}, func(string, int, int) time.Time { return now.Add(-time.Hour) })
+	got, err := e.c.TradeHistory(e.ctx(), time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(e.fake.requests()); n != maxHistoryPages || len(got) != maxHistoryPages*historyPageSize {
+		t.Fatalf("at most %d pages per window: %d requests, %d trades", maxHistoryPages, n, len(got))
+	}
+	// The same position on two pages is kept once.
+	e2 := newEnv(t)
+	e2.fake.route = func(r *http.Request, _ int) (int, string, http.Header) {
+		var rows []string
+		for range 100 {
+			rows = append(rows, `{"positionId":7,"closeTimestamp":"2026-11-22T10:00:00Z"}`)
+		}
+		if r.URL.Query().Get("page") == "2" {
+			rows = rows[:1]
+		}
+		return 200, "[" + strings.Join(rows, ",") + "]", nil
+	}
+	if got, err := e2.c.TradeHistory(e2.ctx(), now.Add(-24*time.Hour)); err != nil || len(got) != 1 || len(e2.fake.requests()) != 2 {
+		t.Fatalf("repeats: %d trades, %d requests, %v", len(got), len(e2.fake.requests()), err)
+	}
+}
+
+func TestTradeHistoryErrors(t *testing.T) {
+	now := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
+	e := newEnv(t)
+	e.fake.route = func(r *http.Request, n int) (int, string, http.Header) {
+		if n == 1 {
+			var rows []string
+			for i := range 100 {
+				rows = append(rows, fmt.Sprintf(`{"positionId":%d,"closeTimestamp":"2026-11-22T10:00:00Z"}`, i+1))
+			}
+			return 200, "[" + strings.Join(rows, ",") + "]", nil
+		}
+		return 400, `{"errorCode":"BadRequest","errorMessage":"minDate is invalid"}`, nil
+	}
+	got, err := e.c.TradeHistory(e.ctx(), now.Add(-24*time.Hour))
+	if err == nil || got != nil {
+		t.Fatalf("a failing page must fail the whole read (nothing partial): %d trades, %v", len(got), err)
+	}
+	e2 := newEnv(t)
+	e2.fake.route = func(*http.Request, int) (int, string, http.Header) { return 200, `{"not":"an array"}`, nil }
+	if _, err := e2.c.TradeHistory(e2.ctx(), now); err == nil {
+		t.Fatal("an unreadable answer was accepted")
+	}
+}

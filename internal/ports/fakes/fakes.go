@@ -147,6 +147,7 @@ type Store struct {
 	equity   []domain.EquitySnapshot
 	exec     execState
 	log      logState
+	trades   map[string]map[int64]domain.Trade // account → position id
 	PingErr  error
 	// OrdersErr makes every Orders write (Create, Update) fail, e.g. to prove that nothing is
 	// sent when the order row cannot be persisted.
@@ -155,6 +156,8 @@ type Store struct {
 	// to prove that no order is sent when its decision cannot be logged.
 	DecisionsErr error
 	LLMCallsErr  error
+	// TradesErr makes every Trades call fail.
+	TradesErr error
 }
 
 type instrRec struct {
@@ -710,6 +713,7 @@ func (r accountRepo) Delete(_ context.Context, id string) error {
 	r.s.equity = slices.DeleteFunc(r.s.equity, func(e domain.EquitySnapshot) bool { return e.AccountID == id })
 	r.s.exec.deleteAccount(id)
 	r.s.log.deleteAccount(id)
+	delete(r.s.trades, id)
 	return nil
 }
 

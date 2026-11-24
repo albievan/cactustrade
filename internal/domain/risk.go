@@ -9,8 +9,10 @@ import (
 // BasisPoints is a fraction in 1/10 000 (100 bp = 1 %).
 type BasisPoints int64
 
-// of returns bp of c, rounded down (never rounds a limit up).
-func (bp BasisPoints) of(c Cents) Cents { return Cents(int64(c) * int64(bp) / 10_000) }
+// of returns bp of c, truncated towards zero (never rounds a limit up). The product is
+// formed in 128 bits, so huge amounts never wrap (PLAN 6.1); the result saturates at the
+// int64 range, which it can only reach for bp above 10 000.
+func (bp BasisPoints) of(c Cents) Cents { return Cents(mulDivTrunc(int64(c), int64(bp), 10_000)) }
 
 // RiskLimits are the owner's limits (CLAUDE.md §2, brief §3). They can be changed only while
 // the agent is stopped, and every change is audited (phase 4.5).

@@ -369,37 +369,87 @@ func (c *Client) Costs(ctx context.Context, id domain.InstrumentID, d domain.Dir
 	return out, nil
 }
 
-// TradeHistory lists positions closed since the given day.
+// historyWindow is the longest lookback one trade-history request may have: eToro allows
+// "1 year minus 1 day" (364 days, also in a leap year).
+const historyWindow = 364 * 24 * time.Hour
+
+// tradeWire is one closed trade of eToro's trade history. Pointers mark the fields whose
+// absence matters: a missing fees figure is unknown, never 0.
+type tradeWire struct {
+	NetProfit         float64   `json:"netProfit"`
+	CloseRate         float64   `json:"closeRate"`
+	CloseTimestamp    time.Time `json:"closeTimestamp"`
+	PositionID        int64     `json:"positionId"`
+	InstrumentID      int64     `json:"instrumentId"`
+	IsBuy             bool      `json:"isBuy"`
+	Leverage          int       `json:"leverage"`
+	OpenRate          float64   `json:"openRate"`
+	OpenTimestamp     time.Time `json:"openTimestamp"`
+	StopLossRate      float64   `json:"stopLossRate"`
+	TakeProfitRate    float64   `json:"takeProfitRate"`
+	OrderID           int64     `json:"orderId"`
+	Investment        *float64  `json:"investment"`
+	InitialInvestment *float64  `json:"initialInvestment"`
+	Fees              *float64  `json:"fees"`
+	Units             float64   `json:"units"`
+}
+
+func (w tradeWire) domain() domain.ClosedTrade {
+	t := domain.ClosedTrade{
+		PositionID: w.PositionID, Instrument: domain.InstrumentID(w.InstrumentID),
+		OpenedAt: w.OpenTimestamp.UTC(), ClosedAt: w.CloseTimestamp.UTC(),
+		OpenRate: toMicros(w.OpenRate), CloseRate: toMicros(w.CloseRate),
+		NetProfit: toCents(w.NetProfit), Long: w.IsBuy, Leverage: w.Leverage,
+		Units: toMicros(w.Units), OrderID: w.OrderID,
+		StopLoss: toMicros(w.StopLossRate), TakeProfit: toMicros(w.TakeProfitRate),
+	}
+	if w.Fees != nil {
+		t.Fees, t.FeesKnown = toCents(*w.Fees), true
+	}
+	switch {
+	case w.InitialInvestment != nil && *w.InitialInvestment > 0:
+		t.Investment = toCents(*w.InitialInvestment)
+	case w.Investment != nil:
+		t.Investment = toCents(*w.Investment)
+	}
+	return t
+}
+
+// TradeHistory lists the positions closed since the given day (read-only). eToro serves at
+// most a 364-day lookback per request, so a longer range is read in successive windows,
+// each from its own minDate and at most maxHistoryPages pages of historyPageSize. A trade is
+// kept by the window its close falls in (and once, by position id), whether eToro answers a
+// window up to its end or up to now.
 func (c *Client) TradeHistory(ctx context.Context, since time.Time) ([]domain.ClosedTrade, error) {
+	start := since.UTC().Truncate(24 * time.Hour)
+	now := c.cfg.Now().UTC()
+	seen := map[int64]bool{}
 	var out []domain.ClosedTrade
-	for page := 1; page <= maxHistoryPages; page++ {
-		var resp []struct {
-			NetProfit      float64   `json:"netProfit"`
-			CloseRate      float64   `json:"closeRate"`
-			CloseTimestamp time.Time `json:"closeTimestamp"`
-			PositionID     int64     `json:"positionId"`
-			InstrumentID   int64     `json:"instrumentId"`
-			IsBuy          bool      `json:"isBuy"`
-			Leverage       int       `json:"leverage"`
-			OpenRate       float64   `json:"openRate"`
-			OpenTimestamp  time.Time `json:"openTimestamp"`
+	for from := start; ; from = from.Add(historyWindow) {
+		until := from.Add(historyWindow)
+		last := !until.Before(now)
+		for page := 1; page <= maxHistoryPages; page++ {
+			var resp []tradeWire
+			q := url.Values{
+				"minDate": {from.Format(time.DateOnly)}, "page": {strconv.Itoa(page)},
+				"pageSize": {strconv.Itoa(historyPageSize)},
+			}
+			if err := c.call(ctx, OpTradeHistory, nil, q, nil, &resp); err != nil {
+				return nil, err
+			}
+			for _, w := range resp {
+				t := w.domain()
+				if seen[t.PositionID] || (!last && !t.ClosedAt.Before(until)) {
+					continue
+				}
+				seen[t.PositionID] = true
+				out = append(out, t)
+			}
+			if len(resp) < historyPageSize {
+				break
+			}
 		}
-		q := url.Values{
-			"minDate": {since.UTC().Format(time.DateOnly)}, "page": {strconv.Itoa(page)},
-			"pageSize": {strconv.Itoa(historyPageSize)},
-		}
-		if err := c.call(ctx, OpTradeHistory, nil, q, nil, &resp); err != nil {
-			return nil, err
-		}
-		for _, t := range resp {
-			out = append(out, domain.ClosedTrade{
-				PositionID: t.PositionID, Instrument: domain.InstrumentID(t.InstrumentID),
-				OpenedAt: t.OpenTimestamp.UTC(), ClosedAt: t.CloseTimestamp.UTC(),
-				OpenRate: toMicros(t.OpenRate), CloseRate: toMicros(t.CloseRate),
-				NetProfit: toCents(t.NetProfit), Long: t.IsBuy, Leverage: t.Leverage,
-			})
-		}
-		if len(resp) < historyPageSize {
+		if last {
 			break
 		}
 	}

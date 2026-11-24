@@ -30,6 +30,17 @@ type Broker struct {
 	Inds      []domain.Industry
 	Screened  map[int64][]domain.Instrument
 	EligCalls int
+	// History is the trade history: TradeHistory returns the trades closed at or after its
+	// since (HistoryErr instead, when set, or Err). HistoryCalls records each call.
+	History      []domain.ClosedTrade
+	HistoryErr   error
+	HistoryCalls []HistoryCall
+}
+
+// HistoryCall is one TradeHistory call: the account it was for and its since.
+type HistoryCall struct {
+	Account domain.Account
+	Since   time.Time
 }
 
 var _ ports.Research = (*Broker)(nil)
@@ -93,9 +104,25 @@ func (b *Broker) Costs(_ context.Context, _ domain.InstrumentID, _ domain.Direct
 	return []domain.CostItem{{Type: "marketSpread", Value: 100000, Currency: "USD"}}, nil
 }
 
-// TradeHistory returns nothing.
-func (b *Broker) TradeHistory(context.Context, time.Time) ([]domain.ClosedTrade, error) {
-	return nil, b.fail()
+// TradeHistory returns the History trades closed at or after since.
+func (b *Broker) TradeHistory(ctx context.Context, since time.Time) ([]domain.ClosedTrade, error) {
+	a, _ := ports.AccountFrom(ctx)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.HistoryCalls = append(b.HistoryCalls, HistoryCall{Account: a, Since: since})
+	switch {
+	case b.HistoryErr != nil:
+		return nil, b.HistoryErr
+	case b.Err != nil:
+		return nil, b.Err
+	}
+	var out []domain.ClosedTrade
+	for _, t := range b.History {
+		if !t.ClosedAt.Before(since) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 // Open is refused.
