@@ -1358,7 +1358,7 @@ U1–U11 (demo, step 4.17) must be settled first.
 
 | ID | Step | Files | Acceptance tests | Status |
 |---|---|---|---|---|
-| 7.1 | **Security review pass (reviewer agent, read-only).** Scope: auth/sessions/CSRF, the SSE stream, CSV exports, authorization per account, secrets in logs/errors/fixtures, allowlists of all 4 broker adapters, depguard layering, SSRF (LLM base URL, SMTP host, Saxo redirect), headers, container settings, `deploy.sh`. Ranked findings go into PLAN ("Phase 7 security review") with a fix step `7.1.n` per BLOCKER/MAJOR (planned after the review). | PLAN | Findings table exists; every BLOCKER/MAJOR has a step id; `make check` green | done (findings: "Phase 7 security review"; 7.1.1–7.1.12 fixed, 7.1.13–7.1.17 planned) |
+| 7.1 | **Security review pass (reviewer agent, read-only).** Scope: auth/sessions/CSRF, the SSE stream, CSV exports, authorization per account, secrets in logs/errors/fixtures, allowlists of all 4 broker adapters, depguard layering, SSRF (LLM base URL, SMTP host, Saxo redirect), headers, container settings, `deploy.sh`. Ranked findings go into PLAN ("Phase 7 security review") with a fix step `7.1.n` per BLOCKER/MAJOR (planned after the review). | PLAN | Findings table exists; every BLOCKER/MAJOR has a step id; `make check` green | done (findings: "Phase 7 security review"; 7.1.1–7.1.17 fixed; 7.1.14 with 7.5, 7.1.17 with 7.7, 7.1.13/15/16 with 7.8–7.9) |
 | 7.2 | **Mode and account in every log line.** A `slog.Handler` wrapper adds `account_id` and `mode` from `ports.AccountFrom(ctx)` to each record logged with a context. The request log adds the current account's mode. A source test bans non-`Context` log calls in `internal/app` and `internal/adapters/etoro`. Orders already store `mode`; `trades` has it (6.4). | `internal/adapters/logctx/` (new) or `cmd/cactustrade/log.go`, `internal/app/*.go` (call sites), tests | `go test ./...`: executor and supervisor test logs carry `mode=demo` / `mode=real` and the account id; a planted `s.d.Log.Info(` fails the source test; no key / token / cookie in any captured line. | done (D31; `TestLogLinesNameAccountAndMode`, `TestRequestLogNamesAccountAndMode`, `TestNoContextFreeLogCalls`; a planted `s.d.Log.Info(` in `internal/app/system.go` failed the source test, checked by hand and reverted) |
 | 7.3 | **API rate limits.** Token buckets per principal (user id / API key id) and per IP on `/api/*`: reads 600/min, mutations 60/min, exports 10/min, stream connects 30/min (OD33). **Kill, pause, stop and disarm are never throttled** (§2.6). Bounded memory (≤ 10 000 keys, purged by `PurgeLoop`). 429 problem+json with `Retry-After`; metric. | `internal/adapters/http/{ratelimit.go,ratelimit_test.go,server.go}` | `go test ./internal/adapters/http -run RateLimit`: limits per class; with every bucket exhausted, `POST /agent/kill` is still 200; 10 001 keys keep memory bounded. | done (D32; `TestRateLimit*`: per class, both buckets or none, kill/pause/stop 200 with every bucket of the address, user and API key exhausted, 10 001 keys ≤ 10 000) |
 | 7.4 | **Headers, cookies, body limits.** Add `Permissions-Policy`, COOP `same-origin`, CORP `same-origin`; check the CSP has no `unsafe-inline` outside Swagger; `MaxBytesReader` 1 MiB on JSON bodies; optional `__Host-` cookie prefix (OD32). | `internal/adapters/http/{middleware.go,server.go,handlers.go}`, `server_test.go` | Header table test over route classes (SPA, API, Swagger, SSE, CSV, `/metrics`, 308 redirect); a 2 MiB body → 413. | done (D33; `TestSecurityHeadersByRouteClass` over SPA, API, Swagger, SSE, CSV, `/metrics`, 308; `TestBodyLimits`: 2 MiB → 413, also chunked and on the kill route; `TestHostPrefixedSessionCookie`; `TestRedirectHasSecurityHeaders`. **The `__Host-` cookie signs everyone out once** (README). Also fixed a pre-existing web flake: `Dashboard.test.tsx` "caps the backoff at 30 s" checked a 1 ms boundary under `shouldAdvanceTime` and failed about every second `make check`; it now checks 29 s / 30 s (64 s uncapped, so the cap is still proven)) |
@@ -1366,8 +1366,8 @@ U1–U11 (demo, step 4.17) must be settled first.
 | 7.6a | **Encrypted app backup and restore (standalone).** `cactustrade backup --out F`: SQLite `VACUUM INTO` a temp file, then age-encrypted to `CACTUSTRADE_BACKUP_RECIPIENT` (refused without a recipient, OD29). `cactustrade restore --in F --yes`: refuses while a server holds the data dir (lock file + live lease), checks the schema version, writes setting `restore.at` (7.12 disarms every real gate older than it). The master key is never in a backup. | `cmd/cactustrade/{backup.go,backup_test.go}`, `internal/adapters/sqlstore/backup.go`, go.mod | `go test ./cmd/cactustrade -run 'Backup\|Restore'`: round trip keeps row counts and migration version; a stored secret still decrypts with the master key; the archive (decrypted) does not contain the master key bytes; a wrong age identity fails; restore while serving → refused. | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
 | 7.6b | **MariaDB backup and restore + restore test.** `deploy.sh --backup-now` pipes `mariadb-dump` through `cactustrade encrypt` (age) when a recipient is set (else today's 0600 gzip with a warning). `deploy.sh --restore FILE` stops the app, restores after a typed confirmation, then starts the app (start-up reconciliation runs first, 4.14). | `deploy.sh`, `cmd/cactustrade/encrypt.go`, `internal/adapters/sqlstore/integration_test.go` (test-int), README | `make test-int`: dump → restore into a fresh MariaDB container → counts and `goose` version equal; `deploy.sh --restore` dry-run on Docker Desktop documented in PLAN. | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
 | 7.7 | **Dependency audit.** `make audit`: `go mod verify`, govulncheck, a licence check over `go list -m -json all` + each module's LICENSE (allowed: MIT, BSD-2/3, ISC, Apache-2.0, MPL-2.0, public domain/Unlicense; others fail with the module name), `pnpm licenses list --prod` with the same rule, `pnpm audit --prod --audit-level=moderate`. Joins `make check`. PLAN dependency table brought up to date. | `tools/licencecheck/` (Go, stdlib only), `Makefile`, PLAN | `make audit` green; the licence checker's own test fails on a GPL-3.0 fixture module. | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
-| 7.8 | **Vault `SecretStore` (optional, OD30).** KV v2 over `net/http` (no SDK). Token from a file or Kubernetes auth (JWT file); CA file; no redirects; write-only (Get only for the app's own use, never returned by the API); env overlay still wins. `CACTUSTRADE_SECRETS=db\|vault` (default db). `cactustrade secrets migrate --to vault`. | `internal/adapters/vault/`, `cmd/cactustrade/main.go`, `.golangci.yml` (depguard), ADR-003 update | `go test ./internal/adapters/vault`: fake Vault (`httptest`) for get/put/delete/list, 403/404/5xx, token renewal; no token in any error or log; a redirect is refused; coverage ≥ 90 %. | todo |
-| 7.9 | **Releases and runbook.** `make dist` (linux/darwin/windows × amd64/arm64, `SHA256SUMS`, signature per OD31), `setup.sh` / `setup.ps1` as cactusInv. `docs/RUNBOOK.md`: eToro API down, kill switch tripped, reconciliation mismatch, lease held by a dead process, restore, **disarm real trading now**. | `Makefile`, `scripts/`, `docs/RUNBOOK.md` | `make dist` builds 6 binaries; signature verifies in a script test; `make check`. | todo |
+| 7.8 | **Vault `SecretStore` (optional, OD30).** KV v2 over `net/http` (no SDK). Token from a file or Kubernetes auth (JWT file); CA file; no redirects; write-only (Get only for the app's own use, never returned by the API); env overlay still wins. `CACTUSTRADE_SECRETS=db\|vault` (default db). `cactustrade secrets migrate --to vault`. | `internal/adapters/vault/`, `cmd/cactustrade/main.go`, `.golangci.yml` (depguard), ADR-003 update | `go test ./internal/adapters/vault`: fake Vault (`httptest`) for get/put/delete/list, 403/404/5xx, token renewal; no token in any error or log; a redirect is refused; coverage ≥ 90 %. | done (2026-11-24; decisions: "Steps 7.8–7.9 and 7.1.13–7.1.16"; vault coverage 97.2 %) |
+| 7.9 | **Releases and runbook.** `make dist` (linux/darwin/windows × amd64/arm64, `SHA256SUMS`, signature per OD31), `setup.sh` / `setup.ps1` as cactusInv. `docs/RUNBOOK.md`: eToro API down, kill switch tripped, reconciliation mismatch, lease held by a dead process, restore, **disarm real trading now**. | `Makefile`, `scripts/`, `docs/RUNBOOK.md` | `make dist` builds 6 binaries; signature verifies in a script test; `make check`. | done (2026-11-24; `make dist` built 6 binaries with a throw-away key; the owner publishes the release key, RUNBOOK "Releases") |
 | 7.10 | **Domain: demo evidence and the gate (real still impossible).** `const RealTradingEnabled = false` ("needs the owner's written consent, PLAN 7.18"). `DayFacts{Day RiskDate, Decisions, FilledOpens, OpenedPositions, ClosedSameDay}` → `QualifyingDays(facts, rule)` per OD19. `GateEvidence{Days, Count, First, Last}`. `GateChecks(in) []GateCheck{Name, Pass, Detail}`: real account (eToro, mode real, keys, reconciled, not killed, agent stopped, limits valid and ≤ real ceilings); linked demo account (eToro, mode demo, same owner, OD21); ≥ 20 qualifying days in the last 60 risk days, the latest ≤ 7 days old (OD20); arming user is admin and owner (OD22); phrase `ENABLE REAL TRADING <account name>`. `CanArm` = every check passes **and** `RealTradingEnabled`, else `ErrRealModeGated`. `RealGate` aggregate (locked / armed, linked demo id, armed at/by, evidence, disarmed at/by/reason, expires at (OD24), version). | `internal/domain/{realgate.go,realgate_test.go}` | `go test ./internal/domain -run 'Gate\|QualifyingDays\|RealTradingDisabled'`. `TestRealTradingDisabledInThisBuild` asserts the constant is false (changing it changes this test: a visible, reviewed edit). Properties: a day without a decision, without a filled demo open, or with a position held past its risk day never qualifies; adding facts never lowers the count; 19 days → fails; 20 days but the latest 8 days old → fails; every check passing still gives `ErrRealModeGated`. | todo |
 | 7.11 | **Domain: real-mode limits (OD25).** `DefaultRealRiskLimits` and `RealCeilings`; `RiskLimits.ValidateFor(mode)`. Raising any limit on a real account is a disarm reason (`RaisesAny(old, new)`). | `internal/domain/{risk.go,risk_test.go}` | `go test ./internal/domain -run 'RealLimits\|RaisesAny'`: every field over the ceiling is refused; a real account's MaxShort > 25 % refused (D19 unchanged); `RaisesAny` property against field-by-field comparison. | todo |
 | 7.12 | **Migration 00012 `real_gates` + repositories.** `real_gates` (account_id PK FK cascade, state, demo_account_id, armed_at, armed_by, expires_at, evidence TEXT JSON, disarmed_at, disarmed_by, disarm_reason, version, updated_at). `RealGates{Get, Put(versioned)}`; `Orders.ListSince(account, since)`, `AgentPositions.ListSince(account, since)`, `Decisions.CountByDay`? → no: the app folds rows from `Decisions.List` paged (≤ 60 days) into `DayFacts`. | `migrations/{sqlite,mariadb}/00012_real_gate.sql`, `internal/ports/ports.go`, fakes, `internal/adapters/sqlstore/realgate.go`, `storetest/realgate.go` | `make test && make test-int`, `TestMigrationParity`; shared suite: a stale version → `ErrConflict` (a disarm is never overwritten by an older arm); cascade; `ListSince` bounds. | todo |
@@ -1392,7 +1392,7 @@ chose "Keep admin/admin as is" and accepts the risk of that window. No change.
 
 Reviewer agent pass, read-only (scope as in 7.1). Each fix below started with a test that
 failed on the code as it was, then the fix. No BLOCKER was found.
-Every MAJOR (F1–F6) and the MINORs F7–F12 are fixed; F13–F16 are planned steps; F17 was fixed with 7.7. `make check`
+Every MAJOR (F1–F6) and the MINORs F7–F12 are fixed; F14 was fixed with 7.5, F17 with 7.7, F13, F15 and F16 with 7.8–7.9 (2026-11-24). `make check`
 green on 2026-11-24 (incl. MariaDB `test-int`); coverage domain 98.0 %, app 89.0 %.
 Dry run of the k8s rendering: `./deploy.sh --render --k3s` (HTTPS: Service `ClusterIP`) and
 `K8S_HTTPS=false ./deploy.sh --render --k3s` (NodePort + warning on stderr), covered by
@@ -1412,10 +1412,10 @@ Dry run of the k8s rendering: `./deploy.sh --render --k3s` (HTTPS: Service `Clus
 | F10 | MINOR | `ChangePassword` checked the current password with no rate limit (a stolen session could guess it). | `internal/adapters/http/handlers.go` | 7.1.10 |
 | F11 | MINOR | `SetMyProfile` changed the e-mail address (where reset links go) without the current password: a stolen session could take the account over. | `internal/app/email.go`, contract, `web/src/pages/Account.tsx` | 7.1.11 |
 | F12 | MINOR | depguard: no rule kept `internal/app` out of the eToro adapter (or the LLM adapter); `net`, `net/smtp`, `os/exec`, `crypto/tls` not denied in domain, app and strategy. | `.golangci.yml` | 7.1.12 |
-| F13 | MINOR | Saxo OAuth `state` is not bound to the browser (no nonce cookie) and no PKCE. | `internal/app/connect.go`, `internal/adapters/saxo/oauth.go` | 7.1.13 (planned) |
+| F13 | MINOR | Saxo OAuth `state` is not bound to the browser (no nonce cookie) and no PKCE. | `internal/app/connect.go`, `internal/adapters/saxo/oauth.go` | 7.1.13 (done) |
 | F14 | MINOR | `/metrics` is open without a token in standalone mode. | `cmd/cactustrade/config.go` | 7.1.14 (done) |
-| F15 | MINOR | The bundled Mailpit counts as a working mail server, so "reset by e-mail" is offered although the mail never reaches the user. | `internal/app/email.go` | 7.1.15 (planned) |
-| F16 | MINOR | k8s: no NetworkPolicy; trusted proxies hard-coded to k3s's pod CIDR; MariaDB without TLS / hardening options. | `deploy/k8s/cactustrade.yaml` | 7.1.16 (planned) |
+| F15 | MINOR | The bundled Mailpit counts as a working mail server, so "reset by e-mail" is offered although the mail never reaches the user. | `internal/app/email.go` | 7.1.15 (done) |
+| F16 | MINOR | k8s: no NetworkPolicy; trusted proxies hard-coded to k3s's pod CIDR; MariaDB without TLS / hardening options. | `deploy/k8s/cactustrade.yaml` | 7.1.16 (done) |
 | F17 | MINOR | Images by tag, not digest; Node 20 in the web build. | `Dockerfile`, compose, k8s | 7.1.17 (fixed with 7.7) |
 | — | note | The default admin/admin (D17) is unchanged: the owner is being asked about it. | — | — |
 
@@ -1433,10 +1433,10 @@ Dry run of the k8s rendering: `./deploy.sh --render --k3s` (HTTPS: Service `Clus
 | 7.1.10 | `ChangePassword` runs the sign-in limiter on the current-password check. | `internal/adapters/http/handlers.go` | 5 wrong current passwords → the 6th is 429. | done |
 | 7.1.11 | Changing the e-mail address needs the current password (`ProfileInput.currentPassword`; limiter as 7.1.10); the Account page asks for it and shows refusals with `ProblemAlert`. | contract, `internal/app/email.go`, `internal/adapters/http/handlers_email.go`, `web/src/pages/Account.tsx` + test | without / with a wrong password → 400 `currentPassword`; notify-only changes need none. | done |
 | 7.1.12 | depguard: an `etoro` rule (no `internal/app`), `internal/app` denied for the LLM adapter; `net`, `net/smtp`, `os/exec`, `crypto/tls` denied in domain, app and strategy. | `.golangci.yml` | a planted import fails `make lint` (checked by hand, reverted). | done |
-| 7.1.13 | Saxo OAuth: a nonce cookie binding `state` to the browser, and PKCE (S256). | `internal/app/connect.go`, `internal/adapters/saxo/oauth.go`, HTTP | a callback without the cookie → refused; the token request carries the verifier. | planned |
+| 7.1.13 | Saxo OAuth: a nonce cookie binding `state` to the browser, and PKCE (S256). | `internal/app/connect.go`, `internal/adapters/saxo/oauth.go`, HTTP | a callback without the cookie → refused; the token request carries the verifier. | done (2026-11-24; Saxo accepting PKCE for code-flow apps unverified, docs/saxo-api.md) |
 | 7.1.14 | `/metrics` needs the metrics token in standalone mode too (generated into the data dir when unset). | `cmd/cactustrade/config.go`, README | `/metrics` without a token → 401 in every mode. | done (with 7.5, D35; `TestMetricsNeedToken`: no / wrong token → 401, and 401 for every request when none is configured; `TestEnsureMetricsToken`) |
-| 7.1.15 | Mailpit as the only mail server = "reset unavailable" (public status and the request say why). | `internal/app/email.go` | with Mailpit only, `passwordResetAvailable` is false. | planned |
-| 7.1.16 | k8s NetworkPolicy (app ↔ MariaDB, ingress → app only), trusted proxies from `.env`, MariaDB hardening. | `deploy/k8s/cactustrade.yaml`, `deploy.sh`, `.env` | `deploy.sh --render` contains the policies; documented dry-run. | planned |
+| 7.1.15 | Mailpit as the only mail server = "reset unavailable" (public status and the request say why). | `internal/app/email.go` | with Mailpit only, `passwordResetAvailable` is false. | done (2026-11-24; opt-in `CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS`) |
+| 7.1.16 | k8s NetworkPolicy (app ↔ MariaDB, ingress → app only), trusted proxies from `.env`, MariaDB hardening. | `deploy/k8s/cactustrade.yaml`, `deploy.sh`, `.env` | `deploy.sh --render` contains the policies; documented dry-run. | done (2026-11-24; dry run documented; MariaDB TLS not done, see decisions) |
 | 7.1.17 | Images pinned by digest; Node 22 for the web build (with 7.7). | `Dockerfile`, compose, k8s | `make audit` (7.7). | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
 
 ### Steps 7.6–7.7: decisions (2026-11-24)
@@ -1568,3 +1568,186 @@ in-container images are `tag@sha256:<multi-arch index digest>` (resolved 2026-11
 `docker buildx imagetools inspect`). `TestImagesPinnedByDigest` fails on any unpinned image in
 those files (checked by un-pinning one by hand). Updating an image = new digest in the same
 places. The testcontainers images in `make test-int` stay by tag (test only).
+
+### Steps 7.8–7.9 and 7.1.13–7.1.16: decisions (2026-11-24)
+
+No new dependency, no migration. The other phase-7 worktree (7.10–7.17) owns the real gate;
+nothing here touches it (the RUNBOOK's disarm procedure is written as *planned*).
+
+**7.8: Vault `SecretStore`** (`internal/adapters/vault/`, `cmd/cactustrade/{config.go,main.go,
+secrets.go}`, `.golangci.yml`, ADR-003 update, README *Vault*).
+
+- Off by default (`CACTUSTRADE_SECRETS=db`); `vault` swaps the database store for
+  `vault.Store` under the same `secretstore.Env` overlay (the environment still wins). The master
+  key is neither loaded nor generated in Vault mode.
+- KV v2, one secret per credential `<mount>/<prefix>/<name>` = `{"value": …}` (defaults
+  `secret` / `cactustrade`); names, mount and prefix are checked (`[A-Za-z0-9._-]`, no `.`/`..`
+  segments) before anything is sent; delete = metadata delete (all versions; a missing one is
+  not an error, like every caller already treated `ErrNotFound`); `Status` reads
+  `updated_time` per name (the Saxo 24-hour token check needs it; N+1 requests, a handful of
+  names). `Source` stays `ui` (the contract's enum is unchanged).
+- Token: a file (`CACTUSTRADE_VAULT_TOKEN_FILE`, default `<secrets>/vault_token`) looked up with
+  `lookup-self` for its TTL, or Kubernetes auth (`CACTUSTRADE_VAULT_K8S_ROLE`, JWT file, mount).
+  Renewed with `renew-self` two thirds into the lease; a refused renewal, an unusable answer, a
+  lease under 30 s or an expired token fetch a new one; a 403 on a request drops the token and
+  retries once. The lock covers the token only, not the requests.
+- `https` only (`http` to loopback for a dev Vault), system roots + `CACTUSTRADE_VAULT_CA_FILE`,
+  TLS ≥ 1.2, **redirects refused** (`ErrRedirect`; the target gets 0 requests), answers capped
+  at 1 MiB, errors carry method, path, status and Vault's first message (clipped to safe
+  characters) — never a header, token, JWT or value; only the TTL is logged.
+- **Exits survive a Vault outage:** decided beyond the step's text because CLAUDE.md §2.6 says
+  exits must still work. The store remembers (in memory) the value it last read or wrote per
+  name and serves it while Vault fails with `ErrUnavailable` (one warning per outage, naming the
+  credential); `ErrNotFound` and a delete forget it; a name never read since the start fails.
+  Consequence recorded in ADR-003: revoking cactusTrade's Vault token does not cut eToro access
+  until a restart (revoke the eToro key for that).
+- Start-up: a bad setting stops `serve`; Vault not answering is a warning (the kill switch and
+  the UI must work; credentials are unavailable, nothing trades).
+- `cactustrade secrets migrate --to vault [--dry-run]`: reads every stored credential with the
+  master key (never generates one), writes it to Vault, reads it back, prints names only, leaves
+  the database copies. No `--to db` (not asked for).
+- depguard rule `vault`: no use cases, no broker/LLM adapters, no `github.com/hashicorp` /
+  `github.com/openbao` SDK; the LLM rule also denies the Vault adapter.
+- Not wired into `deploy.sh` or the manifests (OD30: optional); the README says what a k8s
+  deployment needs (projected token volume, role, policy).
+- Tests: `go test ./internal/adapters/vault` **97.2 %** — `TestKV` (get/put/delete/list, header-only
+  token), `TestErrors` (5xx, 403, unreadable, oversized, metadata failures, lookup failures),
+  `TestForbiddenRefetchesTokenOnce`, `TestKubernetesLoginAndRenewal`, `TestKubernetesLoginRefused`,
+  `TestRedirectRefused`, `TestVaultDownAndCancelled`, `TestTLSWithCAFile`, `TestNamespaceAndMount`,
+  `TestOutageServesLastValue`, `TestInvalidNamesSendNothing`, `TestNewValidates`; every failure
+  path checks errors and the captured log for planted tokens, JWT and values. `cmd`:
+  `TestVaultConfig`, `TestServeSecretsInVault`, `TestSecretsMigrateToVault`.
+
+**7.9: releases and runbook** (`Makefile`, `scripts/release-{sums,sign,verify}.sh`,
+`scripts/allowed_signers`, `setup.sh`, `setup.ps1`, `docs/RUNBOOK.md`, README).
+
+- `make dist` (not part of `make check`): `web-check`, then `dist/cactustrade-{linux,darwin,
+  windows}-{amd64,arm64}[.exe]` (`CGO_ENABLED=0`, `-trimpath`, version/build ldflags), `SHA256SUMS`,
+  `ssh-keygen -Y sign -n cactustrade-release` with `RELEASE_KEY` (default
+  `~/.config/cactustrade/release_ed25519`), then `release-verify.sh` against `RELEASE_SIGNERS`
+  (default `scripts/allowed_signers`) exactly as `setup.sh` checks. `dist/` is git-ignored (not
+  committed, unlike cactusInv).
+- **No release key exists yet — an owner step.** Claude did not create the owner's signing key.
+  `scripts/allowed_signers` has comments only and `SIGNER` is empty in both setup scripts, so
+  they **refuse to install** and `make dist` with the defaults fails at the verify step until the
+  owner creates the key and publishes its public line in the three places (RUNBOOK "Releases";
+  `TestReleaseSignerAgrees` keeps them equal).
+- `setup.sh` / `setup.ps1` follow cactusInv's (download into the current folder, keep
+  `cactustrade.old`, run `version`), but **fail closed on the signature** on every platform:
+  OpenSSH's `ssh-keygen -Y verify` (8.1+, on macOS, Linux and the Windows OpenSSH client) instead of
+  cactusInv's "OpenSSL 3 or checksum only". `setup.ps1` feeds `SHA256SUMS` to ssh-keygen by
+  `-RedirectStandardInput` (a PowerShell pipe would re-encode it). `CACTUSTRADE_RELEASE_URL`
+  (mirror / `file://`) and `CACTUSTRADE_RELEASE_SIGNERS` (another trust anchor, with a loud
+  warning) exist for tests and mirrors. `setup.ps1` was not run (no PowerShell here); only its
+  constants are checked by the test.
+- Acceptance run: `make dist RELEASE_KEY=<throw-away key> RELEASE_SIGNERS=<its signers>` built the
+  6 binaries (25–27 MiB each), wrote and signed `SHA256SUMS`, and `release-verify` passed;
+  `dist/cactustrade-darwin-arm64 version` answered; `dist/` was deleted afterwards.
+  `TestReleaseSignAndVerify` runs the scripts with a throw-away key: good release verifies and
+  `setup.sh` installs it (old program kept); a changed binary, a changed `SHA256SUMS`, another
+  key's signature, no signature, or no published key → refused and nothing replaced.
+- `docs/RUNBOOK.md`: incident procedures (eToro API down or refusing, kill switch tripped,
+  reconciliation mismatch with a reason → action table, lease held by a dead process, restore,
+  Vault unavailable, **disarm real trading now** as the *planned* procedure: kill → disarm
+  (7.14's endpoint) → `CACTUSTRADE_REAL_TRADING=off` → revoke the real eToro key → check; marked to
+  be confirmed by 7.16), plus operating notes (trusted proxies on k3s/k8s, releases).
+
+**7.1.13: Saxo OAuth bound to the browser, and PKCE** (`internal/app/connect.go`,
+`internal/adapters/saxo/oauth.go`, `internal/adapters/http/{handlers.go,handlers_accounts.go}`,
+`internal/ports`, `internal/domain/oauth.go`, `docs/saxo-api.md`).
+
+- Both, as planned: `ConnectAccount` draws state, a browser nonce and a PKCE verifier (three
+  `Random.Token()`s; a verifier RFC 7636 would refuse stops the connect, fail closed). The state
+  keeps the nonce's hash and the verifier (memory only). The HTTP adapter sets the nonce as
+  `__Host-cactustrade_oauth` (HttpOnly, Secure, **SameSite=Lax** — Saxo's redirect back is a
+  cross-site top-level navigation, a Strict cookie would not come along —, Path=/, Max-Age 600;
+  `cactustrade_oauth` without `__Host-` when cookies are not Secure), never in the body.
+- `CompleteConnect(ctx, platform, OAuthCallback{…})` (a struct now, instead of five strings):
+  state taken (single use) → platform and expiry → **nonce (constant-time hash compare)** →
+  provider error → code → … → `Exchange(code, redirect, verifier)`. A missing or foreign cookie
+  is a `state` validation error, so it counts in the OAuth limiter like a forged state, and the
+  state is used up. The callback clears the cookie on every path (also when rate-limited).
+- Saxo: `code_challenge` + `code_challenge_method=S256` on the authorize address (names verified
+  in Saxo's PKCE sample), `code_verifier` on the token request. **Unverified** whether Saxo's
+  code-flow apps accept PKCE (recorded in `docs/saxo-api.md`): the owner's first connect settles
+  it; a refusal fails closed.
+- One browser = one pending Saxo sign-in: starting a second connect replaces the cookie, so the
+  first one's callback is refused (connect again).
+- `fakes.Random.Token()` now returns 43 characters (`tok` + 40 digits), like the real one.
+- Tests: `TestConnectAccount` (no cookie, another browser's cookie, oversized cookie, a refusal
+  without the cookie, the state used up whatever happened, verifier ↔ challenge),
+  `TestConnectNeedsValidVerifier`, `TestConnectPKCE`, `TestPKCEChallenge` (RFC 7636 App. B),
+  `TestValidPKCEVerifier`, `TestPlatformEndpoints` (cookie attributes, no nonce in the body, a
+  callback from a cookie-less client refused with 0 exchanges, cookie cleared).
+
+**7.1.15: Mailpit is not a reset channel** (`internal/app/{app.go,email.go}`,
+`cmd/cactustrade/mail.go`, compose, `.env`, k8s ConfigMap, README).
+
+- `Deps.MailFallback` returns `app.FallbackMail{Server, Password, TestMailbox}`. `cmd` marks the
+  fallback a test mailbox when its host is `mailpit` (or `mailpit.<…>`, case-insensitive: the
+  compose service) unless `CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS=true` (default `false` in `.env`,
+  compose and the k8s ConfigMap).
+- Mail still goes through it (notifications, test e-mails: unchanged). Only password reset is
+  off while it is the server in use: `PasswordResetAvailable` false (public status), a reset
+  request answers 503 `MissingError{email_server}` saying the only server is a test mailbox that
+  never reaches the user, and the admin's E-mail page shows "…, a test mailbox: password reset by
+  e-mail is off" in the fallback text (no contract change). A real server switched on in the app
+  wins over the fallback, as before.
+- Tests: `TestPasswordResetTestMailbox` (Mailpit only, opt-in, real fallback, in-app server,
+  none), `TestMailFallbackTestMailbox` (`cmd`).
+
+**7.1.16: k8s NetworkPolicy, trusted proxies, MariaDB hardening** (`deploy/k8s/cactustrade.yaml`,
+`deploy.sh`, `docker-compose.yml`, `.env`, README, RUNBOOK).
+
+- NetworkPolicies `mariadb` (ingress 3306 only from pods `app.kubernetes.io/name: cactustrade`)
+  and `cactustrade` (ingress 8080 only from the ingress controller's pods: namespace
+  `K8S_INGRESS_NAMESPACE` + one label `K8S_INGRESS_POD_SELECTOR`, defaults `kube-system` /
+  `app.kubernetes.io/name=traefik`; in the plain-HTTP NodePort mode the `from` line is dropped
+  by the existing `# https` marker, i.e. open as the Service is). No default-deny for the whole
+  namespace (the two policies isolate both pods) and no egress limits (eToro, LLM, mail, DNS are
+  outside). `deploy.sh --uninstall` and `--status` include `networkpolicy`. Backups and restores
+  use `kubectl exec` (not network traffic) and keep working.
+- **Trusted proxies:** `CACTUSTRADE_TRUSTED_PROXIES` comes from `K8S_TRUSTED_PROXIES`; the safe
+  default is **empty = nobody** (was the whole k3s pod network `10.42.0.0/16`). Consequence for
+  the owner's existing k3s install: until `K8S_TRUSTED_PROXIES` is set, every client counts as
+  Traefik's address for the sign-in limiter and the API rate limits; `deploy.sh` warns on every
+  HTTPS render/install. RUNBOOK "Trusted proxies on k3s/k8s" shows how to find the ingress
+  pods' IPs and their nodes' pod CIDR (recommended, survives Traefik restarts; safe because
+  only the ingress pods reach the app where NetworkPolicy is enforced). Values going into the
+  manifest are validated (namespace name, `key=value` label, address/CIDR characters):
+  `TestDeployRenderRefusesInjection`.
+- **MariaDB hardening, k8s and compose:** runs as the image's `mysql` user 999 from the start
+  (`runAsNonRoot`, `fsGroup: 999`, `fsGroupChangePolicy: OnRootMismatch`; compose `user:
+  "999:999"`), read-only root file system with `/run/mysqld` (memory) and `/tmp` writable,
+  `allowPrivilegeEscalation: false` / `no-new-privileges:true`, all capabilities dropped,
+  seccomp `RuntimeDefault` (k8s). Compose's `volume-init` now also `chown -R 999:999` +
+  `chmod 700` `MARIADB_DATA_DIR` (and runs with `network_mode: none`); MariaDB waits for it.
+  Checked by hand before writing it: `mariadb:11` (the pinned digest) as `--user 999:999
+  --read-only --tmpfs /run/mysqld --tmpfs /tmp --cap-drop ALL --security-opt
+  no-new-privileges` initialises a fresh volume, passes `healthcheck.sh --connect
+  --innodb_initialized`, takes writes and `mariadb-dump` works; Mailpit with `--cap-drop ALL
+  --read-only` runs too (compose now drops its capabilities).
+- **Not done: MariaDB TLS** (F16 mentioned it). Inside the cluster the NetworkPolicy keeps 3306
+  to the app pod, and in compose the database has no published port; TLS would need certificate
+  issuing and rotation for both. Left as a possible later step, not planned.
+- **Documented dry run** (no cluster was touched): `K8S_TRUSTED_PROXIES=10.42.0.0/24 ./deploy.sh
+  --render --k3s` and `K8S_HTTPS=false ./deploy.sh --render --k3s` both parse as 10 documents
+  (…, `NetworkPolicy/mariadb`, `NetworkPolicy/cactustrade`); the HTTPS app policy's `from` is
+  `kube-system` + `app.kubernetes.io/name: traefik`, the plain-HTTP one has none;
+  `kubectl apply --dry-run=client --validate=false -f <rendered>` → `networkpolicy…/mariadb created
+  (dry run)`, `networkpolicy…/cactustrade created (dry run)` and every other object. Not applied to
+  the owner's k3s: that is the owner's `./deploy.sh --upgrade --k3s` (set `K8S_TRUSTED_PROXIES`
+  first). Risk to check then: a network plugin that blocks the kubelet's probes under a
+  NetworkPolicy (node-local traffic is normally allowed; not verified on a cluster here). If the
+  probes fail after the upgrade, add the node addresses as an `ipBlock` to the `cactustrade`
+  policy.
+- Tests: `TestDeployRenderNetwork` (both policies, defaults, ingress-nginx values, plain HTTP,
+  trusted proxies default empty with the warning, MariaDB securityContext and mounts),
+  `TestDeployRenderRefusesInjection`, `TestComposeMariaDBHardened`; `TestDeployRenderService`
+  unchanged and green.
+
+**Verification (2026-11-24):** `make check` green in this worktree: gofumpt, golangci-lint 0
+issues (incl. the new depguard rule), vet, `go test -race` with coverage **domain 98.1 %, app
+89.4 %**, MariaDB `test-int` ok, govulncheck "No vulnerabilities found", `make audit` (modules
+verified, licences ok, pnpm audit clean, images pinned), contracts in sync, `pnpm -C web check`
+(128 tests). `make dist` run once with a throw-away key (above).

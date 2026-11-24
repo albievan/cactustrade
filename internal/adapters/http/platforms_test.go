@@ -123,32 +123,62 @@ func TestPlatformEndpoints(t *testing.T) {
 	if code, _, _ := x.do("GET", "/api/v1/accounts/"+tg+"/saxo/connect", ""); code != 400 {
 		t.Fatalf("connect a Tiger account %d", code)
 	}
-	code, m, _ = x.do("GET", "/api/v1/accounts/"+sx+"/saxo/connect", "")
+	code, m, hdr := x.do("GET", "/api/v1/accounts/"+sx+"/saxo/connect", "")
 	if code != 200 || m["redirectUri"] != "https://trader.example:8453/api/v1/oauth/saxo/callback" {
 		t.Fatalf("connect %d %v", code, m)
 	}
 	au, _ := url.Parse(m["authorizeUrl"].(string))
 	state := au.Query().Get("state")
-	if state == "" {
-		t.Fatalf("no state in %s", au)
+	if state == "" || au.Query().Get("code_challenge") == "" {
+		t.Fatalf("no state or PKCE challenge in %s", au)
 	}
-	// the callback is public (the session cookie does not come back from Saxo)
-	noFollow := &http.Client{Transport: c.Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	callback := func(q string) (int, string) {
+	// PLAN 7.1.13: the browser nonce comes back as a cookie only (never in the body),
+	// HttpOnly, Secure, __Host-, Lax (Saxo's redirect is a cross-site navigation)
+	sc := hdr.Get("Set-Cookie")
+	if !strings.HasPrefix(sc, OAuthCookie+"=") || !strings.Contains(sc, "HttpOnly") || !strings.Contains(sc, "Secure") ||
+		!strings.Contains(sc, "SameSite=Lax") || !strings.Contains(sc, "Path=/") || !strings.Contains(sc, "Max-Age=600") {
+		t.Fatalf("OAuth cookie = %q", sc)
+	}
+	nonce := strings.TrimPrefix(strings.SplitN(sc, ";", 2)[0], OAuthCookie+"=")
+	if nonce == "" || nonce == state {
+		t.Fatalf("nonce %q", nonce)
+	}
+	for _, v := range m {
+		if s, ok := v.(string); ok && strings.Contains(s, nonce) {
+			t.Fatal("the nonce is in the body")
+		}
+	}
+	// the callback is public (the session cookie does not come back from Saxo), but it needs
+	// the OAuth cookie of the browser that started the sign-in
+	noFollow := &http.Client{Transport: c.Transport, Jar: c.Jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	callbackWith := func(cl *http.Client, q string) (int, string) {
 		t.Helper()
 		req, _ := http.NewRequestWithContext(context.Background(), "GET", srv.URL+"/api/v1/oauth/saxo/callback?"+q, http.NoBody)
-		resp, err := noFollow.Do(req)
+		resp, err := cl.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
+		if sc := resp.Header.Get("Set-Cookie"); !strings.HasPrefix(sc, OAuthCookie+"=;") || !strings.Contains(sc, "Max-Age=0") {
+			t.Errorf("the callback did not clear the OAuth cookie: %q", sc)
+		}
 		return resp.StatusCode, resp.Header.Get("Location")
 	}
+	callback := func(q string) (int, string) { t.Helper(); return callbackWith(noFollow, q) }
+	// another browser (no cookie) with the right state: refused, and the state is used up
+	otherBrowser := &http.Client{Transport: c.Transport, CheckRedirect: noFollow.CheckRedirect}
+	if code, loc := callbackWith(otherBrowser, "code=the-code&state="+url.QueryEscape(state)); code != 303 || loc != "/accounts?connect_error=expired" || len(conn.Exchanged) != 0 {
+		t.Fatalf("callback without the cookie %d %s %v", code, loc, conn.Exchanged)
+	}
+	_, m, _ = x.do("GET", "/api/v1/accounts/"+sx+"/saxo/connect", "")
+	au, _ = url.Parse(m["authorizeUrl"].(string))
+	state = au.Query().Get("state")
 	if code, loc := callback("code=the-code&state=" + url.QueryEscape(state)); code != 303 || loc != "/accounts?connected="+sx {
 		t.Fatalf("callback %d %s", code, loc)
 	}
-	if len(conn.Exchanged) != 1 || conn.Exchanged[0] != sx+":the-code:https://trader.example:8453/api/v1/oauth/saxo/callback" {
-		t.Fatalf("exchanged %v", conn.Exchanged)
+	if len(conn.Exchanged) != 1 || conn.Exchanged[0] != sx+":the-code:https://trader.example:8453/api/v1/oauth/saxo/callback" ||
+		domain.PKCEChallenge(conn.Verifiers[0]) != au.Query().Get("code_challenge") {
+		t.Fatalf("exchanged %v %v", conn.Exchanged, conn.Verifiers)
 	}
 	if code, loc := callback("code=again&state=" + url.QueryEscape(state)); code != 303 || loc != "/accounts?connect_error=expired" {
 		t.Fatalf("replayed state %d %s", code, loc)

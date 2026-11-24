@@ -5,6 +5,16 @@ services:
   mariadb:
     image: mariadb:11@sha256:e1d5495f445654134f226f55a41ce0da227116f6f27f283101f405c794d841fc
     restart: unless-stopped
+    # Hardened (PLAN 7.1.16): the image's own mysql user from the start (volume-init hands it
+    # the data folder), no capabilities, no privilege gain, read-only root file system; only
+    # the data folder, the socket folder and /tmp are writable.
+    user: "999:999"
+    read_only: true
+    tmpfs: ["/run/mysqld:mode=0700,uid=999,gid=999", "/tmp:mode=1777"]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    depends_on:
+      volume-init: { condition: service_completed_successfully }
     environment:
       TZ: ${TZ}
       MARIADB_DATABASE: ${MARIADB_DATABASE}
@@ -20,12 +30,15 @@ services:
       timeout: 5s
       retries: 30
 
-  # The app runs as uid 65532; make the mapped data folder writable for it, and only for it.
+  # The app runs as uid 65532 and MariaDB as 999 (mysql); make each mapped data folder
+  # writable for its own service, and only for it.
   volume-init:
     image: busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
-    command: ["sh", "-c", "chown -R 65532:65532 /data && chmod 700 /data"]
+    command: ["sh", "-c", "chown -R 65532:65532 /data && chmod 700 /data && chown -R 999:999 /mariadb && chmod 700 /mariadb"]
     volumes:
       - ${DATA_DIR}:/data
+      - ${MARIADB_DATA_DIR}:/mariadb
+    network_mode: none
     restart: "no"
 
   app:
@@ -69,6 +82,9 @@ services:
       CACTUSTRADE_SMTP_USER: ${CACTUSTRADE_SMTP_USER:-}
       CACTUSTRADE_SMTP_FROM: ${CACTUSTRADE_SMTP_FROM:-}
       CACTUSTRADE_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+      # Password reset by e-mail through the Mailpit test mailbox only on an explicit opt-in
+      # (PLAN 7.1.15): its mail never reaches the user.
+      CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS: ${CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS:-false}
     secrets: [db_password, master_key, metrics_token, etoro_demo_pub, etoro_demo_pk, smtp_password]
     volumes:
       - ${DATA_DIR}:/data
@@ -84,6 +100,7 @@ services:
     read_only: true
     tmpfs: [/tmp] # its mailbox lives here (gone on restart)
     security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
     ports:
       - "127.0.0.1:${MAILPIT_PORT:-8035}:8025"
 

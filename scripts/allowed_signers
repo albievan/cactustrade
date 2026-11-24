@@ -1,0 +1,6 @@
+# cactusTrade release signers (PLAN 7.9, OD31), ssh-keygen ALLOWED SIGNERS format.
+# SHA256SUMS of every release is signed with `ssh-keygen -Y sign -n cactustrade-release`.
+# The owner adds the public half of the release key as ONE line:
+#   cactustrade-release namespaces="cactustrade-release" ssh-ed25519 AAAA… cactustrade-release
+# and the same line as SIGNER in setup.sh and setup.ps1 (a test checks they agree).
+# No key has been published yet: setup.sh and setup.ps1 refuse to install until one is.

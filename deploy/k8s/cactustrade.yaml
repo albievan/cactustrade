@@ -1,7 +1,8 @@
 # cactusTrade on k3s / Kubernetes. Rendered by deploy.sh (`./deploy.sh --render --k3s` prints
 # it without touching a cluster), which fills the ${…} placeholders from .env and keeps the
 # lines marked "# https" or "# plain-http" for K8S_HTTPS. The Secret cactustrade-secrets (db_password, db_root_password, master_key,
-# metrics_token, etoro_demo_pub, etoro_demo_pk) is created by deploy.sh.
+# metrics_token, etoro_demo_pub, etoro_demo_pk) is created by deploy.sh. NetworkPolicies at
+# the end: MariaDB only from the app, the app only from the ingress controller (PLAN 7.1.16).
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -29,8 +30,12 @@ data:
   CACTUSTRADE_ADDR: ":8080"
   CACTUSTRADE_LOG_LEVEL: "${CACTUSTRADE_LOG_LEVEL}"
   CACTUSTRADE_COOKIE_SECURE: "${CACTUSTRADE_COOKIE_SECURE}"
-  # The ingress controller's pods (k3s's default pod network) may set X-Forwarded-For.
-  CACTUSTRADE_TRUSTED_PROXIES: "10.42.0.0/16"
+  # Who may set X-Forwarded-For: the ingress controller's pod addresses only (PLAN 7.1.16;
+  # K8S_TRUSTED_PROXIES in .env, empty = nobody: every client then counts as the ingress
+  # controller's address for the sign-in and API rate limits). docs/RUNBOOK.md says how to
+  # find the addresses.
+  CACTUSTRADE_TRUSTED_PROXIES: "${K8S_TRUSTED_PROXIES}"
+  CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS: "false"
   ETORO_DEMO_PUB_FILE: /run/secrets/etoro_demo_pub
   ETORO_DEMO_PK_FILE: /run/secrets/etoro_demo_pk
   CACTUSTRADE_PUBLIC_URL: "${CACTUSTRADE_PUBLIC_URL}"
@@ -80,9 +85,14 @@ spec:
       # No pod talks to the Kubernetes API (and the token mount would collide with the
       # read-only /run/secrets volume).
       automountServiceAccountToken: false
+      # Hardened (PLAN 7.1.16): the image's own mysql user (999) from the start, no
+      # capabilities, no privilege gain, read-only root file system; only the data volume,
+      # the socket folder and /tmp are writable.
+      securityContext: { runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, fsGroupChangePolicy: OnRootMismatch, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: mariadb
           image: mariadb:11@sha256:e1d5495f445654134f226f55a41ce0da227116f6f27f283101f405c794d841fc
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           env:
             - { name: TZ, value: "${TZ}" }
             - { name: MARIADB_DATABASE, value: "${MARIADB_DATABASE}" }
@@ -92,6 +102,8 @@ spec:
           ports: [{ containerPort: 3306, name: mysql }]
           volumeMounts:
             - { name: data, mountPath: /var/lib/mysql }
+            - { name: run, mountPath: /run/mysqld }
+            - { name: tmp, mountPath: /tmp }
             - { name: secrets, mountPath: /run/secrets, readOnly: true }
           readinessProbe:
             exec: { command: [healthcheck.sh, --connect, --innodb_initialized] }
@@ -100,6 +112,8 @@ spec:
           resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
       volumes:
         - { name: data, persistentVolumeClaim: { claimName: mariadb-data } }
+        - { name: run, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
+        - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
         - name: secrets
           secret:
             secretName: cactustrade-secrets
@@ -181,3 +195,38 @@ spec:
   selector: { app.kubernetes.io/name: cactustrade }
   ports: [{ port: 80, targetPort: http }] # https
   ports: [{ port: 80, targetPort: http, nodePort: ${K8S_NODE_PORT} }] # plain-http
+---
+# Network (PLAN 7.1.16). A pod selected by a NetworkPolicy takes only the traffic a policy
+# allows. This needs a network plugin that enforces NetworkPolicy: k3s's built-in one does;
+# on k8s check yours (Calico, Cilium, … do; plain flannel does not). Outgoing traffic is not
+# limited (eToro, the LLM, the mail server and DNS are outside).
+# MariaDB: port 3306 from the cactusTrade pod only. deploy.sh's backups and restores use
+# `kubectl exec`, which is not network traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mariadb
+  namespace: ${K8S_NAMESPACE}
+  labels: { app.kubernetes.io/part-of: cactustrade }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: mariadb } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app.kubernetes.io/name: cactustrade } } }]
+      ports: [{ protocol: TCP, port: 3306 }]
+---
+# cactusTrade: its HTTP port from the ingress controller's pods only (K8S_HTTPS=true;
+# K8S_INGRESS_NAMESPACE and K8S_INGRESS_POD_SELECTOR in .env, k3s: Traefik in kube-system).
+# In the plain-HTTP NodePort mode it is open to every client, as the Service is.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cactustrade
+  namespace: ${K8S_NAMESPACE}
+  labels: { app.kubernetes.io/part-of: cactustrade }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: cactustrade } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ protocol: TCP, port: 8080 }]
+      from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ${K8S_INGRESS_NAMESPACE} } }, podSelector: { matchLabels: { ${K8S_INGRESS_POD_LABEL} } } }] # https

@@ -58,7 +58,7 @@ func backtestCmd(ctx context.Context, args []string, getenv func(string) string,
 			return err
 		}
 	}
-	secrets, _, err := openSecrets(cfg, store, getenv, system.Clock{}, newLogger(cfg.LogLevel))
+	secrets, _, err := openSecrets(ctx, cfg, store, getenv, system.Clock{}, newLogger(cfg.LogLevel))
 	if err != nil {
 		return err
 	}

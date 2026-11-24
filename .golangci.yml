@@ -83,6 +83,7 @@ linters:
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/saxo", desc: "the LLM never calls a broker" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/tiger", desc: "the LLM never calls a broker" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/secretstore", desc: "the LLM adapter gets its key injected, nothing more" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/vault", desc: "the LLM adapter gets its key injected, nothing more" }
             - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases (PLAN 7.1.12)" }
         # The eToro client is reached only through ports.Broker / ports.MarketData; it never
         # calls back into the use cases (PLAN 7.1.12).
@@ -92,6 +93,20 @@ linters:
           deny:
             - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
             - { pkg: "github.com/albievan/cactustrade/internal/adapters/llm", desc: "the broker client never talks to the LLM" }
+        # The Vault SecretStore (PLAN 7.8) stands alone: standard library, ports and domain only;
+        # no other adapter, no use case, no Vault SDK.
+        vault:
+          files: ["**/internal/adapters/vault/**"]
+          list-mode: lax
+          deny:
+            - { pkg: "github.com/albievan/cactustrade/internal/app", desc: "adapters depend on ports, not use cases" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/etoro", desc: "the secret store never calls a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/saxo", desc: "the secret store never calls a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/tiger", desc: "the secret store never calls a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/trading212", desc: "the secret store never calls a broker" }
+            - { pkg: "github.com/albievan/cactustrade/internal/adapters/llm", desc: "the secret store never talks to the LLM" }
+            - { pkg: "github.com/hashicorp", desc: "no Vault SDK: a standard-library client (OD30)" }
+            - { pkg: "github.com/openbao", desc: "no Vault SDK: a standard-library client (OD30)" }
         # The Trading 212 client is read-only and stands alone: it never reaches eToro.
         trading212:
           files: ["**/internal/adapters/trading212/**"]

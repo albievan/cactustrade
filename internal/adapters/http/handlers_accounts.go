@@ -161,25 +161,35 @@ func (s *Server) ListPlatforms(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// ConnectSaxoAccount starts the Saxo sign-in of an account.
+// ConnectSaxoAccount starts the Saxo sign-in of an account. The browser nonce goes into the
+// OAuth cookie only (PLAN 7.1.13), never into the body.
 func (s *Server) ConnectSaxoAccount(w http.ResponseWriter, r *http.Request, accountID string) {
 	cs, err := s.svc.ConnectAccount(r.Context(), state(r).principal, domain.PlatformSaxo, accountID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	s.setOAuthCookie(w, cs.BrowserNonce)
 	writeJSON(w, http.StatusOK, ConnectStart{AuthorizeUrl: cs.AuthorizeURL, RedirectUri: cs.RedirectURI})
 }
 
 // SaxoCallback finishes the Saxo sign-in and sends the browser back to the accounts page.
-// Only a fixed reason goes into the address, never Saxo's text.
+// Only a fixed reason goes into the address, never Saxo's text. The OAuth cookie is cleared
+// whatever happens (its state is used up).
 func (s *Server) SaxoCallback(w http.ResponseWriter, r *http.Request, params SaxoCallbackParams) {
 	ip := state(r).ip
+	nonce := ""
+	if c, err := r.Cookie(s.oauthCookieName()); err == nil {
+		nonce = c.Value
+	}
+	s.clearOAuthCookie(w)
 	if ok, _ := s.limiter.Allowed(oauthIP, ip); !ok {
 		http.Redirect(w, r, "/accounts?connect_error=failed", http.StatusSeeOther)
 		return
 	}
-	a, err := s.svc.CompleteConnect(r.Context(), domain.PlatformSaxo, deref(params.Code), deref(params.State), deref(params.Error), ip)
+	a, err := s.svc.CompleteConnect(r.Context(), domain.PlatformSaxo, app.OAuthCallback{
+		Code: deref(params.Code), State: deref(params.State), ProviderError: deref(params.Error), BrowserNonce: nonce, RemoteIP: ip,
+	})
 	if err != nil {
 		reason := "failed"
 		var ve *domain.ValidationError

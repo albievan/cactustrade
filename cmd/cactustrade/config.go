@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/albievan/cactustrade/internal/adapters/vault"
 )
 
 // config is read from CACTUSTRADE_* environment variables, then flags.
@@ -38,6 +40,39 @@ type config struct {
 	Container      bool
 	// PublicURL is where users open the app (links in e-mails); "" = no password reset.
 	PublicURL string
+	// Secrets is where credentials are kept: "db" (default; AES-256-GCM in the database) or
+	// "vault" (HashiCorp Vault KV v2, PLAN 7.8, OD30). Vault holds its settings.
+	Secrets string
+	Vault   vault.Config
+}
+
+// Secret stores (CACTUSTRADE_SECRETS).
+const (
+	secretsDB    = "db"
+	secretsVault = "vault"
+)
+
+// loadVaultConfig reads CACTUSTRADE_VAULT_*. The token file defaults to vault_token in the
+// secrets folder when it exists and no Kubernetes role is set.
+func loadVaultConfig(getenv func(string) string, secretsDir string) (vault.Config, error) {
+	v := vault.Config{
+		Addr: getenv("CACTUSTRADE_VAULT_ADDR"), Mount: getenv("CACTUSTRADE_VAULT_MOUNT"), Prefix: getenv("CACTUSTRADE_VAULT_PREFIX"),
+		TokenFile: getenv("CACTUSTRADE_VAULT_TOKEN_FILE"), K8sRole: getenv("CACTUSTRADE_VAULT_K8S_ROLE"),
+		K8sJWTFile: getenv("CACTUSTRADE_VAULT_K8S_JWT_FILE"), K8sMount: getenv("CACTUSTRADE_VAULT_K8S_MOUNT"),
+		CAFile: getenv("CACTUSTRADE_VAULT_CA_FILE"), Namespace: getenv("CACTUSTRADE_VAULT_NAMESPACE"),
+	}
+	if v.Addr == "" {
+		return v, errors.New("CACTUSTRADE_SECRETS=vault needs CACTUSTRADE_VAULT_ADDR (https://vault.example:8200)")
+	}
+	if v.TokenFile == "" && v.K8sRole == "" && secretsDir != "" {
+		if f := filepath.Join(secretsDir, "vault_token"); fileExists(f) {
+			v.TokenFile = f
+		}
+	}
+	if _, err := vault.New(v); err != nil { // checks the settings; nothing is sent
+		return v, err
+	}
+	return v, nil
 }
 
 // env returns the variable, or the trimmed content of the file named by NAME_FILE, or the
@@ -174,6 +209,15 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(env(getenv, "CACTUSTRADE_LOG_LEVEL", "info"))); err != nil {
 		return c, fmt.Errorf("CACTUSTRADE_LOG_LEVEL: %w", err)
+	}
+	switch c.Secrets = env(getenv, "CACTUSTRADE_SECRETS", secretsDB); c.Secrets {
+	case secretsDB:
+	case secretsVault:
+		if c.Vault, err = loadVaultConfig(getenv, c.SecretsDir); err != nil {
+			return c, err
+		}
+	default:
+		return c, errors.New("CACTUSTRADE_SECRETS must be db or vault")
 	}
 	return c, nil
 }

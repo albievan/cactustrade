@@ -77,7 +77,7 @@ func newBackupEnv(t *testing.T) *backupEnv {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	secrets, _, err := openSecrets(cfg, st, envOf(nil), system.Clock{}, slog.New(slog.DiscardHandler))
+	secrets, _, err := openSecrets(context.Background(), cfg, st, envOf(nil), system.Clock{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stB.Close()
-	secrets, _, err := openSecrets(cfgB, stB, envOf(nil), system.Clock{}, slog.New(slog.DiscardHandler))
+	secrets, _, err := openSecrets(context.Background(), cfgB, stB, envOf(nil), system.Clock{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,7 +671,7 @@ func TestRestoreThenStartReconcilesFirst(t *testing.T) {
 	if _, err := st.AgentLeases().Get(ctx, e.acct.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("lease from the backup: %v", err)
 	}
-	secrets, _, err := openSecrets(cfg, st, envOf(nil), system.Clock{}, slog.New(slog.DiscardHandler))
+	secrets, _, err := openSecrets(context.Background(), cfg, st, envOf(nil), system.Clock{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
