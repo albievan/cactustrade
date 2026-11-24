@@ -58,6 +58,15 @@ shape the system, in `docs/adr/`.
 | `github.com/anthropics/anthropic-sdk-go/v2` | Apache-2.0 | the LLM reviewer's Anthropic provider (official SDK: structured output, server-side refusal fallback). Other providers use their OpenAI-compatible HTTP API with the standard library. |
 | `github.com/coder/websocket` | ISC | eToro's price stream (`wss://ws.etoro.com/ws`); the standard library has no WebSocket client. Already in the module graph via testcontainers. |
 | `github.com/testcontainers/testcontainers-go` (+ `modules/mariadb`) | MIT | MariaDB integration tests only (test build) |
+| `filippo.io/age` v1.3.2 (+ `filippo.io/hpke` v0.4.0, indirect) | BSD-3-Clause (both) | Backup encryption (PLAN 7.6, OD29): the age format to public-key recipients, so the machine that writes a backup cannot read it. The standard library has the primitives but no file format; age is the reviewed, interoperable one (the `age` CLI decrypts our files). |
+
+All licences are checked by `make audit` (PLAN 7.7, `tools/licencecheck`): 81 Go modules
+compiled into cactusTrade or its tests (MIT, BSD-2/3, ISC, Apache-2.0, MPL-2.0, public domain;
+2026-11-24), and the web app's production packages. Web (production): `react`, `react-dom`
+18.3 (MIT), `react-router-dom` **7.18.6** (MIT; upgraded from 6.30 in 7.7 because `pnpm audit`
+reported GHSA-wrjc-x8rr-h8h6 and GHSA-337j-9hxr-rhxg, fixed only in 7.18), `bootstrap` 5.3.8 and
+`bootstrap-icons` (MIT), `swagger-ui-dist` 5.29.0 (Apache-2.0; its `@scarf/scarf` install
+telemetry is switched off with `scarfSettings.enabled = false`).
 
 ## Deviations from the brief (for the owner)
 
@@ -1354,9 +1363,9 @@ U1–U11 (demo, step 4.17) must be settled first.
 | 7.3 | **API rate limits.** Token buckets per principal (user id / API key id) and per IP on `/api/*`: reads 600/min, mutations 60/min, exports 10/min, stream connects 30/min (OD33). **Kill, pause, stop and disarm are never throttled** (§2.6). Bounded memory (≤ 10 000 keys, purged by `PurgeLoop`). 429 problem+json with `Retry-After`; metric. | `internal/adapters/http/{ratelimit.go,ratelimit_test.go,server.go}` | `go test ./internal/adapters/http -run RateLimit`: limits per class; with every bucket exhausted, `POST /agent/kill` is still 200; 10 001 keys keep memory bounded. | done (D32; `TestRateLimit*`: per class, both buckets or none, kill/pause/stop 200 with every bucket of the address, user and API key exhausted, 10 001 keys ≤ 10 000) |
 | 7.4 | **Headers, cookies, body limits.** Add `Permissions-Policy`, COOP `same-origin`, CORP `same-origin`; check the CSP has no `unsafe-inline` outside Swagger; `MaxBytesReader` 1 MiB on JSON bodies; optional `__Host-` cookie prefix (OD32). | `internal/adapters/http/{middleware.go,server.go,handlers.go}`, `server_test.go` | Header table test over route classes (SPA, API, Swagger, SSE, CSV, `/metrics`, 308 redirect); a 2 MiB body → 413. | done (D33; `TestSecurityHeadersByRouteClass` over SPA, API, Swagger, SSE, CSV, `/metrics`, 308; `TestBodyLimits`: 2 MiB → 413, also chunked and on the kill route; `TestHostPrefixedSessionCookie`; `TestRedirectHasSecurityHeaders`. **The `__Host-` cookie signs everyone out once** (README). Also fixed a pre-existing web flake: `Dashboard.test.tsx` "caps the backoff at 30 s" checked a 1 ms boundary under `shouldAdvanceTime` and failed about every second `make check`; it now checks 29 s / 30 s (64 s uncapped, so the cap is still proven)) |
 | 7.5 | **Observability.** The app exposes `TradingHealth()` (no prometheus import, depguard). The HTTP adapter registers a Collector that reads it at scrape time: agent state, killed, reconciled, last successful supervisor pass, lease held, non-final orders by state, real-gate armed (7.12) per account id. Plus counters: order transitions (from the bus), eToro requests by op/status class/mode (`etoro.Config.Observe` hook), limiter waits, LLM calls by purpose/outcome, bus drops. `GET /api/v1/system/health` (admin): every loop alive (supervisor pass < 60 s). Runbook alert rules. | `internal/app/health.go`, `internal/adapters/http/metrics.go`, `internal/adapters/etoro/client.go`, `cmd/cactustrade/main.go`, tests | `go test ./internal/adapters/http -run Metrics`: the series are present; labels are bounded (account ids only); no label or value matches a key pattern; a stalled supervisor → health 503 with the account. | done (D34; `TestMetricsTradingSeries` (every series and value, label sets from a fixed table, account labels only real account ids, no label or value matches the key pattern, planted eToro keys / metrics token / password / CSRF token absent), `TestMetricsStalledSupervisorHealth` (200 → 61 s without a pass → 503 naming the account in `problems`, `account_healthy 0`, `trading_healthy 0` → a pass → 200; viewer / operator 403, anonymous 401), `TestTradingHealth*`, `TestSystemHealth`, `TestObserveEveryRequest`, `TestObserveLimiterWaits`, `TestStatusClass`. Alert rules in the new `docs/RUNBOOK.md` (7.9 adds the incident procedures). `real_gate_armed` is always 0 until 7.13 fills `AccountHealth.RealGateArmed`) |
-| 7.6a | **Encrypted app backup and restore (standalone).** `cactustrade backup --out F`: SQLite `VACUUM INTO` a temp file, then age-encrypted to `CACTUSTRADE_BACKUP_RECIPIENT` (refused without a recipient, OD29). `cactustrade restore --in F --yes`: refuses while a server holds the data dir (lock file + live lease), checks the schema version, writes setting `restore.at` (7.12 disarms every real gate older than it). The master key is never in a backup. | `cmd/cactustrade/{backup.go,backup_test.go}`, `internal/adapters/sqlstore/backup.go`, go.mod | `go test ./cmd/cactustrade -run 'Backup\|Restore'`: round trip keeps row counts and migration version; a stored secret still decrypts with the master key; the archive (decrypted) does not contain the master key bytes; a wrong age identity fails; restore while serving → refused. | todo |
-| 7.6b | **MariaDB backup and restore + restore test.** `deploy.sh --backup-now` pipes `mariadb-dump` through `cactustrade encrypt` (age) when a recipient is set (else today's 0600 gzip with a warning). `deploy.sh --restore FILE` stops the app, restores after a typed confirmation, then starts the app (start-up reconciliation runs first, 4.14). | `deploy.sh`, `cmd/cactustrade/encrypt.go`, `internal/adapters/sqlstore/integration_test.go` (test-int), README | `make test-int`: dump → restore into a fresh MariaDB container → counts and `goose` version equal; `deploy.sh --restore` dry-run on Docker Desktop documented in PLAN. | todo |
-| 7.7 | **Dependency audit.** `make audit`: `go mod verify`, govulncheck, a licence check over `go list -m -json all` + each module's LICENSE (allowed: MIT, BSD-2/3, ISC, Apache-2.0, MPL-2.0, public domain/Unlicense; others fail with the module name), `pnpm licenses list --prod` with the same rule, `pnpm audit --prod --audit-level=moderate`. Joins `make check`. PLAN dependency table brought up to date. | `tools/licencecheck/` (Go, stdlib only), `Makefile`, PLAN | `make audit` green; the licence checker's own test fails on a GPL-3.0 fixture module. | todo |
+| 7.6a | **Encrypted app backup and restore (standalone).** `cactustrade backup --out F`: SQLite `VACUUM INTO` a temp file, then age-encrypted to `CACTUSTRADE_BACKUP_RECIPIENT` (refused without a recipient, OD29). `cactustrade restore --in F --yes`: refuses while a server holds the data dir (lock file + live lease), checks the schema version, writes setting `restore.at` (7.12 disarms every real gate older than it). The master key is never in a backup. | `cmd/cactustrade/{backup.go,backup_test.go}`, `internal/adapters/sqlstore/backup.go`, go.mod | `go test ./cmd/cactustrade -run 'Backup\|Restore'`: round trip keeps row counts and migration version; a stored secret still decrypts with the master key; the archive (decrypted) does not contain the master key bytes; a wrong age identity fails; restore while serving → refused. | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
+| 7.6b | **MariaDB backup and restore + restore test.** `deploy.sh --backup-now` pipes `mariadb-dump` through `cactustrade encrypt` (age) when a recipient is set (else today's 0600 gzip with a warning). `deploy.sh --restore FILE` stops the app, restores after a typed confirmation, then starts the app (start-up reconciliation runs first, 4.14). | `deploy.sh`, `cmd/cactustrade/encrypt.go`, `internal/adapters/sqlstore/integration_test.go` (test-int), README | `make test-int`: dump → restore into a fresh MariaDB container → counts and `goose` version equal; `deploy.sh --restore` dry-run on Docker Desktop documented in PLAN. | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
+| 7.7 | **Dependency audit.** `make audit`: `go mod verify`, govulncheck, a licence check over `go list -m -json all` + each module's LICENSE (allowed: MIT, BSD-2/3, ISC, Apache-2.0, MPL-2.0, public domain/Unlicense; others fail with the module name), `pnpm licenses list --prod` with the same rule, `pnpm audit --prod --audit-level=moderate`. Joins `make check`. PLAN dependency table brought up to date. | `tools/licencecheck/` (Go, stdlib only), `Makefile`, PLAN | `make audit` green; the licence checker's own test fails on a GPL-3.0 fixture module. | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
 | 7.8 | **Vault `SecretStore` (optional, OD30).** KV v2 over `net/http` (no SDK). Token from a file or Kubernetes auth (JWT file); CA file; no redirects; write-only (Get only for the app's own use, never returned by the API); env overlay still wins. `CACTUSTRADE_SECRETS=db\|vault` (default db). `cactustrade secrets migrate --to vault`. | `internal/adapters/vault/`, `cmd/cactustrade/main.go`, `.golangci.yml` (depguard), ADR-003 update | `go test ./internal/adapters/vault`: fake Vault (`httptest`) for get/put/delete/list, 403/404/5xx, token renewal; no token in any error or log; a redirect is refused; coverage ≥ 90 %. | todo |
 | 7.9 | **Releases and runbook.** `make dist` (linux/darwin/windows × amd64/arm64, `SHA256SUMS`, signature per OD31), `setup.sh` / `setup.ps1` as cactusInv. `docs/RUNBOOK.md`: eToro API down, kill switch tripped, reconciliation mismatch, lease held by a dead process, restore, **disarm real trading now**. | `Makefile`, `scripts/`, `docs/RUNBOOK.md` | `make dist` builds 6 binaries; signature verifies in a script test; `make check`. | todo |
 | 7.10 | **Domain: demo evidence and the gate (real still impossible).** `const RealTradingEnabled = false` ("needs the owner's written consent, PLAN 7.18"). `DayFacts{Day RiskDate, Decisions, FilledOpens, OpenedPositions, ClosedSameDay}` → `QualifyingDays(facts, rule)` per OD19. `GateEvidence{Days, Count, First, Last}`. `GateChecks(in) []GateCheck{Name, Pass, Detail}`: real account (eToro, mode real, keys, reconciled, not killed, agent stopped, limits valid and ≤ real ceilings); linked demo account (eToro, mode demo, same owner, OD21); ≥ 20 qualifying days in the last 60 risk days, the latest ≤ 7 days old (OD20); arming user is admin and owner (OD22); phrase `ENABLE REAL TRADING <account name>`. `CanArm` = every check passes **and** `RealTradingEnabled`, else `ErrRealModeGated`. `RealGate` aggregate (locked / armed, linked demo id, armed at/by, evidence, disarmed at/by/reason, expires at (OD24), version). | `internal/domain/{realgate.go,realgate_test.go}` | `go test ./internal/domain -run 'Gate\|QualifyingDays\|RealTradingDisabled'`. `TestRealTradingDisabledInThisBuild` asserts the constant is false (changing it changes this test: a visible, reviewed edit). Properties: a day without a decision, without a filled demo open, or with a position held past its risk day never qualifies; adding facts never lowers the count; 19 days → fails; 20 days but the latest 8 days old → fails; every check passing still gives `ErrRealModeGated`. | todo |
@@ -1383,7 +1392,7 @@ chose "Keep admin/admin as is" and accepts the risk of that window. No change.
 
 Reviewer agent pass, read-only (scope as in 7.1). Each fix below started with a test that
 failed on the code as it was, then the fix. No BLOCKER was found.
-Every MAJOR (F1–F6) and the MINORs F7–F12 are fixed; F13–F17 are planned steps. `make check`
+Every MAJOR (F1–F6) and the MINORs F7–F12 are fixed; F13–F16 are planned steps; F17 was fixed with 7.7. `make check`
 green on 2026-11-24 (incl. MariaDB `test-int`); coverage domain 98.0 %, app 89.0 %.
 Dry run of the k8s rendering: `./deploy.sh --render --k3s` (HTTPS: Service `ClusterIP`) and
 `K8S_HTTPS=false ./deploy.sh --render --k3s` (NodePort + warning on stderr), covered by
@@ -1407,7 +1416,7 @@ Dry run of the k8s rendering: `./deploy.sh --render --k3s` (HTTPS: Service `Clus
 | F14 | MINOR | `/metrics` is open without a token in standalone mode. | `cmd/cactustrade/config.go` | 7.1.14 (done) |
 | F15 | MINOR | The bundled Mailpit counts as a working mail server, so "reset by e-mail" is offered although the mail never reaches the user. | `internal/app/email.go` | 7.1.15 (planned) |
 | F16 | MINOR | k8s: no NetworkPolicy; trusted proxies hard-coded to k3s's pod CIDR; MariaDB without TLS / hardening options. | `deploy/k8s/cactustrade.yaml` | 7.1.16 (planned) |
-| F17 | MINOR | Images by tag, not digest; Node 20 in the web build. | `Dockerfile`, compose, k8s | 7.1.17 → 7.7 (planned) |
+| F17 | MINOR | Images by tag, not digest; Node 20 in the web build. | `Dockerfile`, compose, k8s | 7.1.17 (fixed with 7.7) |
 | — | note | The default admin/admin (D17) is unchanged: the owner is being asked about it. | — | — |
 
 | ID | Step | Files | Acceptance tests | Status |
@@ -1428,4 +1437,134 @@ Dry run of the k8s rendering: `./deploy.sh --render --k3s` (HTTPS: Service `Clus
 | 7.1.14 | `/metrics` needs the metrics token in standalone mode too (generated into the data dir when unset). | `cmd/cactustrade/config.go`, README | `/metrics` without a token → 401 in every mode. | done (with 7.5, D35; `TestMetricsNeedToken`: no / wrong token → 401, and 401 for every request when none is configured; `TestEnsureMetricsToken`) |
 | 7.1.15 | Mailpit as the only mail server = "reset unavailable" (public status and the request say why). | `internal/app/email.go` | with Mailpit only, `passwordResetAvailable` is false. | planned |
 | 7.1.16 | k8s NetworkPolicy (app ↔ MariaDB, ingress → app only), trusted proxies from `.env`, MariaDB hardening. | `deploy/k8s/cactustrade.yaml`, `deploy.sh`, `.env` | `deploy.sh --render` contains the policies; documented dry-run. | planned |
-| 7.1.17 | Images pinned by digest; Node 22 for the web build (with 7.7). | `Dockerfile`, compose, k8s | `make audit` (7.7). | planned |
+| 7.1.17 | Images pinned by digest; Node 22 for the web build (with 7.7). | `Dockerfile`, compose, k8s | `make audit` (7.7). | done (2026-11-24; `make check` green incl. MariaDB test-int and `make audit`) |
+
+### Steps 7.6–7.7: decisions (2026-11-24)
+
+**7.6a: standalone backup and restore** (`cmd/cactustrade/{backup.go,encrypt.go,lock.go}`,
+`internal/adapters/sqlstore/backup.go`).
+
+- `cactustrade backup --out F [--recipient age1…]…`: `VACUUM INTO` a random temporary file in
+  the (0700) data folder while the server keeps running, then age to the recipients, written
+  `O_EXCL` with mode 0600 (an existing file is never overwritten); the plain copy is removed
+  in every case. Recipients: `--recipient` flags, else `CACTUSTRADE_BACKUP_RECIPIENT` (spaces
+  or commas between several), else the recipients file `CACTUSTRADE_BACKUP_RECIPIENT_FILE`.
+  **No recipient → nothing is written** (OD29). X25519 (and age's hybrid) recipients only; SSH
+  keys and plugins are not accepted (age's own advice for applications).
+- The payload is the bare SQLite file (no envelope): the restore recognises it by SQLite's
+  magic, which also turns a MariaDB dump away with a pointer to `deploy.sh --restore`.
+- **The master key is never in a backup**: it lives in `master.key` / a secret file, never in
+  the database; `TestBackupRestoreRoundTrip` decrypts the archive and checks that neither the
+  raw key, its hex form (either case) nor a stored credential's plaintext appear, and that the
+  credential still decrypts after a restore into a fresh folder holding the same master key.
+- `cactustrade restore --in F --yes [--identity FILE]` (identity also from
+  `CACTUSTRADE_BACKUP_IDENTITY_FILE`), standalone only (MariaDB → `deploy.sh`). Order: restore
+  lock → refuse while a server uses the folder (a fresh `serve-*.lock`) → refuse while any
+  account lease on the current database is live (D22: covers a process on another machine or
+  one that just died) → checkpoint its WAL → decrypt to a temporary file → SQLite magic →
+  `PRAGMA integrity_check` → schema ≥ 1 and ≤ this build's newest (older: migrated up now) →
+  `PrepareRestored` → swap. Any refusal leaves the current database untouched (tested for a
+  wrong identity, a tampered file, a non-age file, a MariaDB dump, no schema, a newer schema,
+  a corrupt database).
+- **Data-folder locks** instead of `flock` (portable to Windows, no syscall package):
+  `<data>/locks/serve-<random>.lock` for each server (SQLite only) and `restore.lock`, each
+  refreshed every 5 s and live while younger than 20 s; a stale one (crashed process) is
+  ignored or replaced. Both sides write their own file first and then look for the other's,
+  so of two that start together one gives up. `serve` refuses to start during a restore.
+- `PrepareRestored` (portable SQL, used by the SQLite restore; the MariaDB script does the
+  same): deletes every `agent_leases` row (the holders are gone), deletes every session
+  (**everyone signs in again**: a sign-out or password change made after the backup must not
+  come back), and writes setting **`restore.at`** (RFC 3339 UTC) for 7.12/7.13 to disarm any
+  real gate armed before it (OD24).
+- The replaced database is kept as `cactustrade.db.pre-restore-<UTC time>` (same protection as
+  the database itself); deleting it is the operator's call.
+- **Reconciliation first after a restore:** reconciliation state is per process (never
+  stored), so a restored database starts unreconciled and `startTrading` keeps the 4.14 order.
+  `TestRestoreThenStartReconcilesFirst` runs the real service on a restored SQLite database:
+  not reconciled before, `ReconcileAll` is the first call, the supervisor takes the lease only
+  after it, no order is sent.
+
+**7.6b: MariaDB backup and restore** (`deploy.sh`, `deploy/backup/{mariadb-dump.sh,
+mariadb-restore.sh}`, `cmd/cactustrade/encrypt.go`, `internal/adapters/sqlstore/backup_integration_test.go`).
+
+- The SQL now lives in two POSIX `sh` scripts that run **inside the MariaDB container**
+  (`sh -c "<file>" dump|restore …`); `make test-int` copies the very same files into
+  testcontainers, so the tested restore is the shipped one. The dump adds `--hex-blob`.
+- `--backup-now`: `mariadb-dump | gzip | age` → `cactustrade-<time>.sql.gz.age` with a recipient
+  from `.env.local` (`CACTUSTRADE_BACKUP_RECIPIENT` / `_FILE`, validated as `age1…`); without
+  one, today's 0600 `.sql.gz` with a loud warning (OD29). `--upgrade` reads either name.
+- `cactustrade encrypt` / `decrypt` are the age filter. Order of use in `deploy.sh`: a local
+  `CACTUSTRADE_BIN` or `bin/cactustrade`, else the `age` tool, else the app's image
+  (`compose run --rm --no-deps -T app …`) or pod (`kubectl exec`). **`decrypt --identity -`**
+  reads the identity from stdin up to an empty line, then the file: the private key is never
+  a file, an argument or an environment variable inside a container or pod.
+- `--restore FILE [--identity F] [--dry-run] [--yes]`: decrypts and decompresses into a 0600
+  temporary file in `BACKUP_DIR` (removed on exit), reads the dump's goose version (the
+  extended `INSERT` spans lines in MariaDB 11's output) and refuses none or newer than this
+  checkout's newest migration — **all before anything is stopped**. `--dry-run` stops there.
+  Then: typed `restore` (or `--yes`), a backup of the current database (as `--upgrade`), app
+  stopped (`compose stop app` / scale to 0), the restore script, app started and waited for
+  (healthy / rollout). A failed load starts the app again on the unchanged database.
+  `--ssh-access` is refused for `--restore` (the file and identity are local; copy them over).
+- `mariadb-restore.sh`: waits up to `RESTORE_LEASE_WAIT` (45 s) for live leases to expire (exit 4
+  otherwise); loads into `<db>_restore`; checks the schema (exit 3); then **one atomic
+  `RENAME TABLE`** moves the current tables to `<db>_prerestore` (kept until the next restore)
+  and the restored ones in; foreign keys follow (checked: none points outside the database,
+  a delete still cascades); then the same `PrepareRestored` statements.
+- Test-int `TestMariaDBBackupRestore`: the shared suite fills MariaDB A; dump script → gzip →
+  age → age → gunzip → restore script into a fresh container B: every table's row count and
+  the goose version equal (sessions and leases 0, settings + `restore.at`); refusals (newer
+  schema, foreign dump, bad name, live lease) leave B unchanged; a second restore keeps
+  `_prerestore`.
+- **Documented dry run** (Docker Desktop target; a throw-away age key and a dump with schema
+  11; no container is touched, `TestDeployRestoreDryRun` runs the same without Docker):
+
+  ```
+  $ ./deploy.sh --restore backups/cactustrade-20261124T120000Z.sql.gz.age --identity id.agekey --dry-run --dockerdesktop
+  ==> checking cactustrade-20261124T120000Z.sql.gz.age
+  ✔ cactustrade-20261124T120000Z.sql.gz.age: a cactusTrade dump with schema 11 (this version: 11), 124 bytes
+  dry run: --restore would now ask for 'restore', take a backup of the current database, stop the app,
+  load this dump into cactustrade (the replaced tables kept in cactustrade_prerestore), sign
+  everyone out, and start the app, which reconciles every account with eToro first.
+  Nothing was stopped or changed.
+  ```
+
+  A live `--restore` on an installed Docker Desktop deployment is the owner's to run (this
+  step deployed nothing).
+
+**7.7: dependency audit** (`tools/licencecheck/`, `Makefile`).
+
+- `make audit` = `govulncheck` (shared with `vuln`) + `go mod verify` + the licence check over
+  Go and web + `pnpm audit --prod --audit-level=moderate` + `TestImagesPinnedByDigest`; it is
+  part of `make check`. `make fmt`/`fmt-check` now cover `tools/`.
+- `tools/licencecheck` (standard library only, enforced by `TestStandardLibraryOnly`): reads
+  `go list -m -json all`, the module paths of `go list -deps -test -tags integration ./...`
+  and `pnpm licenses list --prod --json`. **Judged: every Go module a package of which is
+  compiled into cactusTrade or its tests (81 today, incl. the main module), plus every web
+  production package.** The rest of the module graph (141 modules: goose's other database
+  drivers, dependencies' own test requirements) is reported as skipped: never compiled here,
+  and checking it would make the result depend on what happens to be in the module cache. A
+  built module that is not downloaded fails. Licence files in a module's root are classified by
+  their wording (MPL-2.0's mention of the GNU licences as "Secondary Licenses" is not GPL); an
+  unrecognised licence file fails, except two reviewed non-code files listed with reasons in
+  `nonCode` (go-digest's `LICENSE.docs`, modernc memory's `LICENSE-LOGO`). npm SPDX expressions:
+  `OR` needs one allowed side, `AND` all; `WITH`, `LicenseRef-…` and unknown are refused.
+  CC0-1.0 counts as public domain. `TestGPL3ModuleFails` is the acceptance test.
+- `pnpm audit` found two moderate advisories in `react-router` 6.30.6 (open redirect via
+  backslash in `<Link>`/`useNavigate`; SSR hydration, unused here) with fixes only in 7.18:
+  **`react-router-dom` upgraded to 7.18.6** (same API for our `BrowserRouter`, `Routes`,
+  `Link`, `NavLink`, `Navigate`, `MemoryRouter`; `pnpm -C web check` green, no code change).
+- `swagger-ui-dist` pulls `@scarf/scarf`, whose install script sends usage telemetry: switched
+  off with `scarfSettings.enabled = false` in `web/package.json`.
+- A flaky web test met on the way (6.11's "caps the backoff at 30 s" failed once under load):
+  its fake timers also move with real time (`shouldAdvanceTime`), so the 1 ms margin around
+  30 s is now 1 s on each side (29 s: no retry yet; 31 s: retried). It still fails for a
+  64 s backoff and for one under 29 s.
+
+**7.1.17: images by digest, Node 22.** `Dockerfile` (`node:22-alpine`, `golang:1.26.11-alpine`,
+`distroless/static-debian12:nonroot`), compose (`mariadb:11`, `busybox:1.37`,
+`axllent/mailpit:v1.21`), k8s (`mariadb:11`), `deploy.sh` (`busybox`) and the Makefile's
+in-container images are `tag@sha256:<multi-arch index digest>` (resolved 2026-11-24 with
+`docker buildx imagetools inspect`). `TestImagesPinnedByDigest` fails on any unpinned image in
+those files (checked by un-pinning one by hand). Updating an image = new digest in the same
+places. The testcontainers images in `make test-int` stay by tag (test only).

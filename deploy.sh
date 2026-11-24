@@ -11,8 +11,13 @@
 #                        backup, install it and check it runs; if not, go back to this version
 #   --version            show the running version and database schema
 #   --status             show what is running
-#   --backup-now         dump the database now into BACKUP_DIR (gzip, mode 600; it holds
-#                        encrypted credentials and password hashes, not their plaintext)
+#   --backup-now         dump the database now into BACKUP_DIR: gzip, then age-encrypted to
+#                        CACTUSTRADE_BACKUP_RECIPIENT (.sql.gz.age); without a recipient a
+#                        plain .sql.gz (mode 600) with a warning. Either way it holds the
+#                        credentials only encrypted under the master key, which is never in it
+#   --restore FILE       replace the database with a backup (.sql.gz.age, .sql.gz or .sql):
+#                        checks the file first, asks for 'restore', takes a backup, stops the
+#                        app, restores, starts the app (it reconciles with eToro first)
 #   --uninstall          stop and remove cactusTrade, KEEPING the database, data and secrets
 #   --delete-uninstall   remove cactusTrade AND DELETE all its data (asks for confirmation)
 #   --render             k3s/k8s: print the manifest that --install would apply (nothing is
@@ -26,7 +31,11 @@
 #
 # OPTIONS
 #   --ssh-access user@host   deploy to a remote machine over SSH, e.g. root@192.0.2.10
-#   --yes                    do not ask for confirmation (--delete-uninstall, --upgrade)
+#   --yes                    do not ask for confirmation (--delete-uninstall, --upgrade, --restore)
+#   --identity FILE          --restore: the age identity (private key) of an encrypted backup;
+#                            default CACTUSTRADE_BACKUP_IDENTITY_FILE
+#   --dry-run                --restore: only check that the file decrypts and is a cactusTrade
+#                            dump this version can restore; nothing is stopped or changed
 #   -h, --help               show this help
 #
 # Settings come from .env next to this script; .env.local beside it (not in git) overrides
@@ -37,7 +46,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-ACTION="" TARGET="" SSH_HOST="" ASSUME_YES=0 UPGRADE_TO="" DOWN_TO=""
+ACTION="" TARGET="" SSH_HOST="" ASSUME_YES=0 UPGRADE_TO="" DOWN_TO="" RESTORE_FILE="" IDENTITY_FILE="" DRY_RUN=0
 REMOTE_DIR="${CACTUSTRADE_REMOTE_DIR:-/opt/cactustrade}"
 
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -58,6 +67,11 @@ while [[ $# -gt 0 ]]; do
     --dockerdesktop | --docker | --podman | --k3s | --k8s)
       [[ -z "$TARGET" ]] || die "choose one target"; TARGET="${1#--}"; [[ "$TARGET" == docker ]] && TARGET=dockerdesktop ;;
     --ssh-access) SSH_HOST="${2:-}"; shift; [[ -n "$SSH_HOST" && "$SSH_HOST" != --* ]] || die "--ssh-access needs user@host" ;;
+    --restore)
+      [[ -z "$ACTION" ]] || die "choose one action"; ACTION=restore; RESTORE_FILE="${2:-}"; shift
+      [[ -n "$RESTORE_FILE" && "$RESTORE_FILE" != --* ]] || die "--restore needs a backup file" ;;
+    --identity) IDENTITY_FILE="${2:-}"; shift; [[ -n "$IDENTITY_FILE" && "$IDENTITY_FILE" != --* ]] || die "--identity needs a file" ;;
+    --dry-run) DRY_RUN=1 ;;
     --yes | -y) ASSUME_YES=1 ;;
     -h | --help) usage 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
@@ -69,6 +83,7 @@ done
 DOCKER=docker
 [[ "$TARGET" == podman ]] && DOCKER=podman
 [[ -z "$UPGRADE_TO" || "$ACTION" == upgrade ]] || die "--to goes with --upgrade"
+[[ ( -z "$IDENTITY_FILE" && $DRY_RUN -eq 0 ) || "$ACTION" == restore ]] || die "--identity and --dry-run go with --restore"
 export TARGET
 
 # ---------------------------------------------------------------------------------------
@@ -170,7 +185,7 @@ upgrade() {
   self --check-data </dev/null || die "the data folders do not match the running install (nothing was changed)"
   info "taking a backup first"
   backup_out="$(self --backup-now </dev/null 2>&1 | tr -d '\r')" || { echo "$backup_out"; die "the backup failed, so nothing was changed"; }
-  backup_name="$(printf '%s\n' "$backup_out" | grep -o 'cactustrade-[A-Za-z0-9._-]*\.sql\.gz' | head -1 || true)"
+  backup_name="$(printf '%s\n' "$backup_out" | grep -oE 'cactustrade-[A-Za-z0-9._-]*\.sql\.gz(\.age)?' | head -1 || true)"
   [[ -n "$backup_name" ]] || { echo "$backup_out"; die "the backup's name could not be read, so nothing was changed"; }
   ok "backup ${backup_name}"
 
@@ -190,7 +205,7 @@ upgrade() {
   if self --install </dev/null && upgrade_verify "$run_line"; then
     die "the upgrade failed and ${run_line} is running again (backup ${backup_name}); see above for why"
   fi
-  die "the upgrade failed and could not be rolled back completely; restore ${backup_name} (README, \"Restoring a backup\")"
+  die "the upgrade failed and could not be rolled back completely; restore ${backup_name} with --restore (README, \"Backups and restore\")"
 }
 
 upgrade_verify() {
@@ -231,6 +246,181 @@ etoro_value() {
     etoro_demo_pub) printf '%s' "${ETORO_DEMO_PUB:-}" ;;
     etoro_demo_pk) printf '%s' "${ETORO_DEMO_PK:-}" ;;
   esac
+}
+
+# ---------------------------------------------------------------------------------------
+# Backups (PLAN 7.6b, OD29): mariadb-dump | gzip | age. The dump and restore scripts in
+# deploy/backup run inside the MariaDB container (make test-int runs the same files).
+# ---------------------------------------------------------------------------------------
+BACKUP_RECIPIENTS=()
+
+# backup_recipients reads the age public keys from CACTUSTRADE_BACKUP_RECIPIENT (spaces or
+# commas between several) or, when that is empty, the file CACTUSTRADE_BACKUP_RECIPIENT_FILE.
+# None: the backup is today's plain gzip, with a warning (OD29).
+backup_recipients() {
+  local r line
+  BACKUP_RECIPIENTS=()
+  for r in $(printf '%s' "${CACTUSTRADE_BACKUP_RECIPIENT:-}" | tr ',' ' '); do BACKUP_RECIPIENTS+=("$r"); done
+  if [[ ${#BACKUP_RECIPIENTS[@]} -eq 0 && -n "${CACTUSTRADE_BACKUP_RECIPIENT_FILE:-}" ]]; then
+    [[ -f "$CACTUSTRADE_BACKUP_RECIPIENT_FILE" ]] || die "CACTUSTRADE_BACKUP_RECIPIENT_FILE: no such file: $CACTUSTRADE_BACKUP_RECIPIENT_FILE"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%%#*}"
+      line="$(printf '%s' "$line" | tr -d '[:space:]')"
+      [[ -z "$line" ]] || BACKUP_RECIPIENTS+=("$line")
+    done <"$CACTUSTRADE_BACKUP_RECIPIENT_FILE"
+  fi
+  for r in ${BACKUP_RECIPIENTS[@]+"${BACKUP_RECIPIENTS[@]}"}; do
+    [[ "$r" =~ ^age1[0-9a-z]+$ ]] || die "not an age public key (age1...): $r"
+  done
+  if [[ ${#BACKUP_RECIPIENTS[@]} -eq 0 ]]; then
+    warn "no CACTUSTRADE_BACKUP_RECIPIENT: this backup is NOT encrypted (gzip, mode 600). Put an age public key in .env.local (README, \"Backups and restore\")."
+  fi
+}
+
+backup_file() {
+  local f
+  f="$(printf '%s/cactustrade-%s.sql.gz' "$BACKUP_DIR" "$(date -u +%Y%m%dT%H%M%SZ)")"
+  [[ ${#BACKUP_RECIPIENTS[@]} -eq 0 ]] || f="${f}.age"
+  printf '%s' "$f"
+}
+
+backup_done() {
+  if [[ "$1" == *.age ]]; then
+    ok "backup $(basename "$1") in $(abs_dir "$BACKUP_DIR"), encrypted to ${#BACKUP_RECIPIENTS[@]} age recipient(s) (a restore needs the age identity and the same master_key)"
+  else
+    ok "backup $(basename "$1") in $(abs_dir "$BACKUP_DIR"), NOT encrypted (a restore needs the same master_key)"
+  fi
+}
+
+# cactustrade_local prints a cactustrade binary on this machine for encrypt / decrypt:
+# CACTUSTRADE_BIN, else bin/cactustrade (make build); nothing when there is none.
+cactustrade_local() {
+  if [[ -n "${CACTUSTRADE_BIN:-}" ]]; then
+    printf '%s' "$CACTUSTRADE_BIN"
+  elif [[ -x "$ROOT/bin/cactustrade" ]]; then
+    printf '%s' "$ROOT/bin/cactustrade"
+  fi
+}
+
+# backup_encrypt filters stdin to stdout: age-encrypted to BACKUP_RECIPIENTS (by a local
+# cactustrade, the age tool, or cactustrade in the target's image), unchanged without any.
+backup_encrypt() {
+  if [[ ${#BACKUP_RECIPIENTS[@]} -eq 0 ]]; then
+    cat
+    return
+  fi
+  local args=() ageargs=() r bin
+  for r in "${BACKUP_RECIPIENTS[@]}"; do
+    args+=(--recipient "$r")
+    ageargs+=(-r "$r")
+  done
+  bin="$(cactustrade_local)"
+  if [[ -n "$bin" ]]; then
+    "$bin" encrypt "${args[@]}"
+  elif command -v age >/dev/null; then
+    age "${ageargs[@]}"
+  elif [[ "$TARGET" == dockerdesktop || "$TARGET" == podman ]]; then
+    compose run --rm --no-deps -T app encrypt "${args[@]}"
+  else
+    kc -n "$K8S_NAMESPACE" exec -i deploy/cactustrade -- /cactustrade encrypt "${args[@]}"
+  fi
+}
+
+# backup_decrypt filters an age file on stdin to its plaintext with the identity file $1. In
+# a container or pod the identity goes in over stdin, ahead of the file (decrypt --identity -),
+# so the private key is never a file, an argument or an environment variable there.
+backup_decrypt() {
+  local id="$1" bin
+  bin="$(cactustrade_local)"
+  if [[ -n "$bin" ]]; then
+    "$bin" decrypt --identity "$id"
+  elif command -v age >/dev/null; then
+    age -d -i "$id"
+  elif [[ "$TARGET" == dockerdesktop || "$TARGET" == podman ]]; then
+    { grep -v '^[[:space:]]*$' "$id"; echo; cat; } | compose run --rm --no-deps -T app decrypt --identity -
+  else
+    { grep -v '^[[:space:]]*$' "$id"; echo; cat; } | kc -n "$K8S_NAMESPACE" exec -i deploy/cactustrade -- /cactustrade decrypt --identity -
+  fi
+}
+
+# schema_newest prints the newest MariaDB migration of this checkout (what it installs).
+schema_newest() {
+  local f n max=0
+  for f in "$ROOT"/migrations/mariadb/[0-9]*_*.sql; do
+    n="$(basename "$f")"
+    n="${n%%_*}"
+    n=$((10#$n))
+    [[ $n -le $max ]] || max=$n
+  done
+  printf '%s' "$max"
+}
+
+# dump_schema prints the newest goose version recorded in a plain dump (empty: none).
+dump_schema() {
+  # one INSERT (extended, possibly over several lines) of (id,version_id,is_applied,tstamp) rows
+  sed -n '/^INSERT INTO `goose_db_version` VALUES/,/;$/p' "$1" | grep -oE '\([0-9]+,[0-9]+,' | cut -d, -f2 | sort -n | tail -1 || true
+}
+
+# restore (--restore FILE, PLAN 7.6b): check the file (decrypt, decompress, schema), ask,
+# take a backup, stop the app, load (deploy/backup/mariadb-restore.sh), start the app, whose
+# start-up reconciles every account with eToro before any agent or exit loop (PLAN 4.14).
+restore() {
+  [[ -f "$RESTORE_FILE" ]] || die "no such backup file: $RESTORE_FILE"
+  [[ -z "$SSH_HOST" ]] || die "--restore runs where the backup is: copy it (and its identity) to the host and run deploy.sh --restore there (nothing was changed)"
+  local id="${IDENTITY_FILE:-${CACTUSTRADE_BACKUP_IDENTITY_FILE:-}}" newest version answer backup_out rc=0
+  mkdir -p "$BACKUP_DIR"
+  RESTORE_PLAIN="$(umask 077 && mktemp "$BACKUP_DIR/.restore-XXXXXX")"
+  trap 'rm -f "$RESTORE_PLAIN"' EXIT
+  info "checking $(basename "$RESTORE_FILE")"
+  case "$RESTORE_FILE" in
+    *.age)
+      [[ -n "$id" && -f "$id" ]] || die "an encrypted backup needs its age identity: --identity FILE or CACTUSTRADE_BACKUP_IDENTITY_FILE (nothing was changed)"
+      backup_decrypt "$id" <"$RESTORE_FILE" | gzip -dc >"$RESTORE_PLAIN" ||
+        die "the backup does not decrypt with that identity, or it is damaged (nothing was changed)"
+      ;;
+    *.gz) gzip -dc <"$RESTORE_FILE" >"$RESTORE_PLAIN" || die "the backup is damaged (nothing was changed)" ;;
+    *.sql) cat <"$RESTORE_FILE" >"$RESTORE_PLAIN" ;;
+    *) die "a backup is .sql.gz.age, .sql.gz or .sql (nothing was changed)" ;;
+  esac
+  version="$(dump_schema "$RESTORE_PLAIN")"
+  newest="$(schema_newest)"
+  [[ -n "$version" ]] || die "not a cactusTrade dump: it has no schema version (nothing was changed)"
+  [[ "$version" -le "$newest" ]] ||
+    die "the backup has schema $version, newer than this version's $newest: restore it with that cactusTrade version or newer (nothing was changed)"
+  ok "$(basename "$RESTORE_FILE"): a cactusTrade dump with schema ${version} (this version: ${newest}), $(wc -c <"$RESTORE_PLAIN" | tr -d ' ') bytes"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    echo "dry run: --restore would now ask for 'restore', take a backup of the current database, stop the app,"
+    echo "load this dump into ${MARIADB_DATABASE} (the replaced tables kept in ${MARIADB_DATABASE}_prerestore), sign"
+    echo "everyone out, and start the app, which reconciles every account with eToro first."
+    echo "Nothing was stopped or changed."
+    return 0
+  fi
+  if [[ $ASSUME_YES -ne 1 ]]; then
+    [[ -t 0 ]] || die "re-run with --yes to restore non-interactively (nothing was changed)"
+    read -r -p "This REPLACES the ${MARIADB_DATABASE} database (a backup is taken first). Type 'restore' to continue: " answer
+    [[ "$answer" == restore ]] || die "aborted; nothing was changed"
+  fi
+  info "taking a backup of the current database first"
+  backup_out="$(self --backup-now </dev/null 2>&1 | tr -d '\r')" || {
+    echo "$backup_out"
+    die "the backup failed, so nothing was changed"
+  }
+  printf '%s\n' "$backup_out"
+  info "stopping the app"
+  case "$TARGET" in dockerdesktop | podman) docker_stop_app ;; *) k8s_stop_app ;; esac
+  info "restoring"
+  case "$TARGET" in
+    dockerdesktop | podman) docker_restore_load <"$RESTORE_PLAIN" || rc=$? ;;
+    *) k8s_restore_load <"$RESTORE_PLAIN" || rc=$? ;;
+  esac
+  [[ $rc -eq 0 ]] || warn "the restore failed (exit $rc) and left the database as it was; starting the app again"
+  info "starting the app (it reconciles every account with eToro before any agent or exit loop)"
+  case "$TARGET" in
+    dockerdesktop | podman) docker_start_app || die "the app did not become healthy after the restore" ;;
+    *) k8s_start_app ;;
+  esac
+  [[ $rc -eq 0 ]] || die "nothing was restored"
+  ok "restored $(basename "$RESTORE_FILE") (schema ${version}); everyone signs in again"
 }
 
 # ---------------------------------------------------------------------------------------
@@ -349,7 +539,7 @@ docker_delete_uninstall() {
   for d in "$MARIADB_DATA_DIR" "$DATA_DIR" "$BACKUP_DIR"; do
     if [[ -d "$d" ]]; then
       # Files are owned by container users; delete them from inside a container.
-      "$DOCKER" run --rm -v "$(cd "$d" && pwd):/target" busybox:1.37 sh -c 'rm -rf /target/* /target/.[!.]* 2>/dev/null; true'
+      "$DOCKER" run --rm -v "$(cd "$d" && pwd):/target" busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec sh -c 'rm -rf /target/* /target/.[!.]* 2>/dev/null; true'
       rmdir "$d" 2>/dev/null || true
     fi
   done
@@ -371,16 +561,33 @@ docker_migrate_down_to() {
   compose run --rm --no-deps -T app migrate down-to "$DOWN_TO" </dev/null
 }
 
-DUMP_SQL='MYSQL_PWD="$(cat /run/secrets/db_root_password)" exec mariadb-dump -uroot --single-transaction --routines --triggers'
-
-backup_file() { printf '%s/cactustrade-%s.sql.gz' "$BACKUP_DIR" "$(date -u +%Y%m%dT%H%M%SZ)"; }
-
 docker_backup_now() {
   docker_preflight
+  backup_recipients
   mkdir -p "$BACKUP_DIR"
   local f; f="$(backup_file)"
-  (umask 077 && compose exec -T mariadb sh -c "$DUMP_SQL $MARIADB_DATABASE" </dev/null | gzip >"$f") || { rm -f "$f"; die "the backup failed"; }
-  ok "backup $(basename "$f") in $(abs_dir "$BACKUP_DIR") (restore needs the same master_key)"
+  (umask 077 && compose exec -T mariadb sh -c "$(cat "$ROOT/deploy/backup/mariadb-dump.sh")" dump "$MARIADB_DATABASE" </dev/null |
+    gzip | backup_encrypt >"$f") || { rm -f "$f"; die "the backup failed"; }
+  backup_done "$f"
+}
+
+docker_stop_app() { compose stop app </dev/null; }
+
+docker_restore_load() {
+  compose exec -T mariadb sh -c "$(cat "$ROOT/deploy/backup/mariadb-restore.sh")" restore "$MARIADB_DATABASE" "$(schema_newest)"
+}
+
+docker_start_app() {
+  compose up -d app </dev/null
+  local id state
+  for _ in $(seq 1 90); do
+    id="$(compose ps -q app 2>/dev/null || true)"
+    state="$("$DOCKER" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id" 2>/dev/null || true)"
+    [[ "$state" == healthy ]] && return 0
+    sleep 2
+  done
+  compose logs --tail 50 app
+  return 1
 }
 
 # ---------------------------------------------------------------------------------------
@@ -635,10 +842,26 @@ k8s_version() {
 k8s_migrate_down_to() { kc -n "$K8S_NAMESPACE" exec deploy/cactustrade -- /cactustrade migrate down-to "$DOWN_TO" </dev/null; }
 
 k8s_backup_now() {
+  backup_recipients
   mkdir -p "$BACKUP_DIR"
   local f; f="$(backup_file)"
-  (umask 077 && kc -n "$K8S_NAMESPACE" exec -i deploy/mariadb -- sh -c "$DUMP_SQL $MARIADB_DATABASE" </dev/null | gzip >"$f") || { rm -f "$f"; die "the backup failed"; }
-  ok "backup $(basename "$f") in $(abs_dir "$BACKUP_DIR") on this machine (restore needs the same master_key)"
+  (umask 077 && kc -n "$K8S_NAMESPACE" exec -i deploy/mariadb -- sh -c "$(cat "$ROOT/deploy/backup/mariadb-dump.sh")" dump "$MARIADB_DATABASE" </dev/null |
+    gzip | backup_encrypt >"$f") || { rm -f "$f"; die "the backup failed"; }
+  backup_done "$f"
+}
+
+k8s_stop_app() {
+  kc -n "$K8S_NAMESPACE" scale deploy/cactustrade --replicas=0 </dev/null >/dev/null
+  kc -n "$K8S_NAMESPACE" wait --for=delete pod -l app.kubernetes.io/name=cactustrade --timeout=120s </dev/null >/dev/null 2>&1 || true
+}
+
+k8s_restore_load() {
+  kc -n "$K8S_NAMESPACE" exec -i deploy/mariadb -- sh -c "$(cat "$ROOT/deploy/backup/mariadb-restore.sh")" restore "$MARIADB_DATABASE" "$(schema_newest)"
+}
+
+k8s_start_app() {
+  kc -n "$K8S_NAMESPACE" scale deploy/cactustrade --replicas=1 </dev/null >/dev/null
+  rollout cactustrade
 }
 
 # ---------------------------------------------------------------------------------------
@@ -664,13 +887,14 @@ remote_docker() {
 # ---------------------------------------------------------------------------------------
 main() {
   if [[ "$TARGET" == dockerdesktop || "$TARGET" == podman ]]; then
-    if [[ -n "$SSH_HOST" ]]; then remote_docker; return; fi
+    if [[ -n "$SSH_HOST" && "$ACTION" != restore ]]; then remote_docker; return; fi
     case "$ACTION" in
       install) docker_install ;;
       uninstall) docker_uninstall ;;
       delete-uninstall) docker_delete_uninstall ;;
       status) docker_status ;;
       backup-now) docker_backup_now ;;
+      restore) [[ $DRY_RUN -eq 1 ]] || docker_preflight; restore ;;
       version) docker_version ;;
       migrate-down-to) docker_migrate_down_to ;;
       check-data) docker_preflight; docker_data_guard ;;
@@ -684,6 +908,7 @@ main() {
       delete-uninstall) k8s_delete_uninstall ;;
       status) k8s_status ;;
       backup-now) k8s_backup_now ;;
+      restore) restore ;;
       version) k8s_version ;;
       migrate-down-to) k8s_migrate_down_to ;;
       check-data) : ;;

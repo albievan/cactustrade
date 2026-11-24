@@ -262,11 +262,11 @@ describe("Dashboard", () => {
       expect(FakeEventSource.all).toHaveLength(i + 2);
     }
     act(() => FakeEventSource.latest().fail()); // 7th: 64 s would be next, capped at 30 s
-    // shouldAdvanceTime lets real time move the fake clock too, so the check before the
-    // retry keeps a 1 s margin (a 1 ms one flaked under load); 30 s vs 64 s stays exact.
+    // 1 s of slack on each side: shouldAdvanceTime also moves the fake clock with real time,
+    // so a 1 ms margin failed on a busy machine. 29 s → not yet; 31 s → retried (not 64 s).
     await advance(29_000);
     expect(FakeEventSource.all).toHaveLength(7);
-    await advance(1_000);
+    await advance(2_000);
     expect(FakeEventSource.all).toHaveLength(8);
   });
 

@@ -17,3 +17,13 @@ pod speaks HTTP.
 **Consequences.** `--backup-now` writes a gzip'd `mariadb-dump` (mode 600). It contains
 ciphertext and password hashes, never plaintext credentials. Encrypted app-level backups and
 `--restore` come in phase 7.
+
+**Update (PLAN 7.6, 2026-11-24).** Backups are age-encrypted (OD29): `--backup-now` writes
+`mariadb-dump | gzip | age` to `CACTUSTRADE_BACKUP_RECIPIENT` (`.sql.gz.age`), and keeps the
+plain gzip with a warning while no recipient is set. `--restore FILE` checks the file first
+(decrypts, decompresses, schema not newer than this version; `--dry-run` stops there), asks
+for `restore`, takes a backup, stops the app, loads the dump into a scratch database and swaps
+it in with one `RENAME TABLE` (the replaced tables stay in `<db>_prerestore`), and starts the
+app, which reconciles with eToro before anything else. The standalone binary has
+`cactustrade backup` / `restore` (SQLite `VACUUM INTO`, age; refused while a server uses the
+data folder). The master key is never in a backup. Images are pinned by digest (7.1.17).

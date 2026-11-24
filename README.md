@@ -94,6 +94,7 @@ On first start, the data folder (`./data`) gets:
 | `cactustrade.db` | The SQLite database |
 | `master.key` | The AES-256 key that encrypts your eToro/LLM keys. **Back it up off the machine.** |
 | `tls/` | A self-signed certificate. Set `CACTUSTRADE_TLS_CERT` / `CACTUSTRADE_TLS_KEY` to use your own. |
+| `locks/` | A lock file while the server runs (a restore refuses then), removed when it stops. |
 
 Open the page (`http://` is redirected to `https://`), accept the certificate warning, and sign
 in as **`admin` / `admin`**. You must choose a new password (12+ characters) before anything
@@ -114,6 +115,7 @@ as `admin` / `admin` and choose a new password. Other actions:
 
 ```
 ./deploy.sh --version|--status|--backup-now|--upgrade [--to REF]|--uninstall|--delete-uninstall  --<target>
+./deploy.sh --restore FILE [--identity FILE] [--dry-run]  --<target>
 ```
 
 `.env` holds non-secret defaults. Put per-machine overrides in `.env.local`, for example
@@ -123,6 +125,58 @@ then `ClusterIP`, reachable only through the ingress. `K8S_HTTPS=false` publishe
 `K8S_NODE_PORT` of every node instead (a trusted lab network only; `deploy.sh` warns).
 `./deploy.sh --render --k3s` prints the manifest `--install` would apply, without touching a
 cluster.
+
+## Backups and restore
+
+Backups are encrypted with [age](https://age-encryption.org) to a public key you choose; the
+private key (the *identity*) belongs off this machine. A backup never contains the master key:
+keep a copy of `master.key` / `SECRETS_DIR/master_key` apart as well, or the stored eToro and
+LLM keys cannot be read after a restore. Create a key pair once, with the `age-keygen` tool
+or any age implementation, and keep the identity file safe:
+
+```sh
+age-keygen -o backup.agekey     # prints "Public key: age1…"
+```
+
+**Standalone (SQLite).** The server may keep running while you back up:
+
+```sh
+CACTUSTRADE_BACKUP_RECIPIENT=age1… ./bin/cactustrade backup --out cactustrade-2026-11-24.db.age
+```
+
+Without a recipient nothing is written. To restore, stop the server first (a restore refuses
+while one uses the data folder or holds an account lease), then:
+
+```sh
+./bin/cactustrade restore --in cactustrade-2026-11-24.db.age --identity backup.agekey --yes
+```
+
+The file must decrypt with the identity, be a cactusTrade database that passes SQLite's
+integrity check, and have a schema this version knows (an older one is migrated up). The
+replaced database stays beside it as `cactustrade.db.pre-restore-<time>`. Everyone signs in
+again, and on the next start cactusTrade reconciles every account with eToro before any agent
+or exit loop runs.
+
+**Containers (MariaDB).** Put the public key in `.env.local` as
+`CACTUSTRADE_BACKUP_RECIPIENT=age1…` (or a recipients file in
+`CACTUSTRADE_BACKUP_RECIPIENT_FILE`). `./deploy.sh --backup-now --<target>` then writes
+`BACKUP_DIR/cactustrade-<time>.sql.gz.age`; without a recipient it writes a plain
+`.sql.gz` (mode 600) and warns. `--upgrade` takes one first.
+
+```sh
+./deploy.sh --restore backups/cactustrade-20261124T120000Z.sql.gz.age --identity backup.agekey --dry-run --dockerdesktop
+./deploy.sh --restore backups/cactustrade-20261124T120000Z.sql.gz.age --identity backup.agekey --dockerdesktop
+```
+
+`--dry-run` only checks that the file decrypts, decompresses and is a cactusTrade dump this
+version can restore. Without it, `--restore` asks you to type `restore`, takes a backup of the
+current database, stops the app, waits for any account lease to expire, loads the dump into a
+scratch database, checks its schema and swaps it in (the replaced tables stay in
+`<database>_prerestore` until the next restore), signs everyone out and starts the app, which
+reconciles with eToro first. Decryption uses `bin/cactustrade` or `age` on this machine when
+present, else the app's own image; the identity is passed over stdin, never as a file,
+argument or variable inside a container. With `--ssh-access`, copy the backup to the host and
+run `--restore` there.
 
 ## eToro API keys
 
@@ -216,6 +270,8 @@ account currency is shown as *unknown*, never converted or guessed.
 | `CACTUSTRADE_PUBLIC_URL` | Docker: `https://<LAN address>:${HTTPS_PORT}` | The address in e-mailed links and Saxo's sign-in redirect; empty = no password reset by e-mail and no "Connect to Saxo" |
 | `CACTUSTRADE_SMTP_HOST`, `_PORT`, `_TLS`, `_USER`, `_FROM` | Docker: `mailpit`, `1025`, `none` | The fallback mail server, used while none is switched on under *Setup → E-mail*; empty host = none |
 | `CACTUSTRADE_SMTP_PASSWORD` / `_FILE` | `${SECRETS_DIR}/smtp_password` | Its password (never in `.env`) |
+| `CACTUSTRADE_BACKUP_RECIPIENT` / `_RECIPIENT_FILE` | — | age public key(s) backups are encrypted to (see *Backups and restore*); none = no app backup, and a plain gzip with a warning from `deploy.sh` |
+| `CACTUSTRADE_BACKUP_IDENTITY_FILE` | — | The age identity (private key) a restore decrypts with, instead of `--identity` |
 | `COMPOSE_PROFILES`, `MAILPIT_PORT` | `mailpit`, `8035` | Docker: the Mailpit test mailbox at `http://localhost:8035` (this machine only, no sign-in) |
 
 ### E-mail

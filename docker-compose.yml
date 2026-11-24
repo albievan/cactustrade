@@ -3,7 +3,7 @@
 name: cactustrade
 services:
   mariadb:
-    image: mariadb:11
+    image: mariadb:11@sha256:e1d5495f445654134f226f55a41ce0da227116f6f27f283101f405c794d841fc
     restart: unless-stopped
     environment:
       TZ: ${TZ}
@@ -22,7 +22,7 @@ services:
 
   # The app runs as uid 65532; make the mapped data folder writable for it, and only for it.
   volume-init:
-    image: busybox:1.37
+    image: busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
     command: ["sh", "-c", "chown -R 65532:65532 /data && chmod 700 /data"]
     volumes:
       - ${DATA_DIR}:/data
@@ -78,7 +78,7 @@ services:
   # Test mailbox (COMPOSE_PROFILES=mailpit): catches every e-mail the app sends and shows it
   # at http://localhost:${MAILPIT_PORT}. No sign-in, so it listens on this machine only.
   mailpit:
-    image: axllent/mailpit:v1.21
+    image: axllent/mailpit:v1.21@sha256:81370195cd4a0eab9604d17c2617a7525b0486f9365555253b6c5376c6350f1a
     profiles: [mailpit]
     restart: unless-stopped
     read_only: true

@@ -6,6 +6,9 @@
 //	cactustrade healthcheck         exit 0 when the local server is healthy (containers)
 //	cactustrade migrate status|up|down-to N
 //	cactustrade backtest --instrument ID   walk-forward backtest on eToro candles (read-only)
+//	cactustrade backup --out FILE           encrypted standalone backup (age; PLAN 7.6a)
+//	cactustrade restore --in FILE --yes     restore a standalone backup (server stopped)
+//	cactustrade encrypt | decrypt           age filter for deploy.sh's MariaDB dumps (7.6b)
 package main
 
 import (
@@ -82,6 +85,14 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return migrate(ctx, args, getenv, out)
 	case "backtest":
 		return backtestCmd(ctx, args, getenv, out)
+	case "backup":
+		return backupCmd(ctx, args, getenv, out, time.Now)
+	case "restore":
+		return restoreCmd(ctx, args, getenv, out, time.Now)
+	case "encrypt":
+		return encryptCmd(args, getenv, os.Stdin, out)
+	case "decrypt":
+		return decryptCmd(args, getenv, os.Stdin, out)
 	case "serve":
 		cfg, err := loadConfig(args, getenv)
 		if err != nil {
@@ -95,7 +106,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		}
 		return err
 	}
-	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest)", cmd)
+	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest, backup, restore, encrypt, decrypt)", cmd)
 }
 
 // newLogger writes JSON lines to stdout; every line logged with a context names the account
@@ -159,6 +170,14 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 			log.Info("generated the /metrics bearer token (CACTUSTRADE_METRICS_TOKEN unset)", "file", f)
 		}
 		cfg.MetricsToken = tok
+	}
+	if cfg.DBDriver == sqlstore.DriverSQLite {
+		// A restore never replaces the database under a running server (PLAN 7.6a).
+		lk, err := lockServe(cfg.DataDir, time.Now)
+		if err != nil {
+			return err
+		}
+		defer lk.release()
 	}
 	store, err := openStore(ctx, cfg)
 	if err != nil {
