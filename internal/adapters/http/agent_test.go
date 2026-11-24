@@ -55,6 +55,7 @@ func newAgentTCWith(t *testing.T, edit func(*app.Deps)) *agentTC {
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetAgentLoop(true) // as after a clean start-up (6.13)
 	srv := httptest.NewTLSServer(New(svc, slog.New(slog.DiscardHandler), Config{CookieSecure: true, OpenAPI: []byte("openapi: 3.0.3\n")}, nil))
 	t.Cleanup(srv.Close)
 	c := srv.Client()

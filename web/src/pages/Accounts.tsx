@@ -6,6 +6,7 @@ import {
 import { useSession } from "../lib/session";
 import { useRefreshMode } from "../lib/mode";
 import { ProblemAlert } from "../components/ProblemAlert";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 // Each user's trading platform accounts (eToro, and the view-only Trading 212, Saxo and Tiger
 // Brokers) and the ones shared with them, as a grid of cards. Every credential field comes
@@ -254,6 +255,7 @@ function AccountCard({ a, spec, onChange, openKeys }: { a: Account; spec?: Platf
   const [msg, setMsg] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (openKeys) cardRef.current?.scrollIntoView?.({ block: "center" }); }, [openKeys]);
   const loadDetails = useCallback(() => {
@@ -296,7 +298,7 @@ function AccountCard({ a, spec, onChange, openKeys }: { a: Account; spec?: Platf
               aria-label={`Share ${a.name}`} aria-pressed={panel === "share"} onClick={() => toggle("share")}>
               <i className="bi bi-people" /></button>
             <button className="btn btn-outline-danger" disabled={busy} title="Delete" aria-label={`Delete ${a.name}`}
-              onClick={() => { if (window.confirm(`Delete ${a.name}, its keys, shares${vo ? "" : " and watchlist"}?`)) void run(async () => { await api.deleteAccount(a.id); onChange(); }); }}>
+              onClick={() => setDeleting(true)}>
               <i className="bi bi-trash" /></button>
           </div>
         )}
@@ -364,6 +366,13 @@ function AccountCard({ a, spec, onChange, openKeys }: { a: Account; spec?: Platf
           )}
         </div>
       </div></div>
+      {deleting && (
+        <ConfirmDialog title={`Delete ${a.name}?`} confirmLabel="Delete" busyLabel="Deleting…" icon="trash" busy={busy}
+          onCancel={() => setDeleting(false)}
+          onConfirm={async () => { await run(async () => { await api.deleteAccount(a.id); onChange(); }); setDeleting(false); }}>
+          <p className="mb-0">Its keys, shares{vo ? "" : " and watchlist"} are deleted with it. This cannot be undone.</p>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

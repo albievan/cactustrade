@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -103,6 +104,9 @@ type Service struct {
 	evalOverride func(domain.InstrumentID, []domain.Candle) strategy.Decision
 	// rt is the in-memory execution state: reconciliation flags, supervisor bookkeeping.
 	rt *runtimeState
+	// loop is whether this process's agent loop runs (PLAN 6.13; loopStarting until
+	// SetAgentLoop is called): no agent may be started while it does not.
+	loop atomic.Int32
 }
 
 // New builds the service.

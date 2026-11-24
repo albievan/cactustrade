@@ -58,6 +58,9 @@ func (s *Service) StartAgent(ctx context.Context, p Principal, accountID string)
 	locks := s.rt.agent(v.ID)
 	locks.ctl.Lock()
 	defer locks.ctl.Unlock()
+	if why := s.agentLoopBlocked(); why != "" {
+		return AgentStatus{}, fmt.Errorf("app.StartAgent: %s: %w", why, domain.ErrUnavailable)
+	}
 	if err := s.startable(ctx, v.Account); err != nil {
 		return AgentStatus{}, fmt.Errorf("app.StartAgent: %w", s.fixable(p, v, err))
 	}
@@ -73,6 +76,46 @@ func (s *Service) StartAgent(ctx context.Context, p Principal, accountID string)
 	s.emitFor(ctx, v.ID, p.Username, "agent.started", domain.SeverityInfo, "Agent started on "+v.Name,
 		"trading budget $"+l.TradingBudget.String()+"; entries at each 5-minute bar close")
 	return AgentStatus{AccountID: v.ID, State: domain.AgentRunning}, nil
+}
+
+// The states of the agent loop as SetAgentLoop records them (PLAN 6.13).
+const (
+	loopStarting int32 = iota // start-up has not decided yet (the zero value)
+	loopRunning
+	loopDown
+)
+
+// The reasons no agent can be started while the agent loop does not run (PLAN 6.13).
+const (
+	msgLoopStarting = "cactusTrade is still starting up (reconciling with eToro); try again in a minute"
+	msgLoopDown     = "the agent loop is not running: start-up resume failed; restart cactusTrade"
+)
+
+// SetAgentLoop records whether this process's agent loop (the entries) runs. The composition
+// root calls it once start-up has decided: true just before the loop starts, false when the
+// OD5 resume failed and the loop stays off. Until then, and while it is false, StartAgent is
+// refused with domain.ErrUnavailable and the panel says why (fail closed: an agent marked
+// running without a loop would look active, never trade, and resume by itself on the next
+// start).
+func (s *Service) SetAgentLoop(running bool) {
+	if running {
+		s.loop.Store(loopRunning)
+		return
+	}
+	s.loop.Store(loopDown)
+}
+
+// agentLoopBlocked says why no agent can be started now ("" = the agent loop runs). It is
+// not part of startable, because the OD5 resume runs before the loop starts.
+func (s *Service) agentLoopBlocked() string {
+	switch s.loop.Load() {
+	case loopRunning:
+		return ""
+	case loopStarting:
+		return msgLoopStarting
+	default:
+		return msgLoopDown
+	}
 }
 
 // The messages of the "missing setup" refusals (R22), for people: no field names.
@@ -250,17 +293,14 @@ func (s *Service) ResetKill(ctx context.Context, p Principal, accountID, confirm
 	if strings.TrimSpace(confirm) != ResetPhrase(v.Name) {
 		return AgentStatus{}, domain.Invalid("confirm", fmt.Sprintf("type %q to confirm", ResetPhrase(v.Name)))
 	}
-	locks := s.rt.agent(v.ID)
-	locks.ctl.Lock()
-	defer locks.ctl.Unlock()
-	if killed, err := s.isKilled(ctx, v.ID); err != nil {
-		return AgentStatus{}, fmt.Errorf("app.ResetKill: reading the kill switch: %w", err)
-	} else if !killed {
-		return AgentStatus{}, fmt.Errorf("the kill switch is not on: %w", domain.ErrConflict)
+	if err := s.resetKillable(ctx, v.ID); err != nil {
+		return AgentStatus{}, err
 	}
 	if err := s.needBroker(); err != nil {
 		return AgentStatus{}, err
 	}
+	// eToro's equity is read before the control lock is taken (PLAN 6.13, as review m5 did
+	// for SetRiskLimits): a Kill never waits for this call.
 	pf, err := s.d.Broker.Portfolio(brokerCtx(ctx, v))
 	if err != nil {
 		return AgentStatus{}, fmt.Errorf("app.ResetKill: reading the equity for the new high-water mark: %w", err)
@@ -268,6 +308,13 @@ func (s *Service) ResetKill(ctx context.Context, p Principal, accountID, confirm
 	eq := pf.Equity()
 	if eq <= 0 {
 		return AgentStatus{}, fmt.Errorf("app.ResetKill: the account has no equity: %w", domain.ErrConflict)
+	}
+	locks := s.rt.agent(v.ID)
+	locks.ctl.Lock()
+	defer locks.ctl.Unlock()
+	// Checked again under the lock: a concurrent reset may have finished meanwhile.
+	if err := s.resetKillable(ctx, v.ID); err != nil {
+		return AgentStatus{}, err
 	}
 	old, err := s.clearKill(ctx, v.ID, eq)
 	if err != nil {
@@ -281,6 +328,18 @@ func (s *Service) ResetKill(ctx context.Context, p Principal, accountID, confirm
 	s.emitFor(ctx, v.ID, p.Username, "agent.kill_reset", domain.SeverityWarning, "Kill switch reset on "+v.Name,
 		fmt.Sprintf("high-water mark set to the current equity $%s; the agent is stopped until someone starts it", eq))
 	return AgentStatus{AccountID: v.ID, State: domain.AgentStopped}, nil
+}
+
+// resetKillable refuses a reset unless the account's kill switch is on.
+func (s *Service) resetKillable(ctx context.Context, accountID string) error {
+	killed, err := s.isKilled(ctx, accountID)
+	switch {
+	case err != nil:
+		return fmt.Errorf("app.ResetKill: reading the kill switch: %w", err)
+	case !killed:
+		return fmt.Errorf("the kill switch is not on: %w", domain.ErrConflict)
+	}
+	return nil
 }
 
 // clearKill stores the risk state without the kill and with the high-water mark at equity

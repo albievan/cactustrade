@@ -29,6 +29,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetAgentLoop(true) // as after a clean start-up (6.13); TestStartWithoutLoop covers the rest
 	e := &env{svc: svc, store: st, clock: clk, sec: sec}
 	ctx := context.Background()
 	if created, err := svc.EnsureDefaultAdmin(ctx); err != nil || !created {

@@ -866,12 +866,17 @@ paths:
       tags: [risk]
       operationId: getRiskLimits
       summary: The risk limits (viewer)
+      description: |
+        The current account's limits, and whether the caller may change them now (`canEdit`,
+        decided by the same rules as the PUT: the account's owner, in a web session, with the
+        agent stopped and the kill switch off). When not, `editBlockedReason` says why. The
+        UI only shows these.
       responses:
         "200":
           description: Limits
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/RiskLimits" }
+              schema: { $ref: "#/components/schemas/RiskLimitsView" }
         "401": { $ref: "#/components/responses/Problem" }
     put:
       tags: [risk]
@@ -1771,6 +1776,15 @@ components:
         maxPortfolioAgeSeconds: { type: integer }
         maxQuoteAgeSeconds: { type: integer }
         maxShortBp: { type: integer, description: "all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %)" }
+    RiskLimitsView:
+      description: The limits as GET returns them, with whether the caller may change them now (not part of the PUT body)
+      allOf:
+        - $ref: "#/components/schemas/RiskLimits"
+        - type: object
+          required: [canEdit]
+          properties:
+            canEdit: { type: boolean, description: "the caller may change the limits now (same rules as the PUT)" }
+            editBlockedReason: { type: string, description: "why not, for people (absent when canEdit)" }
     LlmProvider:
       type: object
       required: [id, label, defaultBaseUrl, keyRequired, note]
@@ -2179,6 +2193,12 @@ components:
         kill: { type: boolean }
         reset: { type: boolean }
         gated: { type: boolean, description: "a real-money account: real trading needs the phase-7 gate" }
+        startBlockedReason:
+          type: string
+          description: |
+            Why `start` is false although the caller could otherwise start the agent: this
+            process's agent loop is not running (still starting up, or the start-up resume
+            failed and cactusTrade must be restarted). Absent when nothing blocks it.
     BlockedInstrument:
       type: object
       required: [instrumentId, symbol, reason, at]

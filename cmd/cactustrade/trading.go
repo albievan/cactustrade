@@ -16,6 +16,8 @@ type trader interface {
 	ResumeAgents(ctx context.Context) ([]app.ResumeOutcome, error)
 	SuperviseLoop(ctx context.Context)
 	AgentLoop(ctx context.Context)
+	// SetAgentLoop says whether the agent loop runs: StartAgent is refused until it does.
+	SetAgentLoop(running bool)
 	ReleaseLeases(ctx context.Context) error
 }
 
@@ -55,7 +57,8 @@ func leaseHolderID(host string, r ports.Random) string {
 //  3. the supervisor loop (exits, every 10 s, one goroutine per account);
 //  4. the agent loop (entries at each bar close + 5 s), only when step 2 worked: if the
 //     resume could not decide, no agent ticks until the next start (fail closed); exits
-//     still run.
+//     still run. SetAgentLoop records which it was, so StartAgent is refused (with the
+//     reason on the panel) until the loop runs (PLAN 6.13).
 //
 // The returned stop ends the loops, waits for them, and then releases this process's
 // leases so another process can take over at once. Positions are left as they are (OD6:
@@ -82,6 +85,7 @@ func startTrading(parent context.Context, t trader, log *slog.Logger) (stop func
 		}
 		outs, rerr := t.ResumeAgents(ctx)
 		if rerr != nil {
+			t.SetAgentLoop(false) // StartAgent is refused and the panel says why (6.13)
 			log.ErrorContext(ctx, "deciding which agents resume failed: the agent loop stays off until the next start", "err", rerr)
 		}
 		for _, o := range outs {
@@ -92,6 +96,7 @@ func startTrading(parent context.Context, t trader, log *slog.Logger) (stop func
 		}
 		wg.Go(func() { t.SuperviseLoop(ctx) })
 		if rerr == nil {
+			t.SetAgentLoop(true)
 			wg.Go(func() { t.AgentLoop(ctx) })
 		}
 	})

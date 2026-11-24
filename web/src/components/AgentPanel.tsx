@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, errorText, usd, type AgentPanel as Panel, type Missing } from "../lib/api";
 import { useRefreshMode } from "../lib/mode";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { FixButton, fixes } from "./FixButton";
 import { ProblemAlert } from "./ProblemAlert";
 
@@ -72,7 +73,7 @@ export function AgentPanel() {
         <div className="d-flex align-items-start gap-3">
           <div className="d-flex flex-column gap-2 align-self-start">
             <div className="btn-group-vertical btn-group-sm" role="group" aria-label="Agent controls">
-              <button className="btn btn-outline-success" title="Start the agent" aria-label="Start the agent"
+              <button className="btn btn-outline-success" title={c.startBlockedReason ? "Cannot start: " + c.startBlockedReason : "Start the agent"} aria-label="Start the agent"
                 disabled={off || !c.start || killed || p.state === "running"}
                 onClick={() => void act("start", api.startAgent, "The agent is running.")}>
                 <i className="bi bi-play-fill" />
@@ -122,6 +123,11 @@ export function AgentPanel() {
               <div className="alert alert-danger py-2 small mb-2" role="alert">
                 <strong>Kill switch on.</strong> {p.killReason || "No reason recorded."}
                 {p.killedAt && <> ({new Date(p.killedAt).toLocaleString()})</>} An admin must reset it before the agent can start.
+              </div>
+            )}
+            {c.startBlockedReason && (
+              <div className="alert alert-warning py-2 small mb-2" role="status">
+                <i className="bi bi-exclamation-triangle me-1" />The agent cannot be started: {c.startBlockedReason}. Exits and the kill switch still work.
               </div>
             )}
             {p.lease.other && (
@@ -181,11 +187,11 @@ export function AgentPanel() {
       </div>
       {dialog === "kill" && (
         <KillDialog busy={busy === "kill"} onCancel={() => setDialog("")}
-          onConfirm={(reason) => void act("kill", () => api.killAgent(reason), "Kill switch on: entries stopped; cactusTrade's positions are being closed.")} />
+          onConfirm={(reason) => act("kill", () => api.killAgent(reason), "Kill switch on: entries stopped; cactusTrade's positions are being closed.")} />
       )}
       {dialog === "reset" && (
         <ResetDialog phrase={p.resetPhrase} busy={busy === "reset"} onCancel={() => setDialog("")}
-          onConfirm={(phrase) => void act("reset", () => api.resetKill(phrase), "Kill switch reset: the agent is stopped.")} />
+          onConfirm={(phrase) => act("reset", () => api.resetKill(phrase), "Kill switch reset: the agent is stopped.")} />
       )}
     </div>
   );
@@ -200,70 +206,29 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-// Modal is a Bootstrap modal drawn by React (no Bootstrap JavaScript, never window.confirm).
-function Modal({ id, title, children, onCancel }: { id: string; title: string; children: ReactNode; onCancel: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
-  return (
-    <>
-      <div className="modal d-block" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={id}>
-        <div className="modal-dialog modal-dialog-centered">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h2 className="modal-title h5" id={id}>{title}</h2>
-              <button type="button" className="btn-close" aria-label="Close" onClick={onCancel} />
-            </div>
-            {children}
-          </div>
-        </div>
-      </div>
-      <div className="modal-backdrop show" />
-    </>
-  );
-}
-
-function KillDialog({ busy, onCancel, onConfirm }: { busy: boolean; onCancel: () => void; onConfirm: (reason: string) => void }) {
+function KillDialog({ busy, onCancel, onConfirm }: { busy: boolean; onCancel: () => void; onConfirm: (reason: string) => Promise<unknown> }) {
   const [reason, setReason] = useState("");
-  const submit = (e: FormEvent) => { e.preventDefault(); onConfirm(reason); };
   return (
-    <Modal id="kill-title" title="Pull the kill switch?" onCancel={onCancel}>
-      <form onSubmit={submit}>
-        <div className="modal-body">
-          <p>New entries stop at once. cactusTrade cancels its pending orders and closes every position <strong>it</strong> opened;
-            positions opened outside cactusTrade are left alone.</p>
-          <p className="mb-3">Only an admin can reset the kill switch afterwards.</p>
-          <label className="form-label" htmlFor="kill-reason">Reason (optional)</label>
-          <input id="kill-reason" className="form-control" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-        </div>
-        <div className="modal-footer">
-          <button type="button" className="btn btn-outline-secondary" onClick={onCancel}>Cancel</button>
-          <button type="submit" className="btn btn-danger" disabled={busy}><i className="bi bi-x-octagon-fill me-1" />{busy ? "Killing…" : "Kill now"}</button>
-        </div>
-      </form>
-    </Modal>
+    <ConfirmDialog title="Pull the kill switch?" confirmLabel="Kill now" busyLabel="Killing…" icon="x-octagon-fill" busy={busy}
+      onCancel={onCancel} onConfirm={() => onConfirm(reason)}>
+      <p>New entries stop at once. cactusTrade cancels its pending orders and closes every position <strong>it</strong> opened;
+        positions opened outside cactusTrade are left alone.</p>
+      <p className="mb-3">Only an admin can reset the kill switch afterwards.</p>
+      <label className="form-label" htmlFor="kill-reason">Reason (optional)</label>
+      <input id="kill-reason" className="form-control" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+    </ConfirmDialog>
   );
 }
 
-function ResetDialog({ phrase, busy, onCancel, onConfirm }: { phrase: string; busy: boolean; onCancel: () => void; onConfirm: (phrase: string) => void }) {
+function ResetDialog({ phrase, busy, onCancel, onConfirm }: { phrase: string; busy: boolean; onCancel: () => void; onConfirm: (phrase: string) => Promise<unknown> }) {
   const [typed, setTyped] = useState("");
-  const submit = (e: FormEvent) => { e.preventDefault(); onConfirm(typed); };
   return (
-    <Modal id="reset-title" title="Reset the kill switch?" onCancel={onCancel}>
-      <form onSubmit={submit}>
-        <div className="modal-body">
-          <p>The high-water mark becomes the account's equity now and the agent comes back <strong>stopped</strong>.
-            Nobody's positions are touched.</p>
-          <label className="form-label" htmlFor="reset-phrase">Type <code>{phrase}</code> to confirm</label>
-          <input id="reset-phrase" className="form-control" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
-        </div>
-        <div className="modal-footer">
-          <button type="button" className="btn btn-outline-secondary" onClick={onCancel}>Cancel</button>
-          <button type="submit" className="btn btn-danger" disabled={busy || typed.trim() !== phrase}>{busy ? "Resetting…" : "Reset"}</button>
-        </div>
-      </form>
-    </Modal>
+    <ConfirmDialog title="Reset the kill switch?" confirmLabel="Reset" busyLabel="Resetting…" busy={busy}
+      confirmDisabled={typed.trim() !== phrase} onCancel={onCancel} onConfirm={() => onConfirm(typed)}>
+      <p>The high-water mark becomes the account's equity now and the agent comes back <strong>stopped</strong>.
+        Nobody's positions are touched.</p>
+      <label className="form-label" htmlFor="reset-phrase">Type <code>{phrase}</code> to confirm</label>
+      <input id="reset-phrase" className="form-control" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
+    </ConfirmDialog>
   );
 }

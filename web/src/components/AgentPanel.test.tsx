@@ -222,4 +222,14 @@ describe("AgentPanel missing setup (R22)", () => {
     expect(alert).not.toHaveTextContent("tradingBudgetCents");
     expect(screen.getByRole("link", { name: /^Set budget/ })).toHaveAttribute("href", "/risk");
   });
+
+  it("says why the agent cannot start when the server blocks it (6.13), and keeps the kill switch", async () => {
+    const reason = "the agent loop is not running: start-up resume failed; restart cactusTrade";
+    serve(panel({ state: "stopped", controls: { ...all, start: false, startBlockedReason: reason } }));
+    await screen.findByText("stopped");
+    expect(screen.getByLabelText("Start the agent")).toBeDisabled();
+    expect(screen.getByLabelText("Start the agent")).toHaveAttribute("title", "Cannot start: " + reason);
+    expect(screen.getByRole("status")).toHaveTextContent("The agent cannot be started: " + reason);
+    expect(screen.getByLabelText("Kill switch")).toBeEnabled();
+  });
 });

@@ -3,6 +3,7 @@ import { api, errorText, type Industry, type LlmSetup, type Theme, type ThemeInp
 import { useMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { ProblemAlert } from "../components/ProblemAlert";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 const EMPTY: ThemeInput = { name: "", keywords: [], industryId: 0, enabled: true, instruments: [], llmProfileId: "" };
 
@@ -172,6 +173,7 @@ function ThemeForm({ initial, initialShares, id, industries, llm, onSaved, onCan
 
 function ThemeCard({ t, industries, llm, canEdit, onChange }: { t: Theme; industries: Industry[]; llm: LlmSetup | null; canEdit: boolean; onChange: () => void }) {
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const industry = industries.find((i) => i.id === t.industryId)?.name;
   const input: ThemeInput = { name: t.name, keywords: t.keywords, industryId: t.industryId, enabled: t.enabled, instruments: t.instruments, llmProfileId: t.llmProfileId ?? "" };
@@ -182,16 +184,22 @@ function ThemeCard({ t, industries, llm, canEdit, onChange }: { t: Theme; indust
     try { await f(); onChange(); } catch (e) { setError(errorText(e)); }
   }
   return (
-    <div className={"card mb-3" + (t.enabled ? "" : " opacity-75")}><div className="card-body">
+    <div className={"card mb-3" + (t.enabled ? "" : " opacity-75")}><div className="card-body d-flex gap-3">
+      {canEdit && (
+        <div className="btn-group-vertical btn-group-sm align-self-start" role="group" aria-label={`Actions for ${t.name}`}>
+          <button className="btn btn-outline-secondary" title={t.enabled ? "Pause" : "Resume"} aria-label={`${t.enabled ? "Pause" : "Resume"} ${t.name}`}
+            onClick={() => void act(() => api.updateTheme(t.id, { ...input, enabled: !t.enabled }))}>
+            <i className={"bi " + (t.enabled ? "bi-pause-fill" : "bi-play-fill")} /></button>
+          <button className="btn btn-outline-secondary" title="Edit" aria-label={`Edit ${t.name}`} onClick={() => setEditing(true)}>
+            <i className="bi bi-pencil" /></button>
+          <button className="btn btn-outline-danger" title="Delete" aria-label={`Delete ${t.name}`} onClick={() => setDeleting(true)}>
+            <i className="bi bi-trash" /></button>
+        </div>
+      )}
+      <div className="flex-grow-1 min-w-0">
       <div className="d-flex flex-wrap align-items-center gap-2">
         <h2 className="h5 mb-0 me-2">{t.name}</h2>
         {!t.enabled && <span className="badge text-bg-secondary">paused</span>}
-        <span className="ms-auto" />
-        {canEdit && <>
-          <button className="btn btn-sm btn-outline-secondary" onClick={() => void act(() => api.updateTheme(t.id, { ...input, enabled: !t.enabled }))}>{t.enabled ? "Pause" : "Resume"}</button>
-          <button className="btn btn-sm btn-outline-secondary" onClick={() => setEditing(true)}>Edit</button>
-          <button className="btn btn-sm btn-outline-danger" onClick={() => { if (window.confirm(`Delete the theme ${t.name}?`)) void act(() => api.deleteTheme(t.id)); }}>Delete</button>
-        </>}
       </div>
       <div className="small mt-2">
         {t.keywords.length > 0 && <div><span className="text-secondary">Search words:</span> {t.keywords.join(", ")}</div>}
@@ -210,6 +218,13 @@ function ThemeCard({ t, industries, llm, canEdit, onChange }: { t: Theme; indust
         </div>
       )}
       {error && <div className="alert alert-danger mt-2 mb-0 py-2">{error}</div>}
+      </div>
+      {deleting && (
+        <ConfirmDialog title={`Delete the theme ${t.name}?`} confirmLabel="Delete" busyLabel="Deleting…" icon="trash"
+          onCancel={() => setDeleting(false)} onConfirm={async () => { await act(() => api.deleteTheme(t.id)); setDeleting(false); }}>
+          <p className="mb-0">The scanner no longer looks for shares through it.</p>
+        </ConfirmDialog>
+      )}
     </div></div>
   );
 }

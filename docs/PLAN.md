@@ -857,9 +857,9 @@ Each is the **default until the owner answers**. OD14–OD18 shape phase 6; OD19
 | 6.10 | **Wiring.** `eventbus.New()` into `app.Deps.Bus` (dropped count as a metric); `historyLoop` (every 15 min, 2 min after start, read-only, may run before `ReconcileAll`); the `trades` sync covers real accounts read-only. | `cmd/cactustrade/{main.go,trading.go,main_test.go}` | `go test ./cmd/cactustrade`: the 4.14 ordering hook still sees `ReconcileAll` before the first `Supervise`; history sync is read-only (SimBroker `Opens == 0`, no close or cancel); `make build`. | todo |
 | 6.11 | **Web: live dashboard.** `useLive(accountId)`: `EventSource`; backoff 1 s … 30 s; after 3 failures, polling every 15 s; the stream closes after 60 s hidden. The Dashboard shows equity, cash, budget used / remaining, day P&L, positions (ours / not ours, stop, flatten time), an orders and fills feed, regimes per share, agent state and limit distances as bars (all from the server; no arithmetic in React beyond formatting). `AgentPanel` reads the stream instead of its 15 s poll. A "stale" badge appears after 30 s without a snapshot. | `web/src/lib/live.ts`, `web/src/pages/Dashboard.tsx`, `components/{AgentPanel.tsx,LiveCards.tsx}`, tests | `pnpm -C web check`. Vitest with a fake `EventSource`: snapshot renders; an `order` event updates the feed; `resync` refetches; stale badge; fallback polling after 3 errors; kill button still enabled while the stream is down. | todo |
 | 6.12 | **Web: History page** (under Trading, after Decision log). Neutral summary cards (trades, wins / losses / breakeven, win rate, fees, realised P&L, max drawdown), daily P&L table + inline-SVG bars, equity curve with drawdown shading (reuse `EquityChart`), trades table (ours / all, date range, paging), CSV buttons, and a fixed note "Figures describe past results only; they do not predict future results." | `web/src/pages/{History.tsx,History.test.tsx}`, `components/{Layout.tsx,EquityChart.tsx}`, `lib/api.ts` | `pnpm -C web check`. Vitest: empty history shows "no closed trades" (no 0 % win rate); unknown fees show "unknown"; export links carry `accountId` and the range. | todo |
-| 6.13 | **MINORs 2 and 3 (app).** (2) `Service.SetAgentLoop(running bool)`, set by `startTrading`. While it is false, `startable` refuses with `ErrUnavailable` ("the agent loop is not running: start-up resume failed; restart cactusTrade") and `controls.start` is false with that reason (`AgentView.StartBlocked`). (3) `ResetKill` reads equity **before** the control lock and checks the kill again inside it (as m5). | `internal/app/{agent_control.go,agent_view.go}`, `cmd/cactustrade/trading.go`, tests; `api/openapi` (`AgentControls.startBlockedReason`), `handlers_agent.go` | `go test -race ./internal/app -run 'StartWithoutLoop\|ResetKillDoesNotDelayAKill'`, `go test ./cmd/cactustrade` (a failed resume → Start refused), `make gen`, drift green. | todo |
-| 6.14 | **MINOR 4: `canEdit` from the server.** `GET /risk/limits` returns `canEdit` and `editBlockedReason` from the same rules as `SetRiskLimits` (permission, session, `limitsChangeable`). `RiskLimits.tsx` only shows them. | `api/openapi/cactustrade.yaml`, `internal/app/risk.go`, `handlers*.go`, `web/src/pages/RiskLimits.tsx` + tests | `make gen && go test ./internal/app -run RiskLimitsView && pnpm -C web check`. Vitest: the form is disabled with the server's reason; no role check left in `RiskLimits.tsx`. | todo |
-| 6.15 | **MINOR 5: no `window.confirm`.** Extract `AgentPanel`'s modal into `ConfirmDialog` and use it in System, ApiKeys, Themes, Users and Accounts. ESLint `no-restricted-properties` bans `window.confirm`, `alert` and `prompt`. | `web/src/components/{ConfirmDialog.tsx,AgentPanel.tsx}`, `web/src/pages/{System,ApiKeys,Themes,Users,Accounts}.tsx` + tests, `web/eslint.config.*` | `pnpm -C web check`. A planted `window.confirm` fails lint. Vitest per page: cancel does nothing, confirm calls the API once. | todo |
+| 6.13 | **MINORs 2 and 3 (app).** (2) `Service.SetAgentLoop(running bool)`, set by `startTrading`. While it is false, `startable` refuses with `ErrUnavailable` ("the agent loop is not running: start-up resume failed; restart cactusTrade") and `controls.start` is false with that reason (`AgentView.StartBlocked`). (3) `ResetKill` reads equity **before** the control lock and checks the kill again inside it (as m5). | `internal/app/{agent_control.go,agent_view.go}`, `cmd/cactustrade/trading.go`, tests; `api/openapi` (`AgentControls.startBlockedReason`), `handlers_agent.go` | `go test -race ./internal/app -run 'StartWithoutLoop\|ResetKillDoesNotDelayAKill'`, `go test ./cmd/cactustrade` (a failed resume → Start refused), `make gen`, drift green. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
+| 6.14 | **MINOR 4: `canEdit` from the server.** `GET /risk/limits` returns `canEdit` and `editBlockedReason` from the same rules as `SetRiskLimits` (permission, session, `limitsChangeable`). `RiskLimits.tsx` only shows them. | `api/openapi/cactustrade.yaml`, `internal/app/risk.go`, `handlers*.go`, `web/src/pages/RiskLimits.tsx` + tests | `make gen && go test ./internal/app -run RiskLimitsView && pnpm -C web check`. Vitest: the form is disabled with the server's reason; no role check left in `RiskLimits.tsx`. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
+| 6.15 | **MINOR 5: no `window.confirm`.** Extract `AgentPanel`'s modal into `ConfirmDialog` and use it in System, ApiKeys, Themes, Users and Accounts. ESLint `no-restricted-properties` bans `window.confirm`, `alert` and `prompt`. | `web/src/components/{ConfirmDialog.tsx,AgentPanel.tsx}`, `web/src/pages/{System,ApiKeys,Themes,Users,Accounts}.tsx` + tests, `web/eslint.config.*` | `pnpm -C web check`. A planted `window.confirm` fails lint. Vitest per page: cancel does nothing, confirm calls the API once. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.16 | **Wording guard and docs.** `TestNoProfitabilityClaims` scans `web/src`, `README.md`, `docs/`, `api/openapi` for a banned-phrase list (profitable, guaranteed, beat the market, make money, winning strategy, "returns of"…). Allowed lines are listed in the test with a reason (e.g. this rule itself). ARCHITECTURE "Live view and history (phase 6)"; `docs/etoro-api.md` corrected (resends per M3; position cap 8 default / 15 hard; trade-history fields); README. | `internal/docs_test.go` (or `cmd/cactustrade/docs_test.go`), docs | `make check`. A planted "profitable strategy" in a page fails. | todo |
 | 6.17 | **Phase verification and owner review.** `make check` green (coverage domain/app ≥ 80 %, MariaDB `test-int` incl. `trades`); smoke: dashboard live for 35 min across a stream lifetime, CSV opens in a spreadsheet without formulas, kill works while streams are open. Stop for the owner. | PLAN | `make check` | todo |
 
@@ -946,6 +946,73 @@ Verification (2026-11-24): `make check` green — gofumpt, golangci-lint 0 issue
 `go test -race` with coverage domain 99.8 % / app 88.7 %, MariaDB `test-int` (incl. `trades`,
 `trades_cascade`, migrations up→down→up), govulncheck (no vulnerabilities), contracts in sync,
 `pnpm -C web check`. `internal/adapters/etoro` coverage 95.2 %.
+
+### Steps 6.13–6.15: decisions (2026-11-24)
+
+The pre-deploy review's MINORs 2–5. No new dependency, no migration, no eToro path, no
+change to an order path or a guardrail; contract changes are additive (an optional
+`AgentControls.startBlockedReason`; GET /risk/limits answers `RiskLimitsView`, i.e. the
+same limits plus `canEdit` and an optional `editBlockedReason`).
+
+- **6.13-a The loop flag has three states, not two.** `Service.SetAgentLoop(running bool)`
+  stores an `atomic.Int32` on the Service (no package state): *starting* (the zero value,
+  until start-up decides), *running* (`startTrading` calls `SetAgentLoop(true)` just before
+  the agent loop starts) and *down* (`SetAgentLoop(false)` when `ResumeAgents` failed).
+  While starting, Start is refused with "cactusTrade is still starting up (reconciling with
+  eToro); try again in a minute"; while down with the step's message "the agent loop is not
+  running: start-up resume failed; restart cactusTrade". Both are `ErrUnavailable` (503).
+  Fail closed: an agent switched on during start-up would otherwise be marked running with no
+  loop to tick it. Shutdown does not reset the flag: `main` shuts the web server down before it stops the
+  loops, so no Start can arrive after the loop ended.
+- **6.13-b The check is in `StartAgent`, not in `startable`.** `startable` is also the OD5
+  resume's rule, and the resume runs before the loop starts; putting the check there would
+  pause every agent on every restart. `TestStartWithoutLoop` covers that the resume is
+  unaffected.
+- **6.13-c `AgentView.StartBlocked`** is set only when the caller could otherwise start
+  (`controls.start` would be true): then `controls.start` is false and
+  `controls.startBlockedReason` carries the reason. Pause, stop, kill and reset are
+  untouched. The panel shows the reason in the Start button's title and in a warning line
+  ("Exits and the kill switch still work").
+- **6.13-d `ResetKill`** checks the kill switch, reads eToro's equity, and only then takes
+  the control lock and checks the kill switch again (a reset that finished meanwhile makes
+  this one a 409). A kill pulled during the read is a no-op on an already killed account
+  (`persistKill` keeps the first kill), so the reset still applies, exactly as a kill just
+  before the lock did before; `TestResetKillDoesNotDelayAKill` proves the kill no longer
+  waits for the read.
+- **6.13-e Tests:** the app, HTTP and composition-root test services call
+  `SetAgentLoop(true)` (as after a clean start); `TestStartAgentNeedsTheAgentLoop`
+  (`cmd/cactustrade`) runs `startTrading` with a failing resume and gets the refusal and the
+  panel reason; the ordering test checks `SetAgentLoop` is called once, before the loop.
+- **6.14-a `app.RiskLimitsView(p)`** returns the limits plus `CanEdit` / `EditBlocked`,
+  decided in the order `SetRiskLimits` checks: owner access, web session, then
+  `limitsBlocked` (the rules of `limitsChangeable`, which now also returns a message for
+  people). `TestRiskLimitsView` asserts for every case that `SetRiskLimits` succeeds exactly
+  when `CanEdit` is true. Whether a budget fits the equity is still checked only on the PUT
+  (it needs an eToro read; the view stays free of broker calls).
+- **6.14-b A killed agent state now gives the kill message** ("the kill switch is on: an
+  admin must reset it before the limits can change", 409) instead of "stop the agent (it is
+  killed)"; the status code is unchanged.
+- **6.14-c The response is flat** (`allOf` RiskLimits + `canEdit`, `editBlockedReason`), so
+  existing GET readers keep working; the PUT body is still `RiskLimits` (unknown fields are
+  refused), so `RiskLimits.tsx` splits the two fields off before saving. The page refetches
+  when the account or the agent state changes; it has no role, access, session or state
+  check left (a Vitest scans its source for them).
+- **6.15-a `components/ConfirmDialog`** (title, body as children, confirm label, optional
+  busy label, icon, variant, `confirmDisabled`, `busy`; Escape / close / Cancel = cancel)
+  is the old AgentPanel modal plus its footer. It runs `onConfirm` once: the button is
+  disabled while the returned promise runs. AgentPanel's kill and reset dialogs use it.
+- **6.15-b Pages.** System (restart), ApiKeys (revoke), Themes (delete), Users (delete, and
+  the password reset, which was a `window.prompt`, now a password field in the dialog) and
+  Accounts (delete) ask in it. Following the owner's convention, the touched actions became
+  compact icon buttons with `title` and `aria-label` in the first column (ApiKeys and Users
+  tables, Themes cards; Accounts already had them).
+- **6.15-c ESLint** bans `window|globalThis|self.confirm|alert|prompt`
+  (`no-restricted-properties`) and the bare globals (`no-restricted-globals`).
+  `src/lint.test.ts` lints planted calls with the project's config and expects one error
+  each.
+- **Open, not in scope:** `Themes.tsx` still derives `canEdit` from the account's access in
+  React (the same pattern 6.14 removed from Risk limits); a later step could return it from
+  `GET /themes`.
 
 ## Phase 7 — hardening and the real-mode gate — `todo`
 

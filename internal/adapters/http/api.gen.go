@@ -534,7 +534,12 @@ type AgentControls struct {
 	Pause bool `json:"pause"`
 	Reset bool `json:"reset"`
 	Start bool `json:"start"`
-	Stop  bool `json:"stop"`
+
+	// StartBlockedReason Why `start` is false although the caller could otherwise start the agent: this
+	// process's agent loop is not running (still starting up, or the start-up resume
+	// failed and cactusTrade must be restarted). Absent when nothing blocks it.
+	StartBlockedReason *string `json:"startBlockedReason,omitempty"`
+	Stop               bool    `json:"stop"`
 }
 
 // AgentLease Who may send orders for the account (one process at a time)
@@ -1521,6 +1526,35 @@ type RiskLimits struct {
 	FlattenBeforeCloseMinutes int `json:"flattenBeforeCloseMinutes"`
 	MaxOpenPositions          int `json:"maxOpenPositions"`
 	MaxPortfolioAgeSeconds    int `json:"maxPortfolioAgeSeconds"`
+
+	// MaxPositionBp largest position as a share of equity (bp; 0 = off)
+	MaxPositionBp      int `json:"maxPositionBp"`
+	MaxQuoteAgeSeconds int `json:"maxQuoteAgeSeconds"`
+
+	// MaxShortBp all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %)
+	MaxShortBp                int `json:"maxShortBp"`
+	NoEntryBeforeCloseMinutes int `json:"noEntryBeforeCloseMinutes"`
+
+	// TradingBudgetCents US dollars in cents (the eToro account currency is USD)
+	TradingBudgetCents Cents `json:"tradingBudgetCents"`
+}
+
+// RiskLimitsView The limits as GET returns them, with whether the caller may change them now (not part of the PUT body)
+type RiskLimitsView struct {
+	// CanEdit the caller may change the limits now (same rules as the PUT)
+	CanEdit bool `json:"canEdit"`
+
+	// DailyLossBp stop new entries at this loss from the start-of-day equity (bp; 200 = 2 %)
+	DailyLossBp int `json:"dailyLossBp"`
+
+	// DrawdownBp kill switch at this fall from the high-water mark (bp)
+	DrawdownBp int `json:"drawdownBp"`
+
+	// EditBlockedReason why not, for people (absent when canEdit)
+	EditBlockedReason         *string `json:"editBlockedReason,omitempty"`
+	FlattenBeforeCloseMinutes int     `json:"flattenBeforeCloseMinutes"`
+	MaxOpenPositions          int     `json:"maxOpenPositions"`
+	MaxPortfolioAgeSeconds    int     `json:"maxPortfolioAgeSeconds"`
 
 	// MaxPositionBp largest position as a share of equity (bp; 0 = off)
 	MaxPositionBp      int `json:"maxPositionBp"`
