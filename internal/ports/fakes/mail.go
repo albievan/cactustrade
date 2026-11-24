@@ -12,6 +12,9 @@ import (
 type outboxRepo struct{ s *Store }
 
 func (r outboxRepo) Enqueue(_ context.Context, m domain.OutboxMail) error {
+	if err := domain.ValidateAttachments(m.Attachments); err != nil {
+		return err
+	}
 	r.s.mu.Lock()
 	defer r.s.mu.Unlock()
 	if slices.ContainsFunc(r.s.outbox, func(x domain.OutboxMail) bool { return x.ID == m.ID }) {

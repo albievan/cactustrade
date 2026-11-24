@@ -587,6 +587,48 @@ func (e ShareAccountRequestAccess) Valid() bool {
 	}
 }
 
+// Defines values for StatementPeriod.
+const (
+	Daily   StatementPeriod = "daily"
+	Monthly StatementPeriod = "monthly"
+	Weekly  StatementPeriod = "weekly"
+)
+
+// Valid indicates whether the value is a known member of the StatementPeriod enum.
+func (e StatementPeriod) Valid() bool {
+	switch e {
+	case Daily:
+		return true
+	case Monthly:
+		return true
+	case Weekly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatementScope.
+const (
+	StatementScopeAccount  StatementScope = "account"
+	StatementScopeCombined StatementScope = "combined"
+	StatementScopeExchange StatementScope = "exchange"
+)
+
+// Valid indicates whether the value is a known member of the StatementScope enum.
+func (e StatementScope) Valid() bool {
+	switch e {
+	case StatementScopeAccount:
+		return true
+	case StatementScopeCombined:
+		return true
+	case StatementScopeExchange:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StyleLevel.
 const (
 	StyleLevelFull   StyleLevel = "full"
@@ -704,6 +746,30 @@ func (e ExportHistoryParamsFile) Valid() bool {
 	case OrdersCsv:
 		return true
 	case TradesCsv:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreviewStatementParamsExchange.
+const (
+	PreviewStatementParamsExchangeASX   PreviewStatementParamsExchange = "ASX"
+	PreviewStatementParamsExchangeLSE   PreviewStatementParamsExchange = "LSE"
+	PreviewStatementParamsExchangeNYSE  PreviewStatementParamsExchange = "NYSE"
+	PreviewStatementParamsExchangeOther PreviewStatementParamsExchange = "Other"
+)
+
+// Valid indicates whether the value is a known member of the PreviewStatementParamsExchange enum.
+func (e PreviewStatementParamsExchange) Valid() bool {
+	switch e {
+	case PreviewStatementParamsExchangeASX:
+		return true
+	case PreviewStatementParamsExchangeLSE:
+		return true
+	case PreviewStatementParamsExchangeNYSE:
+		return true
+	case PreviewStatementParamsExchangeOther:
 		return true
 	default:
 		return false
@@ -2745,6 +2811,104 @@ type SmtpPreset struct {
 	Tls   string `json:"tls"`
 }
 
+// StatementAccountRef defines model for StatementAccountRef.
+type StatementAccountRef struct {
+	Id   string      `json:"id"`
+	Mode TradingMode `json:"mode"`
+	Name string      `json:"name"`
+
+	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+	Platform Platform `json:"platform"`
+}
+
+// StatementPeriod daily: one risk day (sent 22:30 UTC, Monday to Friday); weekly: Monday to Friday (sent Saturday 06:00 UTC); monthly: a calendar month (sent the 1st, 06:00 UTC)
+type StatementPeriod string
+
+// StatementSchedule defines model for StatementSchedule.
+type StatementSchedule struct {
+	AccountIds []string `json:"accountIds"`
+
+	// Accounts The accounts the statements cover now
+	Accounts         []StatementAccountRef `json:"accounts"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	Enabled          bool                  `json:"enabled"`
+	Id               string                `json:"id"`
+	IncludeAccounts  bool                  `json:"includeAccounts"`
+	IncludeCombined  bool                  `json:"includeCombined"`
+	IncludeExchanges bool                  `json:"includeExchanges"`
+
+	// LastError why the last scheduled send failed (empty = it did not)
+	LastError string `json:"lastError"`
+
+	// LastPeriod the newest period handled (e.g. 2026-11-24, 2026-W48, 2026-11)
+	LastPeriod string `json:"lastPeriod"`
+
+	// LastSentAt when a scheduled statement was last sent (absent = never)
+	LastSentAt *time.Time `json:"lastSentAt,omitempty"`
+
+	// NextSendAt absent when switched off
+	NextSendAt *time.Time `json:"nextSendAt,omitempty"`
+	OwnerId    string     `json:"ownerId"`
+	OwnerName  string     `json:"ownerName"`
+
+	// Period daily: one risk day (sent 22:30 UTC, Monday to Friday); weekly: Monday to Friday (sent Saturday 06:00 UTC); monthly: a calendar month (sent the 1st, 06:00 UTC)
+	Period     StatementPeriod `json:"period"`
+	Recipients []string        `json:"recipients"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
+}
+
+// StatementScheduleInput defines model for StatementScheduleInput.
+type StatementScheduleInput struct {
+	// AccountIds The accounts (none = every account the owner may put on a schedule)
+	AccountIds []string `json:"accountIds"`
+	Enabled    bool     `json:"enabled"`
+
+	// IncludeAccounts one statement per account
+	IncludeAccounts bool `json:"includeAccounts"`
+
+	// IncludeCombined the combined statement of every account and exchange
+	IncludeCombined bool `json:"includeCombined"`
+
+	// IncludeExchanges one statement per exchange with trades or positions
+	IncludeExchanges bool `json:"includeExchanges"`
+
+	// Period daily: one risk day (sent 22:30 UTC, Monday to Friday); weekly: Monday to Friday (sent Saturday 06:00 UTC); monthly: a calendar month (sent the 1st, 06:00 UTC)
+	Period StatementPeriod `json:"period"`
+
+	// Recipients 1 to 10 e-mail addresses
+	Recipients []string `json:"recipients"`
+}
+
+// StatementScope defines model for StatementScope.
+type StatementScope string
+
+// StatementSendResult defines model for StatementSendResult.
+type StatementSendResult struct {
+	Files []string  `json:"files"`
+	From  time.Time `json:"from"`
+
+	// Period the period's key
+	Period string `json:"period"`
+
+	// Recipients e-mails queued
+	Recipients int       `json:"recipients"`
+	Title      string    `json:"title"`
+	To         time.Time `json:"to"`
+}
+
+// StatementsPage defines model for StatementsPage.
+type StatementsPage struct {
+	// Accounts The accounts the caller may put on a schedule
+	Accounts []StatementAccountRef `json:"accounts"`
+
+	// CanFixMail the caller may set one up (E-mail page)
+	CanFixMail bool `json:"canFixMail"`
+
+	// MailServer a mail server is set up (else e-mails wait in the outbox)
+	MailServer bool                `json:"mailServer"`
+	Schedules  []StatementSchedule `json:"schedules"`
+}
+
 // StyleLevel defines model for StyleLevel.
 type StyleLevel string
 
@@ -3226,6 +3390,23 @@ type ListReviewsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// PreviewStatementParams defines parameters for PreviewStatement.
+type PreviewStatementParams struct {
+	Period StatementPeriod `form:"period" json:"period"`
+
+	// From a risk day in the period, YYYY-MM-DD (absent = the last complete period)
+	From      *string                         `form:"from,omitempty" json:"from,omitempty"`
+	Scope     *StatementScope                 `form:"scope,omitempty" json:"scope,omitempty"`
+	AccountId *string                         `form:"accountId,omitempty" json:"accountId,omitempty"`
+	Exchange  *PreviewStatementParamsExchange `form:"exchange,omitempty" json:"exchange,omitempty"`
+
+	// ScheduleId only that schedule's accounts (its owner or an admin)
+	ScheduleId *string `form:"scheduleId,omitempty" json:"scheduleId,omitempty"`
+}
+
+// PreviewStatementParamsExchange defines parameters for PreviewStatement.
+type PreviewStatementParamsExchange string
+
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
 type CreateAccountJSONRequestBody = CreateAccountRequest
 
@@ -3306,6 +3487,12 @@ type SetRiskLimitsJSONRequestBody = RiskLimitsChange
 
 // SetScannerJSONRequestBody defines body for SetScanner for application/json ContentType.
 type SetScannerJSONRequestBody = ScannerSwitch
+
+// CreateStatementScheduleJSONRequestBody defines body for CreateStatementSchedule for application/json ContentType.
+type CreateStatementScheduleJSONRequestBody = StatementScheduleInput
+
+// UpdateStatementScheduleJSONRequestBody defines body for UpdateStatementSchedule for application/json ContentType.
+type UpdateStatementScheduleJSONRequestBody = StatementScheduleInput
 
 // CreateThemeJSONRequestBody defines body for CreateTheme for application/json ContentType.
 type CreateThemeJSONRequestBody = ThemeInput
@@ -3588,6 +3775,24 @@ type ServerInterface interface {
 	// RunScanner Review the current account's themes and watchlist now (trade access; read-only on eToro)
 	// (POST /api/v1/scanner/run)
 	RunScanner(w http.ResponseWriter, r *http.Request)
+	// PreviewStatement Download one trading statement as a PDF without e-mailing it (web UI)
+	// (GET /api/v1/statements/preview.pdf)
+	PreviewStatement(w http.ResponseWriter, r *http.Request, params PreviewStatementParams)
+	// ListStatementSchedules The caller's trading-statement schedules (an admin sees every user's), the accounts the caller may put on one, and whether mail can go out (web UI)
+	// (GET /api/v1/statements/schedules)
+	ListStatementSchedules(w http.ResponseWriter, r *http.Request)
+	// CreateStatementSchedule Add a statement schedule owned by the caller (web UI; audited)
+	// (POST /api/v1/statements/schedules)
+	CreateStatementSchedule(w http.ResponseWriter, r *http.Request)
+	// DeleteStatementSchedule Delete a statement schedule (its owner or an admin, web UI; audited)
+	// (DELETE /api/v1/statements/schedules/{id})
+	DeleteStatementSchedule(w http.ResponseWriter, r *http.Request, id string)
+	// UpdateStatementSchedule Change a statement schedule (its owner or an admin, web UI; audited)
+	// (PUT /api/v1/statements/schedules/{id})
+	UpdateStatementSchedule(w http.ResponseWriter, r *http.Request, id string)
+	// SendStatementNow E-mail the statements of the schedule's last complete period now (its owner or an admin, web UI; audited; once a minute)
+	// (POST /api/v1/statements/schedules/{id}/send-now)
+	SendStatementNow(w http.ResponseWriter, r *http.Request, id string)
 	// GetSystemHealth Trading health (admin) — 503 when a loop is not alive
 	// (GET /api/v1/system/health)
 	GetSystemHealth(w http.ResponseWriter, r *http.Request)
@@ -5785,6 +5990,210 @@ func (siw *ServerInterfaceWrapper) RunScanner(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// PreviewStatement operation middleware
+func (siw *ServerInterfaceWrapper) PreviewStatement(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PreviewStatementParams
+
+	// ------------- Required query parameter "period" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "period", r.URL.Query(), &params.Period, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "period"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "period", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "exchange" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "exchange", r.URL.Query(), &params.Exchange, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "exchange"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "exchange", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scheduleId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scheduleId", r.URL.Query(), &params.ScheduleId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scheduleId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scheduleId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewStatement(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListStatementSchedules operation middleware
+func (siw *ServerInterfaceWrapper) ListStatementSchedules(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListStatementSchedules(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateStatementSchedule operation middleware
+func (siw *ServerInterfaceWrapper) CreateStatementSchedule(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateStatementSchedule(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteStatementSchedule operation middleware
+func (siw *ServerInterfaceWrapper) DeleteStatementSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteStatementSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateStatementSchedule operation middleware
+func (siw *ServerInterfaceWrapper) UpdateStatementSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateStatementSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SendStatementNow operation middleware
+func (siw *ServerInterfaceWrapper) SendStatementNow(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SendStatementNow(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSystemHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetSystemHealth(w http.ResponseWriter, r *http.Request) {
 
@@ -6410,6 +6819,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/profiles/{id}/test", wrapper.TestLlmProfile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/llm/models", wrapper.ListLlmModels)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/llm/usage", wrapper.GetLlmUsage)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/statements/schedules", wrapper.ListStatementSchedules)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/statements/schedules", wrapper.CreateStatementSchedule)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/statements/schedules/{id}", wrapper.DeleteStatementSchedule)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/statements/schedules/{id}", wrapper.UpdateStatementSchedule)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/statements/schedules/{id}/send-now", wrapper.SendStatementNow)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/statements/preview.pdf", wrapper.PreviewStatement)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.ListAudit)
 
 	return m

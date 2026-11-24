@@ -97,6 +97,13 @@ export type ResearchProposal = components["schemas"]["ResearchProposal"];
 export type ResearchAddedShare = components["schemas"]["ResearchAddedShare"];
 export type ResearchConfig = components["schemas"]["ResearchConfig"];
 export type ResearchSetup = components["schemas"]["ResearchSetup"];
+export type StatementsPage = components["schemas"]["StatementsPage"];
+export type StatementSchedule = components["schemas"]["StatementSchedule"];
+export type StatementScheduleInput = components["schemas"]["StatementScheduleInput"];
+export type StatementSendResult = components["schemas"]["StatementSendResult"];
+export type StatementAccountRef = components["schemas"]["StatementAccountRef"];
+export type StatementPeriod = components["schemas"]["StatementPeriod"];
+export type StatementScope = components["schemas"]["StatementScope"];
 
 // forAccount is "?accountId=…" for a named account, "" for the current one.
 function forAccount(accountId?: string): string {
@@ -315,7 +322,22 @@ export const api = {
     request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/shares`, { username, access }),
   unshareAccount: (id: string, userId: string) =>
     request<void>("DELETE", `/api/v1/accounts/${encodeURIComponent(id)}/shares/${encodeURIComponent(userId)}`),
+  statementSchedules: () => request<StatementsPage>("GET", "/api/v1/statements/schedules"),
+  createStatementSchedule: (x: StatementScheduleInput) => request<StatementSchedule>("POST", "/api/v1/statements/schedules", x),
+  updateStatementSchedule: (id: string, x: StatementScheduleInput) =>
+    request<StatementSchedule>("PUT", `/api/v1/statements/schedules/${encodeURIComponent(id)}`, x),
+  deleteStatementSchedule: (id: string) => request<void>("DELETE", `/api/v1/statements/schedules/${encodeURIComponent(id)}`),
+  sendStatementNow: (id: string) =>
+    request<StatementSendResult>("POST", `/api/v1/statements/schedules/${encodeURIComponent(id)}/send-now`),
 };
+
+// statementPreviewUrl is the address of a statement PDF (R30): the browser downloads it with
+// the session cookie; nothing is e-mailed.
+export function statementPreviewUrl(q: {
+  period: StatementPeriod; from?: string; scope?: StatementScope; accountId?: string; exchange?: string; scheduleId?: string;
+}): string {
+  return `/api/v1/statements/preview.pdf?${historyQuery(q)}`;
+}
 
 // WATCHLIST_EXPORT_URL downloads the current account's watchlist and themes as JSON (R27).
 export const WATCHLIST_EXPORT_URL = "/api/v1/watchlist/export";

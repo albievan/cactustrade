@@ -130,12 +130,80 @@ func ValidateEmail(field, addr string) error {
 	return nil
 }
 
-// Mail is one outgoing message (plain text).
+// Mail is one outgoing message: a plain-text body and, optionally, attachments.
 type Mail struct {
 	ID      string // also the Message-ID's left part
 	To      string
 	Subject string
 	Body    string
+	// Attachments are sent as a MIME multipart/mixed message (R30: statement PDFs). At most
+	// MaxMailAttachmentBytes in total, each with a safe file name and an allowed type.
+	Attachments []Attachment
+}
+
+// Attachment is one file attached to a mail.
+type Attachment struct {
+	Filename    string // letters, digits, '.', '-' and '_' only (SafeAttachmentName)
+	ContentType string // one of AttachmentTypes
+	Data        []byte
+}
+
+// Attachment limits: all of one mail's attachments together, and how many.
+const (
+	MaxMailAttachmentBytes = 10 << 20
+	MaxMailAttachments     = 60
+)
+
+// AttachmentTypes are the content types a mail may carry, by the file extension they need.
+var AttachmentTypes = map[string]string{"application/pdf": ".pdf"}
+
+// SafeAttachmentName reports whether name is a file name that needs no quoting or encoding
+// in a MIME header: 1–100 ASCII letters, digits, '.', '-' or '_', not starting with '.'.
+func SafeAttachmentName(name string) bool {
+	if name == "" || len(name) > 100 || name[0] == '.' {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if !safeNameByte(name[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// safeNameByte reports whether c is an ASCII letter or digit, '.', '-' or '_'.
+func safeNameByte(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	return c == '.' || c == '-' || c == '_'
+}
+
+// ValidateAttachments checks a mail's attachments: safe names that end in their type's
+// extension, allowed types, no empty file, at most MaxMailAttachments files and
+// MaxMailAttachmentBytes in total.
+func ValidateAttachments(as []Attachment) error {
+	if len(as) > MaxMailAttachments {
+		return Invalid("attachments", "too many files")
+	}
+	total := 0
+	for _, a := range as {
+		ext, ok := AttachmentTypes[a.ContentType]
+		switch {
+		case !ok:
+			return Invalid("attachments", "unsupported file type "+a.ContentType)
+		case !SafeAttachmentName(a.Filename) || !strings.HasSuffix(strings.ToLower(a.Filename), ext):
+			return Invalid("attachments", "unsafe file name")
+		case len(a.Data) == 0:
+			return Invalid("attachments", a.Filename+" is empty")
+		}
+		total += len(a.Data)
+		if total > MaxMailAttachmentBytes {
+			return Invalid("attachments", "more than 10 MiB in total")
+		}
+	}
+	return nil
 }
 
 // OutboxMail is a message waiting in (or delivered from) the outbox.

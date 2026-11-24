@@ -26,6 +26,11 @@ const users = [
 ];
 const key = { id: "k1", name: "grafana", role: "viewer", ownerId: "1", createdAt: "2026-11-23T09:00:00Z" };
 
+const schedule = {
+  id: "s1", ownerId: "1", ownerName: "admin", period: "daily", accountIds: [], accounts: [], recipients: ["me@example.com"],
+  includeCombined: true, includeAccounts: false, includeExchanges: false, enabled: true, lastPeriod: "", lastError: "", createdAt: "", updatedAt: "",
+};
+
 type Call = { url: string; method: string; body: unknown };
 
 // serve answers the reads every page makes, and every write with 204 (or status for the
@@ -49,6 +54,7 @@ function serve() {
     if (url.endsWith("/api/v1/platforms")) return json([{ platform: "etoro", label: "eToro", viewOnly: false, connectable: false, credentials: [] }]);
     if (url.endsWith("/keys")) return json({ apiKeySet: true, userKeySet: true, fromEnvironment: false, complete: true, connectable: false, credentials: [] });
     if (url.endsWith("/shares") || url.endsWith("/industries")) return json([]);
+    if (url.endsWith("/api/v1/statements/schedules")) return json({ schedules: [schedule], accounts: [], mailServer: true, canFixMail: true });
     return new Response("{}", { status: 404 });
   });
   return calls;
@@ -93,6 +99,14 @@ describe("System", () => {
     const open = async () => { fireEvent.click(await screen.findByRole("button", { name: "Restart" })); };
     await cancelThenConfirm(calls, open, "Restart", { url: "/api/v1/system/restart", method: "POST" });
     expect(await screen.findByRole("alert")).toBeInTheDocument(); // the 503 is shown
+  });
+});
+
+describe("Trading statements", () => {
+  it("asks before deleting a schedule", async () => {
+    const calls = serve();
+    mount(<System />);
+    await cancelThenConfirm(calls, click("Delete: daily statements to me@example.com"), "Delete", { url: "/api/v1/statements/schedules/s1", method: "DELETE" });
   });
 });
 

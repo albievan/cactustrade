@@ -48,6 +48,7 @@ tags:
   - name: audit
   - name: history
   - name: live
+  - name: statements
 security:
   - sessionCookie: []
   - bearerApiKey: []
@@ -1997,6 +1998,125 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/statements/schedules:
+    get:
+      tags: [statements]
+      operationId: listStatementSchedules
+      summary: The caller's trading-statement schedules (an admin sees every user's), the accounts the caller may put on one, and whether mail can go out (web UI)
+      responses:
+        "200":
+          description: The statements section
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatementsPage" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [statements]
+      operationId: createStatementSchedule
+      summary: Add a statement schedule owned by the caller (web UI; audited)
+      description: |
+        Accounts must be ones the caller owns (an admin: accounts the admin can see); no
+        accounts = every such account when the statement is made. 1 to 10 recipients, any
+        address. The first scheduled e-mail is for the next period that closes; "Send now"
+        sends the last complete one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatementScheduleInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatementSchedule" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/statements/schedules/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    put:
+      tags: [statements]
+      operationId: updateStatementSchedule
+      summary: Change a statement schedule (its owner or an admin, web UI; audited)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatementScheduleInput" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatementSchedule" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [statements]
+      operationId: deleteStatementSchedule
+      summary: Delete a statement schedule (its owner or an admin, web UI; audited)
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/statements/schedules/{id}/send-now:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [statements]
+      operationId: sendStatementNow
+      summary: E-mail the statements of the schedule's last complete period now (its owner or an admin, web UI; audited; once a minute)
+      description: Counts as an export for the rate limits.
+      responses:
+        "200":
+          description: Queued in the outbox
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatementSendResult" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/statements/preview.pdf:
+    get:
+      tags: [statements]
+      operationId: previewStatement
+      summary: Download one trading statement as a PDF without e-mailing it (web UI)
+      description: |
+        The combined statement of every account the caller may put on a schedule (with
+        `scheduleId`: that schedule's accounts), one of them (`scope=account`, `accountId`)
+        or one exchange across them (`scope=exchange`, `exchange`). The period of kind `period` that holds the risk day `from`; without
+        `from` the last complete one. Counts as an export for the rate limits.
+      parameters:
+        - { name: period, in: query, required: true, schema: { $ref: "#/components/schemas/StatementPeriod" } }
+        - { name: from, in: query, description: "a risk day in the period, YYYY-MM-DD (absent = the last complete period)", schema: { type: string, maxLength: 10 } }
+        - { name: scope, in: query, schema: { $ref: "#/components/schemas/StatementScope" } }
+        - { name: accountId, in: query, schema: { type: string, maxLength: 64 } }
+        - { name: exchange, in: query, schema: { type: string, enum: [LSE, NYSE, ASX, Other] } }
+        - { name: scheduleId, in: query, description: "only that schedule's accounts (its owner or an admin)", schema: { type: string, maxLength: 64 } }
+      responses:
+        "200":
+          description: The PDF (sent as an attachment, never cached)
+          headers:
+            Content-Disposition:
+              description: attachment with the file name
+              schema: { type: string }
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/audit:
     get:
       tags: [audit]
@@ -3765,3 +3885,82 @@ components:
       required: [reason]
       properties:
         reason: { type: string, description: "resync: behind; bye: signed_out, no_access, unavailable (the check could not be made), lifetime or shutdown" }
+    StatementPeriod:
+      type: string
+      enum: [daily, weekly, monthly]
+      description: "daily: one risk day (sent 22:30 UTC, Monday to Friday); weekly: Monday to Friday (sent Saturday 06:00 UTC); monthly: a calendar month (sent the 1st, 06:00 UTC)"
+    StatementScope:
+      type: string
+      enum: [combined, account, exchange]
+    StatementAccountRef:
+      type: object
+      required: [id, name, platform, mode]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        platform: { $ref: "#/components/schemas/Platform" }
+        mode: { $ref: "#/components/schemas/TradingMode" }
+    StatementScheduleInput:
+      type: object
+      required: [period, accountIds, recipients, includeCombined, includeAccounts, includeExchanges, enabled]
+      properties:
+        period: { $ref: "#/components/schemas/StatementPeriod" }
+        accountIds:
+          type: array
+          maxItems: 50
+          description: The accounts (none = every account the owner may put on a schedule)
+          items: { type: string, maxLength: 64 }
+        recipients:
+          type: array
+          maxItems: 10
+          description: 1 to 10 e-mail addresses
+          items: { type: string, maxLength: 254 }
+        includeCombined: { type: boolean, description: "the combined statement of every account and exchange" }
+        includeAccounts: { type: boolean, description: "one statement per account" }
+        includeExchanges: { type: boolean, description: "one statement per exchange with trades or positions" }
+        enabled: { type: boolean }
+    StatementSchedule:
+      type: object
+      required: [id, ownerId, ownerName, period, accountIds, accounts, recipients, includeCombined, includeAccounts, includeExchanges, enabled, lastPeriod, lastError, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        ownerId: { type: string }
+        ownerName: { type: string }
+        period: { $ref: "#/components/schemas/StatementPeriod" }
+        accountIds: { type: array, items: { type: string } }
+        accounts:
+          type: array
+          description: The accounts the statements cover now
+          items: { $ref: "#/components/schemas/StatementAccountRef" }
+        recipients: { type: array, items: { type: string } }
+        includeCombined: { type: boolean }
+        includeAccounts: { type: boolean }
+        includeExchanges: { type: boolean }
+        enabled: { type: boolean }
+        lastPeriod: { type: string, description: "the newest period handled (e.g. 2026-11-24, 2026-W48, 2026-11)" }
+        lastSentAt: { type: string, format: date-time, description: "when a scheduled statement was last sent (absent = never)" }
+        lastError: { type: string, description: "why the last scheduled send failed (empty = it did not)" }
+        nextSendAt: { type: string, format: date-time, description: "absent when switched off" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    StatementsPage:
+      type: object
+      required: [schedules, accounts, mailServer, canFixMail]
+      properties:
+        schedules: { type: array, items: { $ref: "#/components/schemas/StatementSchedule" } }
+        accounts:
+          type: array
+          description: The accounts the caller may put on a schedule
+          items: { $ref: "#/components/schemas/StatementAccountRef" }
+        mailServer: { type: boolean, description: "a mail server is set up (else e-mails wait in the outbox)" }
+        canFixMail: { type: boolean, description: "the caller may set one up (E-mail page)" }
+    StatementSendResult:
+      type: object
+      required: [period, from, to, title, recipients, files]
+      properties:
+        period: { type: string, description: "the period's key" }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        title: { type: string }
+        recipients: { type: integer, description: "e-mails queued" }
+        files: { type: array, items: { type: string } }

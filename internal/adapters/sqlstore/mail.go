@@ -38,8 +38,10 @@ func (r outbox) list(ctx context.Context, query string, args ...any) ([]domain.O
 }
 
 func (r outbox) Enqueue(ctx context.Context, m domain.OutboxMail) error {
-	_, err := r.db.ExecContext(ctx, "INSERT INTO outbox ("+outboxCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		m.ID, m.To, m.Subject, m.Body, us(m.CreatedAt), us(m.NextAt), m.Attempts, int64(0), m.LastError)
+	if err := domain.ValidateAttachments(m.Attachments); err != nil {
+		return fmt.Errorf("outbox.Enqueue: %w", err)
+	}
+	err := r.enqueueWithAttachments(ctx, m) // the mail and its files, or neither
 	if isDuplicate(err) {
 		return domain.ErrConflict
 	}
@@ -53,6 +55,9 @@ func (r outbox) Due(ctx context.Context, now time.Time, limit int) ([]domain.Out
 	out, err := r.list(ctx, "SELECT "+outboxCols+" FROM outbox WHERE sent_at = 0 AND next_at <= ? AND attempts < ? ORDER BY next_at, id LIMIT ?",
 		us(now), domain.MaxMailAttempts, limit)
 	if err != nil {
+		return nil, fmt.Errorf("outbox.Due: %w", err)
+	}
+	if err := r.attachments(ctx, out); err != nil {
 		return nil, fmt.Errorf("outbox.Due: %w", err)
 	}
 	return out, nil

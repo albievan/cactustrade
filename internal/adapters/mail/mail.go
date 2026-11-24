@@ -1,7 +1,8 @@
 // Package mail is the outgoing e-mail adapter: it implements ports.Mailer with the standard
-// library's SMTP client. It sends one plain-text message per call over implicit TLS, a
-// required STARTTLS upgrade or (for a test server only) a plain connection. Passwords are
-// never logged and never appear in a returned error.
+// library's SMTP client. It sends one message per call (plain text, or MIME multipart/mixed
+// with attachments such as statement PDFs) over implicit TLS, a required STARTTLS upgrade or
+// (for a test server only) a plain connection. Passwords are never logged and never appear in
+// a returned error.
 package mail
 
 import (
@@ -9,13 +10,17 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
+	"mime/multipart"
 	"mime/quotedprintable"
 	"net"
 	netmail "net/mail"
 	"net/smtp"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
@@ -189,23 +194,83 @@ func (x *Mailer) build(fromHeader string, m domain.Mail) (from, to string, msg [
 	header("Date", x.clock().Format(time.RFC1123Z))
 	header("Message-ID", "<"+m.ID+"@"+x.hostname+">")
 	header("MIME-Version", "1.0")
-	header("Content-Type", "text/plain; charset=utf-8")
-	header("Content-Transfer-Encoding", "quoted-printable")
-	b.WriteString("\r\n")
+	if len(m.Attachments) == 0 {
+		header("Content-Type", "text/plain; charset=utf-8")
+		header("Content-Transfer-Encoding", "quoted-printable")
+		b.WriteString("\r\n")
+		if err := writeText(&b, m.Body); err != nil {
+			return "", "", nil, err
+		}
+		return fa.Address, ta.Address, b.Bytes(), nil
+	}
 
-	body := strings.ReplaceAll(m.Body, "\r\n", "\n")
+	// With attachments (R30): multipart/mixed, the text first, then each file in base64.
+	if err := domain.ValidateAttachments(m.Attachments); err != nil {
+		return "", "", nil, fmt.Errorf("mail: %w", err)
+	}
+	mw := multipart.NewWriter(&b) // writes nothing until the first part
+	header("Content-Type", `multipart/mixed; boundary="`+mw.Boundary()+`"`)
+	b.WriteString("\r\n")
+	tw, err := mw.CreatePart(textproto.MIMEHeader{
+		"Content-Type": {"text/plain; charset=utf-8"}, "Content-Transfer-Encoding": {"quoted-printable"},
+	})
+	if err != nil {
+		return "", "", nil, fmt.Errorf("mail: %w", err)
+	}
+	if err := writeText(tw, m.Body); err != nil {
+		return "", "", nil, err
+	}
+	for _, a := range m.Attachments {
+		// The name is SafeAttachmentName (checked above): no quoting or encoding needed.
+		aw, err := mw.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {a.ContentType + `; name="` + a.Filename + `"`},
+			"Content-Disposition":       {`attachment; filename="` + a.Filename + `"`},
+			"Content-Transfer-Encoding": {"base64"},
+		})
+		if err != nil {
+			return "", "", nil, fmt.Errorf("mail: %w", err)
+		}
+		if err := writeBase64(aw, a.Data); err != nil {
+			return "", "", nil, err
+		}
+	}
+	if err := mw.Close(); err != nil {
+		return "", "", nil, fmt.Errorf("mail: %w", err)
+	}
+	return fa.Address, ta.Address, b.Bytes(), nil
+}
+
+// writeText writes body as quoted-printable text with CRLF line breaks, ending in one.
+func writeText(w io.Writer, body string) error {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
 	body = strings.ReplaceAll(body, "\r", "\n")
 	if !strings.HasSuffix(body, "\n") {
 		body += "\n"
 	}
-	qp := quotedprintable.NewWriter(&b) // text mode: writes line breaks as CRLF
+	qp := quotedprintable.NewWriter(w) // text mode: writes line breaks as CRLF
 	if _, err := qp.Write([]byte(body)); err != nil {
-		return "", "", nil, fmt.Errorf("mail: encode body: %w", err)
+		return fmt.Errorf("mail: encode body: %w", err)
 	}
 	if err := qp.Close(); err != nil {
-		return "", "", nil, fmt.Errorf("mail: encode body: %w", err)
+		return fmt.Errorf("mail: encode body: %w", err)
 	}
-	return fa.Address, ta.Address, b.Bytes(), nil
+	return nil
+}
+
+// base64Line is the encoded line length (RFC 2045: at most 76 characters).
+const base64Line = 76
+
+// writeBase64 writes data in base64, 76 characters per CRLF-ended line.
+func writeBase64(w io.Writer, data []byte) error {
+	enc := base64.StdEncoding.EncodeToString(data)
+	for len(enc) > 0 {
+		n := min(base64Line, len(enc))
+		if _, err := io.WriteString(w, enc[:n]+"\r\n"); err != nil {
+			return fmt.Errorf("mail: encode attachment: %w", err)
+		}
+		enc = enc[n:]
+	}
+	return nil
 }
 
 func isASCII(s string) bool {

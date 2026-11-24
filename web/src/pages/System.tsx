@@ -2,10 +2,15 @@ import { useState } from "react";
 import { api, errorText } from "../lib/api";
 import { useMode } from "../lib/mode";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { TradingStatements } from "../components/TradingStatements";
+import { useSession } from "../lib/session";
 
-// Admin: version, database, and the reload / restart actions.
+// Version and database for everyone; the reload / restart actions for admins; trading
+// statements (R30) for everyone who owns an account (the server decides).
 export function System() {
   const status = useMode();
+  const { can } = useSession();
+  const admin = can("settings.write");
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,6 +58,7 @@ export function System() {
       </div>
       {msg && <div className="alert alert-success" role="status">{msg}</div>}
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      {admin && <>
       <div className="card mb-3"><div className="card-body d-flex flex-wrap gap-3 align-items-center">
         <div className="me-auto">
           <div className="fw-semibold">Reload settings</div>
@@ -67,6 +73,8 @@ export function System() {
         </div>
         <button className="btn btn-outline-danger" onClick={() => setAsking(true)} disabled={busy}><i className="bi bi-power me-1" />{busy ? "Restarting…" : "Restart"}</button>
       </div></div>
+      </>}
+      <TradingStatements />
       {asking && (
         <ConfirmDialog title="Restart cactusTrade now?" confirmLabel="Restart" icon="power" onCancel={() => setAsking(false)}
           onConfirm={() => { setAsking(false); void restart(); }}>
