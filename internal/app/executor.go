@@ -57,10 +57,64 @@ type runtimeState struct {
 	// holder is this process's lease holder id (Config.LeaseHolder, else random).
 	holderOnce sync.Once
 	holder     string
+	// agents holds each account's agent locks (4.10, 4.11); entryCancel the context cancel of
+	// the account's running agent tick (nil when none).
+	agents      map[string]*agentLocks
+	entryCancel map[string]context.CancelFunc
+	// ticking marks accounts whose agent tick was started by AgentLoop and still runs.
+	ticking map[string]bool
+}
+
+// agentLocks are one account's agent locks. Lock order: ctl before entry, never the other
+// way round (an agent tick holds entry only and never waits for ctl).
+type agentLocks struct {
+	// ctl serialises StartAgent, PauseAgent, StopAgent, SetRiskLimits, Kill, ResetKill, the
+	// supervisor's kill and the OD5 resume: limits change only while stopped, with no race.
+	ctl sync.Mutex
+	// entry is held by the entry pipeline (one agent tick at a time per account); Kill takes
+	// it after cancelling the tick, so nothing is opened once Kill closes positions.
+	entry sync.Mutex
 }
 
 func newRuntimeState() *runtimeState {
-	return &runtimeState{reconciled: map[string]Reconciliation{}, supervising: map[string]bool{}}
+	return &runtimeState{
+		reconciled: map[string]Reconciliation{}, supervising: map[string]bool{},
+		agents: map[string]*agentLocks{}, entryCancel: map[string]context.CancelFunc{}, ticking: map[string]bool{},
+	}
+}
+
+// agent returns the account's agent locks, created on first use.
+func (r *runtimeState) agent(accountID string) *agentLocks {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	l, ok := r.agents[accountID]
+	if !ok {
+		l = &agentLocks{}
+		r.agents[accountID] = l
+	}
+	return l
+}
+
+// setEntryCancel records (or, with nil, forgets) the cancel function of the account's
+// running agent tick.
+func (r *runtimeState) setEntryCancel(accountID string, cancel context.CancelFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cancel == nil {
+		delete(r.entryCancel, accountID)
+		return
+	}
+	r.entryCancel[accountID] = cancel
+}
+
+// cancelEntries cancels the account's running agent tick, if any: its pending waits and
+// broker calls end, and no new entry starts.
+func (r *runtimeState) cancelEntries(accountID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c := r.entryCancel[accountID]; c != nil {
+		c()
+	}
 }
 
 // entryRequest is an entry the risk engine allowed: its size and the prices it rests on.
@@ -239,6 +293,11 @@ func (s *Service) sendOpen(ctx context.Context, a domain.Account, o domain.Order
 	bctx := ports.WithAccount(ctx, a)
 	label := s.instrumentLabel(ctx, o.Instrument)
 	for {
+		if cerr := ctx.Err(); cerr != nil {
+			// Cancelled (a kill, a shutdown) before the request left: eToro never saw it.
+			o, _ = s.move(context.WithoutCancel(ctx), o, domain.OrderAbandoned, "cancelled before it was sent", nil)
+			return o, fmt.Errorf("executor.sendOpen: not sent: %w", cerr)
+		}
 		st, err := s.d.Broker.Open(bctx, in)
 		na, isNA := errors.AsType[*domain.NotAcceptedError](err)
 		switch {

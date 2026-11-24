@@ -153,7 +153,7 @@ func (s *Service) Supervise(ctx context.Context, accountID string) (SupervisorRe
 		case err != nil:
 			rep.fail("storing the risk state: %v", err)
 		case !rep.Killed && domain.DrawdownBreached(pf.Equity(), st.State, l):
-			why := fmt.Sprintf("drawdown limit: equity $%s is $%s below the high-water mark $%s (limit %d bp)",
+			why := fmt.Sprintf("drawdown limit: the account equity $%s (every position, also those not opened by cactusTrade) is $%s below the high-water mark $%s (limit %d bp)",
 				pf.Equity(), st.State.HighWaterMark-pf.Equity(), st.State.HighWaterMark, l.Drawdown)
 			if err := s.trip(ctx, a, why); err != nil {
 				rep.fail("persisting the kill: %v", err)
@@ -335,40 +335,64 @@ func (s *Service) observe(ctx context.Context, a domain.Account, pf domain.Portf
 	return domain.AccountRiskState{}, fmt.Errorf("app.observe: the risk state kept changing: %w", domain.ErrConflict)
 }
 
-// trip turns the kill switch on: persisted in the risk state and the agent state first,
-// then audited and announced. Closing the positions and cancelling the orders follows in the
-// caller (the supervisor does it in the same pass, and on every later pass while killed).
+// killEffect says what a kill does and does not do (OD1, PLAN 4.9-x): it is part of every
+// kill event, because the supervisor watches the equity of every eToro demo account with keys,
+// including positions cactusTrade did not open.
+const killEffect = "New entries are stopped. Only the positions cactusTrade opened are closed and its pending orders cancelled; " +
+	"positions opened outside cactusTrade are left alone. An admin must reset the kill switch."
+
+// trip turns the kill switch on for the supervisor and the agent (drawdown): it takes the
+// account's control lock and calls tripLocked. Closing the positions and cancelling the
+// orders follows in the caller (the supervisor does it in the same pass, and on every later
+// pass while killed).
 func (s *Service) trip(ctx context.Context, a domain.Account, why string) error {
+	l := s.rt.agent(a.ID)
+	l.ctl.Lock()
+	defer l.ctl.Unlock()
+	_, err := s.tripLocked(ctx, a, Principal{}, why)
+	return err
+}
+
+// tripLocked turns the kill switch on; the caller holds the account's control lock. The kill
+// is persisted first (risk state and agent state), then the running agent tick is cancelled,
+// then it is audited and announced. already reports that the switch was on before (nothing
+// is announced again).
+func (s *Service) tripLocked(ctx context.Context, a domain.Account, p Principal, why string) (already bool, err error) {
 	now := s.d.Clock.Now().UTC()
-	err := s.persistKill(ctx, a.ID, why, now)
+	already, err = s.persistKill(ctx, a.ID, why, now)
 	if serr := s.d.Store.Settings().Set(ctx, agentStateKey(a.ID), string(domain.AgentKilled), now); serr != nil {
 		err = errors.Join(err, serr)
 	}
-	s.audit(ctx, Principal{}, "agent.kill", a.ID, why)
-	s.emitFor(ctx, a.ID, "agent", "agent.killed", domain.SeverityDanger, "Kill switch on "+a.Name,
-		why+". Every position cactusTrade opened is closed and its pending orders cancelled; an admin must reset it.")
-	if err != nil {
-		return fmt.Errorf("app.trip: %w", err)
+	s.rt.cancelEntries(a.ID)
+	if already && err == nil {
+		return true, nil
 	}
-	return nil
+	s.audit(ctx, p, "agent.kill", a.ID, why)
+	s.emitFor(ctx, a.ID, p.Username, "agent.killed", domain.SeverityDanger, "Kill switch on "+a.Name, why+". "+killEffect)
+	if err != nil {
+		return already, fmt.Errorf("app.trip: %w", err)
+	}
+	return already, nil
 }
 
-func (s *Service) persistKill(ctx context.Context, accountID, why string, now time.Time) error {
+// persistKill stores the kill in the account's risk state (versioned, retried on a
+// conflict). already reports that it was stored before.
+func (s *Service) persistKill(ctx context.Context, accountID, why string, now time.Time) (already bool, err error) {
 	for range 3 {
 		cur, err := s.d.Store.RiskStates().Get(ctx, accountID)
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
 			cur = domain.AccountRiskState{AccountID: accountID}
 		case err != nil:
-			return err
+			return false, err
 		}
 		if cur.State.Killed {
-			return nil
+			return true, nil
 		}
 		cur.State.Killed, cur.KillReason, cur.KilledAt, cur.UpdatedAt = true, why, now, now
 		if _, err = s.d.Store.RiskStates().Put(ctx, cur); !errors.Is(err, domain.ErrConflict) {
-			return err
+			return false, err
 		}
 	}
-	return fmt.Errorf("the risk state kept changing: %w", domain.ErrConflict)
+	return false, fmt.Errorf("the risk state kept changing: %w", domain.ErrConflict)
 }

@@ -114,6 +114,11 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	if p.Via != ViaSession {
 		return domain.RiskLimits{}, fmt.Errorf("risk limits can only be changed in the web UI: %w", domain.ErrForbidden)
 	}
+	// Under the agent's control lock: a concurrent StartAgent either sees these limits or
+	// makes this change fail (PLAN 4.11).
+	locks := s.rt.agent(v.ID)
+	locks.ctl.Lock()
+	defer locks.ctl.Unlock()
 	if st := s.agentState(ctx, v.ID); st != domain.AgentStopped {
 		return domain.RiskLimits{}, fmt.Errorf("stop the agent before changing the limits (it is %s): %w", st, domain.ErrConflict)
 	}

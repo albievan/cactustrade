@@ -231,9 +231,9 @@ shows in `pnl`.
 | 4.7 | **Executor (app).** `placeEntry`: refuse unless eToro, demo, not killed and lease held. Persist the order (`created`); a store failure means nothing is sent. Re-check portfolio age ≤ `MaxPortfolioAge`. Mark `sent` (persisted) → `Open`. On a 429: lookup; if 404, resend the **same id** after Retry-After (≤ 3 sends). Outcome unknown → resolve by lookup, never resend (OD2). Poll `orders:lookup` at 1, 2, 4, 8, 15 and 30 s. Filled or partial → record `agent_positions` and verify each execution: real/long/×1 or cfd/short/×1, stop present and on the right side, close to the stop we sent. Otherwise close at once, block the instrument and alert. Rejected → release. Still pending at 60 s → cancel and poll. Lookup still 404 after 2 min → `abandoned` (never resent). `closePosition`: persist the close order → `Close` → poll `CloseOrder`. If the answer is lost, re-read the portfolio; if the position is still open, resend with the same id (≤ 5). `cancelOrder`. Events `order.*` (trade e-mails via R12). | `internal/app/executor.go`, `executor_test.go` | `go test -race ./internal/app -run Executor`. Table cases: row persisted **before** `Open` (SimBroker hook); 429 → two `Open` calls with one id; unknown outcome → one `Open`, resolved by lookup; 404 for 2 min → abandoned, no resend; rejected → reservation freed; pending → cancelled; leverage-2, CFD-long or no-stop fill → closed + blocked; real account → zero broker calls + `ErrRealModeGated`; persist failure → zero broker calls; lost close answer → resent with the same id; close works while killed. | done |
 | 4.8 | **Reconciliation.** `Reconcile(account)`: fresh portfolio. Resolve every non-final order by referenceId: `created` + lookup found → adopt; 404 and older than 2 min → abandoned. Match `agent_positions` with eToro: ours gone → closed locally. Foreign positions handled per OD1. Sets the in-memory `reconciled` flag with time and reason; any error or mismatch → not reconciled, warning event + alert. `ReconcileAll` at start-up for every eToro account with keys (read-only for real accounts), then every 5 min from the supervisor. | `internal/app/reconcile.go`, `reconcile_test.go` | `go test -race ./internal/app -run Reconcile`. Clean account → reconciled. A crash between persist and send is adopted or abandoned correctly. Foreign non-conforming position → not reconciled + event. Broker error → not reconciled. `AgentTick` before `ReconcileAll` → SimBroker `Opens == 0`. | done |
 | 4.9 | **Supervisor (exits, D21).** `Supervise(account)` every 10 s: lease → fresh portfolio (on failure, local agent positions) → `Observe` (risk day, high-water mark, latch, persisted) → `DrawdownBreached` → Kill. `ExitsDue` uses the calendar session of each instrument's own market → `closePosition`. Pending orders older than 60 s → cancel. Periodic reconcile. Never calls the LLM or needs prices. | `internal/app/supervisor.go`, `supervisor_test.go` | `go test -race ./internal/app -run Supervise`. An LSE, an NYSE and an ASX position (fake calendar incl. a half day) are closed at close−10 min, not at close−11 min. Exits still happen when killed, stopped, paused, unreconciled, when the portfolio read fails (local positions used), and when market data or the LLM fail. Drawdown → killed, all agent positions closed, no `Open`. Lease held by another process → no mutations. | done |
-| 4.10 | **Agent loop (entries).** `AgentTick(account)` runs only when running, lease held, reconciled, not killed, demo, calendar present (D25). Steps, one entry at a time per account (mutex): (1) watchlist shares whose market is in session (LSE per OD9). (2) Candles: 5 min, 400, unclosed bar dropped (D26/U5). (3) `strategy` evaluate, sized by min(budget, equity); shorts only if `MaxShort > 0`. (4) Cost check (OD8). (5) LLM verdict when reviewing is on: any error/timeout/invalid answer = reject; `ApplyVerdict`. (6) Fresh portfolio + fresh quote (entry = ask for a long, bid for a short; stop still on the right side). (7) Reservations from `orders`. (8) `domain.AssessEntry`. (9) `placeEntry`. Each step's outcome is kept in a trace struct (persisted in phase 5). | `internal/app/agent.go`, `agent_test.go` | `go test -race ./internal/app -run AgentTick`. Approve → `Open` amount ≤ min(fresh cash − reserved, remaining budget). LLM "reduce 0.5" → halved and then capped. An LLM multiplier 3 or "increase" never enlarges. Each of LLM error/timeout, stale quote, stale portfolio, unreconciled, killed, paused, stopped, real, no calendar, budget 0, order in flight → no `Open`. Short: stop > entry; open + pending shorts ≤ 25 % of budget. Every intent: direction ∈ {long, short}, RequestID persisted. | todo |
-| 4.11 | **Agent control, kill switch, limits lock.** `StartAgent`: agent.control + trade access, web session only, eToro demo, keys, valid limits, budget > 0, reconciled, not killed. `PauseAgent` / `StopAgent`: entries stop, exits continue (D21). `Kill`: agent.kill + trade access, session or API key. It persists killed (`risk_state` + `agent.state`) **first**, cancels the entry pipeline's context, cancels pending orders, then closes every agent position through the executor, paced by the execution limiter. `ResetKill`: admin, web session, typed phrase `RESET <account name>`, high-water mark := current equity, state → stopped. A per-account mutex serialises Start / SetRiskLimits / Kill / Reset (limits only while stopped, no race). After a restart, agents that were running come back per OD5. All audited, with events. | `internal/app/{agent_control.go,risk.go}`, `agent_control_test.go` | `go test -race ./internal/app -run 'Agent\|Kill\|RiskLimits'`. Role × access matrix. Start refused for a real, killed or unreconciled account and for budget 0. SetRiskLimits while running, paused or killed → 409. 100× concurrent Start vs SetRiskLimits never leaves the agent running with limits written after the start. Kill with 15 positions + pending orders → all cancels and closes sent within one 60 s window of the fake limiter (≤ 20), no `Open` after Kill. API key: kill allowed, start and reset refused. Reset needs admin + phrase. | todo |
-| 4.12 | **Sequence property test (app).** 300 seeded scenarios × 200 ticks, `math/rand/v2` (no new dependency). Random prices, fills, rejections, lost answers, 429s, LLM verdicts (incl. garbage), limits, shorts, with supervisor and agent running. After every tick: only the two order shapes; id persisted before send; Σ(open + reserved) ≤ min(budget, equity at decision); no `Open` > fresh cash − reserved; shorts ≤ MaxShort of budget ≤ 25 %; long stop < entry < short stop; no `Open` after kill, drawdown or the daily latch; no agent position open after its market's close − flatten; open orders are resent only after a 429, with the same id. | `internal/app/agent_property_test.go` | `go test -race ./internal/app -run AgentSequenceProperties`; fails if fewer than 500 entries were exercised | todo |
+| 4.10 | **Agent loop (entries).** `AgentTick(account)` runs only when running, lease held, reconciled, not killed, demo, calendar present (D25). Steps, one entry at a time per account (mutex): (1) watchlist shares whose market is in session (LSE per OD9). (2) Candles: 5 min, 400, unclosed bar dropped (D26/U5). (3) `strategy` evaluate, sized by min(budget, equity); shorts only if `MaxShort > 0`. (4) Cost check (OD8). (5) LLM verdict when reviewing is on: any error/timeout/invalid answer = reject; `ApplyVerdict`. (6) Fresh portfolio + fresh quote (entry = ask for a long, bid for a short; stop still on the right side). (7) Reservations from `orders`. (8) `domain.AssessEntry`. (9) `placeEntry`. Each step's outcome is kept in a trace struct (persisted in phase 5). | `internal/app/agent.go`, `agent_test.go` | `go test -race ./internal/app -run AgentTick`. Approve → `Open` amount ≤ min(fresh cash − reserved, remaining budget). LLM "reduce 0.5" → halved and then capped. An LLM multiplier 3 or "increase" never enlarges. Each of LLM error/timeout, stale quote, stale portfolio, unreconciled, killed, paused, stopped, real, no calendar, budget 0, order in flight → no `Open`. Short: stop > entry; open + pending shorts ≤ 25 % of budget. Every intent: direction ∈ {long, short}, RequestID persisted. | done |
+| 4.11 | **Agent control, kill switch, limits lock.** `StartAgent`: agent.control + trade access, web session only, eToro demo, keys, valid limits, budget > 0, reconciled, not killed. `PauseAgent` / `StopAgent`: entries stop, exits continue (D21). `Kill`: agent.kill + trade access, session or API key. It persists killed (`risk_state` + `agent.state`) **first**, cancels the entry pipeline's context, cancels pending orders, then closes every agent position through the executor, paced by the execution limiter. `ResetKill`: admin, web session, typed phrase `RESET <account name>`, high-water mark := current equity, state → stopped. A per-account mutex serialises Start / SetRiskLimits / Kill / Reset (limits only while stopped, no race). After a restart, agents that were running come back per OD5. All audited, with events. | `internal/app/{agent_control.go,risk.go}`, `agent_control_test.go` | `go test -race ./internal/app -run 'Agent\|Kill\|RiskLimits'`. Role × access matrix. Start refused for a real, killed or unreconciled account and for budget 0. SetRiskLimits while running, paused or killed → 409. 100× concurrent Start vs SetRiskLimits never leaves the agent running with limits written after the start. Kill with 15 positions + pending orders → all cancels and closes sent within one 60 s window of the fake limiter (≤ 20), no `Open` after Kill. API key: kill allowed, start and reset refused. Reset needs admin + phrase. | done |
+| 4.12 | **Sequence property test (app).** 300 seeded scenarios × 200 ticks, `math/rand/v2` (no new dependency). Random prices, fills, rejections, lost answers, 429s, LLM verdicts (incl. garbage), limits, shorts, with supervisor and agent running. After every tick: only the two order shapes; id persisted before send; Σ(open + reserved) ≤ min(budget, equity at decision); no `Open` > fresh cash − reserved; shorts ≤ MaxShort of budget ≤ 25 %; long stop < entry < short stop; no `Open` after kill, drawdown or the daily latch; no agent position open after its market's close − flatten; open orders are resent only after a 429, with the same id. | `internal/app/agent_property_test.go` | `go test -race ./internal/app -run AgentSequenceProperties`; fails if fewer than 500 entries were exercised | done |
 | 4.13 | **Contract and handlers.** Contract first in `cactustrade.yaml`, then `make gen`. `GET /api/v1/agent` (viewer): state, reconciled, kill reason, risk-day equity / high-water mark / floors, blocked instruments, next flatten per market. `POST /api/v1/agent/start` (operator, session), `/pause`, `/stop`, `/kill` (operator, session or key), `/reset` (admin, session, `{confirm}`), `/reconcile` (operator). `GET /api/v1/orders?limit=` (viewer). | `api/openapi/cactustrade.yaml`, `internal/adapters/http/{api.gen.go,handlers_agent.go,agent_test.go}`, `web/src/lib/schema.d.ts` | `make gen && go test ./internal/adapters/http -run Agent`. Status codes 200/403/409/422, CSRF on every mutation, API key refused for start and reset, contracts drift check green. | todo |
 | 4.14 | **Wiring.** Start-up order: migrate → `app.New` → env account / LLM migration → **`ReconcileAll` before any supervisor or agent loop** (scanner and equity loops are read-only) → `supervisorLoop` (10 s; one goroutine with a timeout per account, so one account's exits never wait for another's) → `agentLoop` (bar close + 5 s). Lease holder = random id per process. Graceful shutdown stops the loops and releases leases; positions handled per OD6. | `cmd/cactustrade/main.go`, `main_test.go` | `go test ./cmd/cactustrade` checks that an ordering hook sees `ReconcileAll` before the first `Supervise`; `make build` | todo |
 | 4.15 | **Web.** Dashboard *Agent* panel: state, reconciled, kill reason, distance to daily floor and drawdown; Start / Pause / Stop; red kill-switch button with a confirmation dialog; Reset (admin, typed phrase). Controls disabled with "real trading needs the phase-7 gate" on real accounts. Remove the "orders arrive in phase 4" note. New *Orders* page under Trading. Risk limits page explains paused and killed. | `web/src/components/AgentPanel.tsx`, `web/src/pages/{Dashboard.tsx,Orders.tsx,RiskLimits.tsx}`, `components/Layout.tsx`, `lib/api.ts`, tests | `pnpm -C web check`. Vitest: buttons by role, kill confirmation, real account disabled, limits form disabled unless stopped. | todo |
@@ -417,6 +417,119 @@ Guardrails touched (CLAUDE.md §2): §2.1 no new path (allowlist test unchanged)
 - **4.9-e Loop:** `SuperviseLoop(ctx)` every 10 s supervises each eToro demo account with keys
   in its own goroutine (2 min timeout); an account whose previous pass still runs is skipped.
   Real accounts are skipped (nothing of ours can be there). Not wired into `cmd` yet (4.14).
+
+### Steps 4.10–4.12: decisions (2026-11-24)
+
+- **4.9-x (owner informed, stays: fail-safe) The supervisor watches the drawdown of every eToro
+  demo account with keys, even when its agent never ran.** A fall of the account's equity —
+  including positions cactusTrade did not open, or a withdrawal — can trip the kill switch. The
+  kill only stops entries and closes cactusTrade's own positions and cancels its own pending
+  orders (OD1). Every `agent.killed` event now ends with that sentence ("New entries are
+  stopped. Only the positions cactusTrade opened are closed and its pending orders cancelled;
+  positions opened outside cactusTrade are left alone. An admin must reset the kill switch."),
+  and the drawdown reason says the equity covers every position, also those not opened by
+  cactusTrade (`app.killEffect`, `supervisor.go`).
+- **4.10-a Trace:** `AgentTick` returns an `AgentTrace` (skipped reason, entries, kill, errors)
+  with one `InstrumentTrace` per watchlist share. Each step adds a `TraceCheck{Step, Pass,
+  Detail}`; the steps are `session, candles, signal, costs, review, prices, reservations, risk,
+  order`. Nothing is persisted yet (phase 5).
+- **4.10-b Gate order:** view-only → real mode → no eToro client or market data → no calendar
+  (D25) → agent not running → kill switch on (or unreadable) → not reconciled → lease. After the
+  gate: no budget, empty watchlist, unreadable portfolio or no equity skip the tick. The agent
+  state is read again between instruments and just before `placeEntry`: a pause, stop or kill
+  ends the round. Several entries per tick are allowed, each with its own fresh portfolio and
+  reservations.
+- **4.10-c Session and markets:** the share's own market must be in session and before
+  close − `NoEntryBeforeClose` (checked early to save quota; `AssessEntry` checks it again). LSE
+  is refused by the new `domain.EntriesAllowed` (OD9); NYSE and ASX are allowed. A share with a
+  position already open is skipped before its candles are read.
+- **4.10-d Candles:** 400 five-minute bars. `domain.ClosedBars` drops every bar that has not
+  closed at `now` (U5). `domain.BarsFresh` requires the newest closed bar to have ended at most
+  two intervals ago; otherwise the share is skipped (halted share, stopped feed).
+- **4.10-e Cost gate (OD8):** `domain.CostCheck` refuses when the costs are ≥ the gross gain at
+  the take-profit. It also refuses when there is no take-profit, the take-profit is on the
+  losing side, eToro returns no cost lines, or any line is not in USD. Negative lines (rebates)
+  are ignored, costs are rounded up, and the arithmetic cannot overflow. The gate runs on the
+  candidate's entry and size. If the risk engine shrinks the size, it runs once more with the
+  final size and the fresh entry (one more costs call): fixed fees weigh more on a smaller
+  order.
+- **4.10-f Reviewer (OD7):** the active (default) profile is used. When reviewing is on, each
+  of these is a reject: no reviewer, a broken profile, an error, a timeout, or an answer that
+  arrives after the time limit. The verdict goes through `domain.ApplyVerdict`, so it can only
+  shrink. The reviewer sees the size after the strategy, the open positions and today's P&L.
+- **4.10-g Fresh prices:** the entry is the ask for a long and the bid for a short. A delayed
+  quote, or one older than `MaxQuoteAge`, is refused. The stop must still be on the losing side
+  of the fresh entry, and the take-profit on the winning side.
+- **4.10-h Risk state:** the tick folds the fresh equity into the risk state itself (same
+  versioned write as the supervisor), so `AssessEntry` always sees today's risk day. When the
+  engine reports a drawdown, the agent trips the kill switch after it has released its entry
+  lock (Kill holds the control lock and waits for that entry lock).
+- **4.10-i Cancelled before send:** `sendOpen` checks the context before every `Open`. A
+  cancelled entry (kill, shutdown) becomes `abandoned` ("cancelled before it was sent") and
+  never reaches eToro.
+- **4.10-j `AgentLoop`** (not wired; 4.14) wakes at `domain.NextDecision` (bar close + 5 s,
+  OD3/D26). Each running demo account ticks in its own goroutine with a 4-minute timeout; an
+  account whose tick still runs is skipped.
+- **4.11-a Locks:** every account has two locks. The **control** lock is taken by Start, Pause,
+  Stop, `SetRiskLimits`, Kill, Reset, the supervisor's trip and the OD5 resume. The **entry**
+  lock is held by one agent tick at a time. They are always taken control first, then entry;
+  a tick never waits for the control lock. Pause and Stop take the control lock too and are
+  refused while killed, so a stop can never overwrite the killed state. `SetRiskLimits` reads
+  eToro's equity while holding the control lock, so a Kill during that read waits up to the
+  read's timeout.
+- **4.11-b Pause/Stop** do not cancel an entry already being sent (it completes and is followed
+  up); the next instrument or round sees the new state. Only Kill cancels the entry pipeline.
+- **4.11-c Kill:** persist the kill (risk state, then agent state) → cancel the running tick →
+  wait for the entry lock → settle and cancel our pending open orders → close every agent
+  position. Closes and cancels are sent once each, without polling (the supervisor follows
+  them up). A kill with 15 positions and 5 pending orders therefore sends exactly 20 requests
+  within one 60 s window. In production the eToro client's execution limiter (4.6) paces them;
+  the app test uses a counting broker that flags a 21st request within 60 s. Killing again
+  flattens again but raises no new event. If persisting the kill fails, Kill still flattens and
+  returns the error. A real account can be killed (stored only; nothing of ours can be there).
+- **4.11-d Permissions (OD11):**
+  - Start: `agent.control`, trade access, web session.
+  - Pause and Stop: `agent.control`, trade access, web session or API key.
+  - Kill: `agent.kill`, trade access, web session or API key.
+  - Reset: `agent.kill`, trade access, role admin, web session, and the phrase
+    `RESET <account name>` (exact and case-sensitive; spaces around it are trimmed).
+- **4.11-e Reset (OD10):** needs a fresh equity read; without one nothing is reset. The
+  high-water mark becomes that equity, and the kill reason and time are cleared. Start-of-day
+  equity and the daily latch are not touched. The agent comes back stopped. Audited as
+  `agent.kill_reset`, with a warning event.
+- **4.11-f Start** also needs the eToro client and market data. It is a no-op when the agent is
+  already running, and it may start a paused agent.
+- **4.11-g Resume (OD5):** `ResumeAgents(ctx)` handles every account whose stored agent state is
+  `running`. The agent resumes only when the account would pass Start's checks: demo, keys
+  present, not killed, valid limits with a budget, and reconciled cleanly *in this process*.
+  - Resumed: audit `agent.resume`, info event `agent.resumed`.
+  - Not resumed: the agent is `paused` (`killed` when the kill switch is on), with audit
+    `agent.resume_refused` and a warning event (an alert e-mail).
+  4.14 must call it after `ReconcileAll` and before the agent loop.
+- **4.12-a Sequence:** each tick runs the supervisor and then the agent one after the other, not
+  in two goroutines, so a seed replays exactly. Concurrency is covered by 4.11's tests (Start
+  against `SetRiskLimits` ×100, Kill during a running tick) and by `-race`. The 300 scenarios
+  run as parallel subtests: about 4 s under `-race`. On the current code they make about
+  2 000 entries and exercise every behaviour counted (shorts, 429 resends, manual kills,
+  drawdown trips, resets, daily latches, stop-outs, unreadable portfolios, limit changes).
+- **4.12-b Scope:** closes in the scenarios end in a fill, a lost answer, a 429 or a 5xx, with at
+  most 3 failures in a row. A close stuck pending or refused is covered by the executor tests;
+  in the scenarios it would keep a position open on purpose. The flatten and kill invariants are
+  checked after every supervisor pass that could read the portfolio; a tick with an unreadable
+  portfolio is checked from the next tick.
+- **4.12-c Invariants added to the step's list:**
+  - the entry equals the fresh ask or bid;
+  - an order is never larger than its candidate, and keeps its direction and stop;
+  - the open-position cap holds;
+  - the stored order's send count equals the number of `Open` calls for it;
+  - every position at eToro is recorded as ours or is the owner's own, and the owner's own
+    position is never closed.
+  The test was checked against three planted bugs: sizing from the requested amount, no
+  supervisor flatten, and resending after a lost answer. Each made it fail.
+- **4.12-d Simulator caveat:** `fakes.SimBroker` does not take a pending order's amount out of
+  cash, but counts it in `PendingOpen` and therefore in equity. While an order is pending,
+  equity and the high-water mark are inflated by its amount. This errs towards a kill, not
+  towards spending more. Whether eToro's `credit` behaves the same way is U10 (4.17).
 
 ## Phase 5 — LLM reviewer and decision log — `todo`
 
