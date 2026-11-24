@@ -808,7 +808,7 @@ SetRiskLimits); return `canEdit` from GET /risk-limits instead of computing it i
 replace the remaining `window.confirm` calls (System, ApiKeys, Themes, Users, Accounts)
 with dialogs.
 
-## Phase 6 — live dashboard, history, exports — `in progress`
+## Phase 6 — live dashboard, history, exports — `done (awaiting owner review)`
 
 Read-only for the broker: no new eToro path, no change to any order path. New migration 00011
 (`trades`, both dialects). No new dependency (`encoding/csv`, `net/http` SSE). Order: domain →
@@ -855,13 +855,13 @@ Each is the **default until the owner answers**. OD14–OD18 shape phase 6; OD19
 | 6.8 | **Live stream: contract and server timeouts.** Contract `GET /api/v1/live?accountId` (`text/event-stream`; components `LiveSnapshot`, `LiveEvent`, `LiveOrder`; event names `snapshot`, `event`, `order`, `resync`, `bye`, documented in the description). In `cmd`, factor `newHTTPServer(cfg, handler)` so tests use the production timeouts. | `api/openapi/cactustrade.yaml`, `api.gen.go`, `cmd/cactustrade/{main.go,server.go}`, `schema.d.ts` | `make gen`, contract drift green, `go build ./...` (handler stub answers 503 until 6.9). | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.9 | **Live stream: handler.** Cookie or API key; no CSRF (GET); view access to the account. `http.ResponseController`: `SetReadDeadline(zero)` once, `SetWriteDeadline(now + 10 s)` before every write, `Flush`. Headers `text/event-stream`, `Cache-Control: no-store`, `X-Accel-Buffering: no`. On connect: a full snapshot. Then `event` / `order` messages from the bus filtered by `LiveFilter`, a snapshot every 5 s (cache only), `: ping` every 15 s. Session and access re-checked every 30 s (expired, revoked, password changed or share removed → `bye` and close). Stream lifetime ≤ 30 min (the client reconnects). Bus overflow → `resync`. Caps: 4 per user, 200 total → 429. `Server.CloseStreams()` is registered with `srv.RegisterOnShutdown`. The request histogram skips the route; gauge `cactustrade_live_streams`. | `internal/adapters/http/{handlers_live.go,live_test.go,middleware.go,server.go}`, `cmd/cactustrade/{main.go,main_test.go}` | `go test -race ./internal/adapters/http -run Live && go test ./cmd/cactustrade -run 'Stream\|Shutdown'`. Over `httptest` TLS with `newHTTPServer`, timeouts scaled to 200/300 ms, on HTTP/1.1 **and** HTTP/2: events still arrive after 3× ReadTimeout and 3× WriteTimeout. `Shutdown` returns in < 1 s with 3 open streams, and a kill request in flight still completes (4.14-b). A revoked session gets `bye` within one recheck. A viewer of A never receives B's events. The 5th stream → 429. API key works. No body, cookie or token is logged. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.10 | **Wiring.** `eventbus.New()` into `app.Deps.Bus` (dropped count as a metric); `historyLoop` (every 15 min, 2 min after start, read-only, may run before `ReconcileAll`); the `trades` sync covers real accounts read-only. | `cmd/cactustrade/{main.go,trading.go,main_test.go}` | `go test ./cmd/cactustrade`: the 4.14 ordering hook still sees `ReconcileAll` before the first `Supervise`; history sync is read-only (SimBroker `Opens == 0`, no close or cancel); `make build`. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
-| 6.11 | **Web: live dashboard.** `useLive(accountId)`: `EventSource`; backoff 1 s … 30 s; after 3 failures, polling every 15 s; the stream closes after 60 s hidden. The Dashboard shows equity, cash, budget used / remaining, day P&L, positions (ours / not ours, stop, flatten time), an orders and fills feed, regimes per share, agent state and limit distances as bars (all from the server; no arithmetic in React beyond formatting). `AgentPanel` reads the stream instead of its 15 s poll. A "stale" badge appears after 30 s without a snapshot. | `web/src/lib/live.ts`, `web/src/pages/Dashboard.tsx`, `components/{AgentPanel.tsx,LiveCards.tsx}`, tests | `pnpm -C web check`. Vitest with a fake `EventSource`: snapshot renders; an `order` event updates the feed; `resync` refetches; stale badge; fallback polling after 3 errors; kill button still enabled while the stream is down. | todo |
-| 6.12 | **Web: History page** (under Trading, after Decision log). Neutral summary cards (trades, wins / losses / breakeven, win rate, fees, realised P&L, max drawdown), daily P&L table + inline-SVG bars, equity curve with drawdown shading (reuse `EquityChart`), trades table (ours / all, date range, paging), CSV buttons, and a fixed note "Figures describe past results only; they do not predict future results." | `web/src/pages/{History.tsx,History.test.tsx}`, `components/{Layout.tsx,EquityChart.tsx}`, `lib/api.ts` | `pnpm -C web check`. Vitest: empty history shows "no closed trades" (no 0 % win rate); unknown fees show "unknown"; export links carry `accountId` and the range. | todo |
+| 6.11 | **Web: live dashboard.** `useLive(accountId)`: `EventSource`; backoff 1 s … 30 s; after 3 failures, polling every 15 s; the stream closes after 60 s hidden. The Dashboard shows equity, cash, budget used / remaining, day P&L, positions (ours / not ours, stop, flatten time), an orders and fills feed, regimes per share, agent state and limit distances as bars (all from the server; no arithmetic in React beyond formatting). `AgentPanel` reads the stream instead of its 15 s poll. A "stale" badge appears after 30 s without a snapshot. | `web/src/lib/live.ts`, `web/src/pages/Dashboard.tsx`, `components/{AgentPanel.tsx,LiveCards.tsx}`, tests | `pnpm -C web check`. Vitest with a fake `EventSource`: snapshot renders; an `order` event updates the feed; `resync` refetches; stale badge; fallback polling after 3 errors; kill button still enabled while the stream is down. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
+| 6.12 | **Web: History page** (under Trading, after Decision log). Neutral summary cards (trades, wins / losses / breakeven, win rate, fees, realised P&L, max drawdown), daily P&L table + inline-SVG bars, equity curve with drawdown shading (reuse `EquityChart`), trades table (ours / all, date range, paging), CSV buttons, and a fixed note "Figures describe past results only; they do not predict future results." | `web/src/pages/{History.tsx,History.test.tsx}`, `components/{Layout.tsx,EquityChart.tsx}`, `lib/api.ts` | `pnpm -C web check`. Vitest: empty history shows "no closed trades" (no 0 % win rate); unknown fees show "unknown"; export links carry `accountId` and the range. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.13 | **MINORs 2 and 3 (app).** (2) `Service.SetAgentLoop(running bool)`, set by `startTrading`. While it is false, `startable` refuses with `ErrUnavailable` ("the agent loop is not running: start-up resume failed; restart cactusTrade") and `controls.start` is false with that reason (`AgentView.StartBlocked`). (3) `ResetKill` reads equity **before** the control lock and checks the kill again inside it (as m5). | `internal/app/{agent_control.go,agent_view.go}`, `cmd/cactustrade/trading.go`, tests; `api/openapi` (`AgentControls.startBlockedReason`), `handlers_agent.go` | `go test -race ./internal/app -run 'StartWithoutLoop\|ResetKillDoesNotDelayAKill'`, `go test ./cmd/cactustrade` (a failed resume → Start refused), `make gen`, drift green. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.14 | **MINOR 4: `canEdit` from the server.** `GET /risk/limits` returns `canEdit` and `editBlockedReason` from the same rules as `SetRiskLimits` (permission, session, `limitsChangeable`). `RiskLimits.tsx` only shows them. | `api/openapi/cactustrade.yaml`, `internal/app/risk.go`, `handlers*.go`, `web/src/pages/RiskLimits.tsx` + tests | `make gen && go test ./internal/app -run RiskLimitsView && pnpm -C web check`. Vitest: the form is disabled with the server's reason; no role check left in `RiskLimits.tsx`. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.15 | **MINOR 5: no `window.confirm`.** Extract `AgentPanel`'s modal into `ConfirmDialog` and use it in System, ApiKeys, Themes, Users and Accounts. ESLint `no-restricted-properties` bans `window.confirm`, `alert` and `prompt`. | `web/src/components/{ConfirmDialog.tsx,AgentPanel.tsx}`, `web/src/pages/{System,ApiKeys,Themes,Users,Accounts}.tsx` + tests, `web/eslint.config.*` | `pnpm -C web check`. A planted `window.confirm` fails lint. Vitest per page: cancel does nothing, confirm calls the API once. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
-| 6.16 | **Wording guard and docs.** `TestNoProfitabilityClaims` scans `web/src`, `README.md`, `docs/`, `api/openapi` for a banned-phrase list (profitable, guaranteed, beat the market, make money, winning strategy, "returns of"…). Allowed lines are listed in the test with a reason (e.g. this rule itself). ARCHITECTURE "Live view and history (phase 6)"; `docs/etoro-api.md` corrected (resends per M3; position cap 8 default / 15 hard; trade-history fields); README. | `internal/docs_test.go` (or `cmd/cactustrade/docs_test.go`), docs | `make check`. A planted "profitable strategy" in a page fails. | todo |
-| 6.17 | **Phase verification and owner review.** `make check` green (coverage domain/app ≥ 80 %, MariaDB `test-int` incl. `trades`); smoke: dashboard live for 35 min across a stream lifetime, CSV opens in a spreadsheet without formulas, kill works while streams are open. Stop for the owner. | PLAN | `make check` | todo |
+| 6.16 | **Wording guard and docs.** `TestNoProfitabilityClaims` scans `web/src`, `README.md`, `docs/`, `api/openapi` for a banned-phrase list (profitable, guaranteed, beat the market, make money, winning strategy, "returns of"…). Allowed lines are listed in the test with a reason (e.g. this rule itself). ARCHITECTURE "Live view and history (phase 6)"; `docs/etoro-api.md` corrected (resends per M3; position cap 8 default / 15 hard; trade-history fields); README. | `internal/docs_test.go` (or `cmd/cactustrade/docs_test.go`), docs | `make check`. A planted "profitable strategy" in a page fails. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
+| 6.17 | **Phase verification and owner review.** `make check` green (coverage domain/app ≥ 80 %, MariaDB `test-int` incl. `trades`); smoke: dashboard live for 35 min across a stream lifetime, CSV opens in a spreadsheet without formulas, kill works while streams are open. Stop for the owner. | PLAN | `make check` | done (`make check` green 2026-11-24); the 35-minute smoke run is the owner's |
 
 ### Steps 6.1–6.5: decisions (2026-11-24)
 
@@ -1193,6 +1193,108 @@ same limits plus `canEdit` and an optional `editBlockedReason`).
 - **Open, not in scope:** `Themes.tsx` still derives `canEdit` from the account's access in
   React (the same pattern 6.14 removed from Risk limits); a later step could return it from
   `GET /themes`.
+
+### Steps 6.11, 6.12, 6.16: decisions (2026-11-24)
+
+No new dependency, no migration, no contract change, no eToro path, no change to an order
+path or a guardrail. Web only, plus one Go test and the docs.
+
+- **6.11-a `useLive(accountId)`** (`web/src/lib/live.ts`). One `EventSource` per account
+  (`/api/v1/live?accountId=`; the dashboard keys it by account, so a switch starts afresh).
+  An error, or a bye `unavailable` / `shutdown`, closes the source and reconnects after 1, 2,
+  4 … 30 s (the browser's own retry is never used: the source is closed first). A bye
+  `lifetime` reconnects at once without counting as a failure; `signed_out` and `no_access`
+  end the view for good with a message. The failure count resets on the first **snapshot**,
+  not on `open` (a stream that opens and closes at once still backs off).
+- **6.11-b Fallback.** There is no REST snapshot endpoint and none was added: after 3 failures
+  the hook ticks `refresh` every 15 s (the agent panel refetches `GET /agent`, which reads
+  equity through the 10 s view cache) and reads the orders feed with `GET /orders?limit=20`,
+  while the stream keeps being retried at the capped backoff. The figure cards keep the last
+  snapshot and show the stale badge. The first snapshot ends the fallback.
+- **6.11-c Hidden tab.** 60 s after the tab is hidden the stream closes and polling stops
+  (state "paused"); showing the tab refetches and reconnects at once.
+- **6.11-d Stale badge** when no snapshot arrived for 30 s (counted from the connect before
+  the first one), or when the server's snapshot says `stale` (no portfolio, or one older than
+  30 s); its title says which.
+- **6.11-e AgentPanel** takes an optional `live`. With it the panel has no 15 s interval; it
+  refetches when the stream's agent facts change (state, kill and its reason, daily latch,
+  reconciliation, foreign lease) and on every `refresh` tick. Without it (no stream) it polls
+  as before. **Its buttons are its own REST calls**: the Dashboard test fails the stream three
+  times, then pulls the kill switch and sees the POST.
+- **6.11-f The Dashboard no longer calls `GET /broker/portfolio`** (one direct eToro read per
+  page open): positions come from the snapshot. The old "not a real long x1" badge (React
+  judging an order shape, and wrong for D19 shorts) became plain facts: long / short, `CFD`
+  when not the real asset, `xN` when the leverage is not 1.
+- **6.11-g Arithmetic in React** is limited to presentation: a bar's width (part / whole,
+  clamped; for the floors the whole is start-of-day − daily floor and high-water mark −
+  drawdown floor), the colour of a bar (≤ 0 = "no new entries" as the contract defines it,
+  < 25 % = warning) and the stale timer. Every figure is the server's.
+- **6.12-a Ranges.** Period buttons 1W / 1M / 3M / 1Y (7, 30, 90, 365 risk days) drive the
+  summary, the daily figures and the chart. The trades table has its own From / To date
+  fields (the user's calendar days; To is inclusive, sent as the next local midnight). The CSV
+  links carry `accountId` and those dates when set, otherwise the period's `from` / `to` as the
+  server returned them in the summary (no date arithmetic for the period in React).
+- **6.12-b Equity curve** from `GET /overview/history?days=` filtered to the account (no new
+  endpoint). `EquityCharts` gained an optional `drawdown`: the area between the running peak
+  and the equity is shaded (a picture; the drawdown figures are the summary's). The Overview
+  is unchanged (no shading).
+- **6.12-c Wording and unknowns.** No trades: "No closed trades in this period.", the win rate
+  "—" with "no closed trades", wins / losses and net "—" (never 0 %). Fees: all unknown →
+  "unknown"; some unknown → the known sum with "unknown for N trades" (per day: "+ unknown");
+  a trade's unknown fee → "unknown". Foreign trades are listed with "not opened by
+  cactusTrade" and the summary says how many were not counted (OD15). The fixed note
+  "Figures describe past results only; they do not predict future results." sits at the top.
+- **6.12-d Paging** asks for 50 trades and pages with `before` = the last row's `closedAt`
+  (the 5.7-b caveat applies: trades closed in the same instant across a page boundary may be
+  skipped).
+- **6.16-a The guard** is `cmd/cactustrade/wording_test.go` (`internal/app` and
+  `internal/domain` may not import `os`). It scans `.md .ts .tsx .css .html .yaml .yml .json`
+  under `web/src` (not `node_modules` / `dist`), `README.md`, `docs/` and `api/openapi` for
+  20 case-insensitive patterns (`bannedWording`: the step's list plus similar claims about
+  results, risk and income; kept only in the test so that this plan does not need an allow
+  entry per pattern). An
+  allowed line is (file, text it contains, reason); an entry without a reason or matching no
+  line fails the test. Four entries today: the README risk warning, this plan's rule (twice)
+  and the ARCHITECTURE line naming the guard. Planted phrases (nine, in an `fstest.MapFS`
+  page) each fail; a `web/src/pages/Planted.tsx` with the step's example phrase was also
+  planted in the real tree and failed the test (then removed).
+- **6.16-b Docs.** `docs/etoro-api.md`: resends per review-M3 (an open is sent once; U1 and
+  U7 rows updated), the position cap (8 by default, at most 15), a "Trade history as
+  implemented" section with every field read and its use. ARCHITECTURE: the `Trades` port
+  and "Live view and history (phase 6)". README: status and "Live dashboard and history".
+
+Verification (2026-11-24): `make check` green: gofumpt, golangci-lint 0 issues, vet,
+`go test -race` with coverage domain 99.8 % / app 89.0 %, MariaDB `test-int`, govulncheck
+(no vulnerabilities), contracts in sync, `pnpm -C web check` (21 files, 116 tests; the live
+Dashboard and History tests passed 6 runs in a row), `TestNoProfitabilityClaims` green.
+
+### Phase 6 verification (6.17, 2026-11-24) — awaiting the owner's review
+
+All of 6.1–6.16 are done; `make check` is green as above (coverage domain 99.8 %, app
+89.0 %; MariaDB `test-int` includes `trades`, its cascade and migrations up→down→up). No new
+dependency, one new migration (00011 `trades`, both dialects), no new eToro path (the
+allowlist and its tests are unchanged), no order path changed; the view cache, the stream and
+the history are views only (`TestEntriesNeverUseTheViewCache`, `TestHistoryLoopIsReadOnly`,
+`TestShutdownWithOpenStreams`).
+
+**The owner's smoke run (not done by an agent; demo account only):**
+
+1. Open the Dashboard on a demo account and leave it open for **35 minutes**, across one
+   stream lifetime (30 min): the badge goes `live` → (bye `lifetime`) → `live` again within a
+   second or two, without a reload; figures keep updating; no `stale` badge while cactusTrade
+   runs normally.
+2. With the dashboard open in two tabs, pull the **kill switch** from one: it completes, both
+   tabs show the agent `killed` without a reload. Repeat with the stream stopped (e.g. block
+   `/api/v1/live` in the browser's dev tools): after three failures the badge says "stream
+   down · refreshing every 15 s" and the kill switch still works.
+3. History → download each CSV (trades, daily, equity, orders, decisions) and open it in a
+   spreadsheet: no cell is evaluated as a formula, amounts are plain numbers, times UTC.
+4. Hide the dashboard tab for over a minute, then show it: the stream reconnects.
+5. Check the History page's wording and the unknown fees against a real demo history
+   (RU5: whether `netProfit` is after fees is still unverified).
+
+Open for the owner: OD14–OD18 remain defaults until answered; `Themes.tsx` still derives
+`canEdit` in React (6.15 note); the trade pager's same-instant caveat (6.12-d).
 
 ## Phase 7 — hardening and the real-mode gate — `todo`
 

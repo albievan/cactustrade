@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errorText, usd, type AgentPanel as Panel, type Missing } from "../lib/api";
+import type { Live } from "../lib/live";
 import { useRefreshMode } from "../lib/mode";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FixButton, fixes } from "./FixButton";
@@ -14,7 +15,12 @@ const marketName: Record<string, string> = { LSE: "London", NYSE: "New York", AS
 // AgentPanel shows the current account's agent and its controls. Which control is enabled is
 // decided by the server (panel.controls: role, access, web session or API key, real account);
 // this component only shows it. The kill switch and its reset ask first, in a dialog.
-export function AgentPanel() {
+//
+// With live (the dashboard's stream, PLAN 6.11) the panel refetches when the stream reports a
+// change of the agent (state, kill, daily latch, reconciliation, lease) and when it asks for a
+// refresh (a resync, or every 15 s while the stream is down); without it the panel polls every
+// 15 s. The controls never depend on the stream: they are the panel's own REST calls.
+export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh"> }) {
   const refreshMode = useRefreshMode();
   const [p, setP] = useState<Panel | null>(null);
   const [error, setError] = useState<unknown>(null); // the last action's refusal (its problem may name what is missing)
@@ -31,13 +37,24 @@ export function AgentPanel() {
       setLoadError(errorText(e));
     }
   }, []);
+  const streamed = live !== undefined;
   useEffect(() => {
     void load();
-    // Each refresh costs one eToro portfolio read (shared quota with the supervisor), so a
-    // hidden tab does not poll.
+    if (streamed) return;
+    // Each refresh reads the account's equity (through the 10 s view cache), so a hidden tab
+    // does not poll.
     const t = window.setInterval(() => { if (!document.hidden) void load(); }, 15_000);
     return () => window.clearInterval(t);
-  }, [load]);
+  }, [load, streamed]);
+  // What the stream says about the agent: a change refetches the panel.
+  const s = live?.snapshot;
+  const agentKey = s ? [s.state, s.killed, s.killReason ?? "", s.dayStopped, s.reconciliation.ok, s.reconciliation.at ?? "", s.lease.other].join("|") : "";
+  const refresh = live?.refresh ?? 0;
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; } // the mount already loaded
+    if (streamed) void load();
+  }, [agentKey, refresh, streamed, load]);
 
   async function act(name: string, f: () => Promise<unknown>, done: string) {
     setBusy(name); setError(null); setNote("");

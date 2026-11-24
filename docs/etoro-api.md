@@ -97,15 +97,19 @@ Response `{token, orderId, referenceId}` — **200 = accepted for processing, no
 - **Polling.** An open is looked up at 1, 2, 4, 8, 15 and 30 s after the send; still pending at
   60 s → a cancel (its own stored id); still unknown to eToro (404) 2 min after the send →
   `abandoned`, never resent. A close is read by eToro's `orderForClose.orderID` at 1–30 s.
-- **Resends.** Only an open answered with 429, only with the same id, only after a lookup
-  returned 404, after `Retry-After` (at least 1 s), at most 3 sends. A close answered with 429
-  or lost (and the position still in the portfolio) is resent with the same id (≤ 5).
+- **Resends.** **An open is never resent** (PLAN decision review-M3, stricter than OD2, until
+  U1 and U7 are verified): one send per open. After a 429 the executor waits `Retry-After` and
+  looks the order up by its `referenceId`: found → followed like any open; 404 → the normal
+  poll schedule, `abandoned` 2 min after the send, its cash reserved until then. A close
+  answered with 429 or lost (and the position still in the portfolio) is resent with the same
+  id (≤ 5 sends); a cancel ≤ 3.
 - **Fill check.** Every execution must be the long shape (real, long, ×1) or the short shape
   (cfd, short, ×1), on our instrument, with a stop on the losing side within 1 % of the stop we
   sent. Otherwise the position is closed at once, the instrument blocked and an alert raised.
-- **Pacing.** The client's execution limiter (20 per 60 s per key) paces everything; a kill
-  with 15 positions and 5 pending orders sends exactly 20 requests in one window (D12 caps open
-  positions at 15).
+- **Pacing.** The client's execution limiter (20 per 60 s per key) paces everything. The
+  position cap (open positions plus pending orders) is **8 by default and at most 15**
+  (`HardMaxOpenPositions`, D12): at the hard limit a kill with 15 positions and 5 pending
+  orders sends exactly 20 requests in one window.
 - **Real accounts.** Refused before any I/O by the eToro client, the executor, `IntentFor`, the
   risk engine and agent Start. Reconciliation only reads them.
 
@@ -115,17 +119,40 @@ Each is handled fail-closed today. 4.17 records fixtures and settles them.
 
 | # | Question | How cactusTrade behaves meanwhile |
 |---|---|---|
-| U1 | What eToro does with an open resent with the same `x-request-id` (deduplicate, refuse, or a second order) | Resent only after a 429 *and* a lookup 404, ≤ 3 sends; any other unclear outcome is never resent (OD2) |
+| U1 | What eToro does with an open resent with the same `x-request-id` (deduplicate, refuse, or a second order) | An open is never resent (review-M3): one send; a lost or 429 answer is settled by lookup only |
 | U2 | How long until `orders:lookup` finds a new order | A 404 within 2 min of the send is "in flight": cash stays reserved and the instrument blocked; after 2 min → abandoned |
 | U3 | No lookup by reference for closes; what a second close of a closed position returns | Closes are read by eToro's order id; a lost close answer is settled by re-reading the portfolio; "position not found" and absent from the portfolio → recorded closed |
 | U4 | LSE stop and rate units (GBX vs GBP, Q1) | No LSE entries (OD9); every fill's stop must be within 1 % of ours (a ×100 mix-up fails) |
 | U5 | Whether the newest candle is still forming | Every bar that has not closed at the decision time is dropped; the newest closed bar must be at most two intervals old |
 | U6 | What `isPotential` means in eligibility | Counted as "not offered" |
-| U7 | Whether a 429 is answered before the request is processed | The lookup must return 404 before the same id is sent again |
+| U7 | Whether a 429 is answered before the request is processed | An open answered 429 is not sent again; the lookup after `Retry-After` adopts it if eToro processed it anyway, else it is abandoned after 2 min |
 | U8 | Whether a status-11 (waiting for market) order can be cancelled | A cancel is sent at 60 s and confirmed by lookup; unconfirmed after 2 min → abandoned and retried by the supervisor at most once a minute; entries in that instrument stay blocked |
 | U9 | Partial fills of orders by amount | The filled part is recorded and checked like any fill; a partial that eToro reports final ends `cancelled` with its positions kept |
 | U10 | Whether `credit` already excludes cash held for pending orders | Our own non-final orders *and* eToro's `ordersForOpen` are both subtracted (double counting, conservative, D24) |
 | U11 | How quickly a fill shows in `pnl` | A recorded position missing from the portfolio is taken for closed only 2 min after it was recorded |
+
+### Trade history as implemented (phase 6.3, read-only)
+
+`GET …/trade/demo/history` (real: `…/trade/history`), default quota group. Query `minDate`
+(a date), `page`, `pageSize` (100). cactusTrade reads windows of 364 days from the requested
+start ("1 year − 1 day", the spec's limit), at most 50 pages per window, and keeps each trade
+once per `positionId`, in the window its close falls in. Any failed page fails the whole read
+(nothing partial is stored). Fields read per closed trade:
+
+| Field | Use |
+|---|---|
+| `positionId`, `instrumentId`, `orderId` | identity; `orderId` is eToro's id of the open (0 = not reported) |
+| `isBuy`, `leverage` | direction (long / short) and leverage |
+| `openTimestamp`, `closeTimestamp` | times (UTC); a trade without a close time or position id is skipped with a warning |
+| `openRate`, `closeRate`, `stopLossRate`, `takeProfitRate` | rates (exact decimals, micros) |
+| `units` | units (micros) |
+| `initialInvestment`, else `investment` | the amount invested (cents; `initialInvestment` when present and > 0) |
+| `netProfit` | the net result in USD (cents). **Assumed to be after fees (RU5, unverified)**: gross = net + known fees |
+| `fees` | USD (cents). **Missing or null = unknown**: kept apart (`fees_known` false) and never counted as 0 |
+
+The first sync of an account reads 90 days (OD18); later ones start 2 days before the latest
+stored close. Unverified until a live run: whether eToro answers a window up to its end or up
+to now (the per-position de-duplication makes both give the same result).
 
 ### Shorts (owner's decision D19)
 

@@ -2,35 +2,32 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ReviewBoard } from "../components/ReviewBoard";
 import { AgentPanel } from "../components/AgentPanel";
-import { api, errorText, usd, type MarketSession, type Portfolio, type SystemStatus } from "../lib/api";
+import { InfoCard } from "../components/InfoCard";
+import { LimitBars, LiveEnded, LivePositions, LiveStats, LiveStatus, OrderFeed, RegimeList } from "../components/LiveCards";
+import { api, type Account, type MarketSession, type SystemStatus } from "../lib/api";
+import { useLive } from "../lib/live";
 
+// The dashboard of the current account. Its figures, positions, orders and regimes come from
+// the live stream (GET /api/v1/live, PLAN 6.11); the agent's controls are the agent panel's
+// own REST calls, so the kill switch works while the stream is down.
 export function Dashboard() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [markets, setMarkets] = useState<MarketSession[]>([]);
-  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [pfError, setPfError] = useState("");
   useEffect(() => {
     api.status().then(setStatus).catch(() => undefined);
     api.marketStatus().then(setMarkets).catch(() => undefined);
-    api.portfolio().then(setPortfolio).catch((e) => setPfError(errorText(e)));
   }, []);
   const noAccount = status !== null && !status.account;
   return (
     <>
       <h1 className="h3 mb-4">Dashboard</h1>
-      <div className="row g-3 mb-4">
-        <Stat label="Agent" value={status?.agentState ?? "…"} icon="bi-robot" capitalize />
-        <Stat label="Mode" value={status?.mode ?? "…"} icon="bi-shield-check" capitalize />
-        <Stat label="Available cash" value={portfolio ? usd(portfolio.availableCashCents) : "—"} icon="bi-cash-coin" />
-        <Stat label="Equity" value={portfolio ? usd(portfolio.equityCents) : "—"} icon="bi-graph-up" />
-      </div>
       {noAccount && (
         <div className="alert alert-warning">
           You have no eToro account yet. Add one under <Link to="/accounts">eToro accounts</Link>, or start cactusTrade
           with <code>ETORO_DEMO_PUB</code> and <code>ETORO_DEMO_PK</code> (the first admin then gets "Demo (environment)").
         </div>
       )}
-      {status?.account && <AgentPanel key={status.account.id} />}
+      {status?.account && <LiveDashboard key={status.account.id} account={status.account} />}
       <div className="row g-3 mb-4">
         {markets.map((m) => (
           <div className="col-md-6" key={m.market}>
@@ -51,35 +48,42 @@ export function Dashboard() {
         ))}
       </div>
       <ReviewBoard />
-      <div className="card">
-        <div className="card-body">
-          <h2 className="h5">Open positions</h2>
-          {pfError && <p className="text-secondary mb-0">{pfError}</p>}
-          {portfolio && portfolio.positions.length === 0 && <p className="text-secondary mb-0">No open positions.</p>}
-          {portfolio && portfolio.positions.length > 0 && (
-            <div className="table-responsive">
-              <table className="table table-sm align-middle mb-0">
-                <thead><tr><th>Position</th><th>Instrument</th><th>Opened</th><th className="text-end">Rate</th><th className="text-end">Units</th><th className="text-end">Invested</th><th className="text-end">P&amp;L</th><th /></tr></thead>
-                <tbody>
-                  {portfolio.positions.map((p) => (
-                    <tr key={p.positionId}>
-                      <td>{p.positionId}</td>
-                      <td>{p.instrumentId}</td>
-                      <td>{new Date(p.openedAt).toLocaleString()}</td>
-                      <td className="text-end">{p.openRate}</td>
-                      <td className="text-end">{p.units}</td>
-                      <td className="text-end">{usd(p.amountCents)}</td>
-                      <td className={"text-end " + (p.unrealisedPnlCents < 0 ? "text-danger" : "text-success")}>{usd(p.unrealisedPnlCents)}</td>
-                      <td>{!(p.realAsset && p.long && p.leverage === 1) && <span className="badge text-bg-danger">not a real long x1</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="small text-secondary mt-3 mb-0">
-            Every position in the account. cactusTrade closes only the ones it opened; the others are left alone.
-          </p>
+    </>
+  );
+}
+
+// LiveDashboard follows one account's stream (keyed by the account: a switch starts afresh).
+function LiveDashboard({ account }: { account: Account }) {
+  const live = useLive(account.id);
+  const s = live.snapshot;
+  return (
+    <>
+      <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <span className="small text-secondary">Live view of <strong>{account.name}</strong></span>
+        <LiveStatus live={live} />
+      </div>
+      <LiveEnded reason={live.endedReason} />
+      <LiveStats snapshot={s} />
+      <AgentPanel live={live} />
+      <div className="row g-3 mb-4">
+        <div className="col-xl-6"><LimitBars figures={s?.figures} accountId={account.id} /></div>
+        <div className="col-xl-6"><OrderFeed orders={live.orders} events={live.events} /></div>
+      </div>
+      <LivePositions snapshot={s} />
+      <div className="row g-3 mb-4">
+        <div className="col-xl-6"><RegimeList regimes={s?.regimes ?? []} /></div>
+        <div className="col-xl-6">
+          <InfoCard id="dashboard-live" title="How the live view works">
+            <ul className="small mb-0">
+              <li>The figures arrive every 5 seconds from cactusTrade's latest read of the account, and at once when an
+                order or the agent changes. Nothing here places or changes an order.</li>
+              <li><strong>stale</strong> means no update for 30 seconds, or a portfolio older than 30 seconds: the figures
+                may be out of date.</li>
+              <li>When the stream fails three times the page refreshes every 15 seconds instead and keeps retrying. The
+                kill switch and the agent's buttons never depend on the stream.</li>
+              <li>A tab hidden for a minute closes the stream; it reopens when you come back.</li>
+            </ul>
+          </InfoCard>
         </div>
       </div>
     </>
@@ -88,17 +92,4 @@ export function Dashboard() {
 
 function time(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function Stat({ label, value, icon, capitalize }: { label: string; value: string; icon: string; capitalize?: boolean }) {
-  return (
-    <div className="col-6 col-lg-3">
-      <div className="card stat h-100">
-        <div className="card-body">
-          <div className="text-secondary small"><i className={"bi me-1 " + icon} />{label}</div>
-          <div className={"value" + (capitalize ? " text-capitalize" : "")}>{value}</div>
-        </div>
-      </div>
-    </div>
-  );
 }

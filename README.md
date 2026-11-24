@@ -11,7 +11,7 @@ Kubernetes using the same `deploy.sh` as the other cactus apps.
 > implies that it is profitable. It runs in **demo mode by default**. Real money needs a
 > deliberate, gated switch, and you use it entirely at your own risk (see `LICENSE`).
 
-**Status: phases 1–2 done, phase 3 done except its live check (3.6), phases 4 and 5 done except the owner's live runs (4.17, 5.8), of 7.** Sign-in,
+**Status: phases 1–2 done, phase 3 done except its live check (3.6), phases 4 and 5 done except the owner's live runs (4.17, 5.8), phase 6 done and awaiting the owner's review, of 7.** Sign-in,
 roles, API keys, the encrypted write-only credential store, deployment, the eToro client,
 market sessions (LSE, NYSE/NASDAQ, ASX), watchlists, the regime model, playbooks and
 walk-forward backtester (`cactustrade backtest --instrument ID`), and now **demo execution**:
@@ -19,7 +19,8 @@ the risk engine, the agent (entries at each 5-minute bar close), the supervisor 
 kill switch, reconciliation with eToro and the Orders page, plus the **decision log** (every
 idea the agent had, what the LLM reviewer and the risk engine said, and the order it led to,
 with the reviewer's prompt and answer) and the LLM usage and cost per profile, from prices you
-enter (unknown without them). **Demo accounts only:** a real-money
+enter (unknown without them). Phase 6 adds the **live dashboard** and the **History** page
+with CSV exports (see below). **Demo accounts only:** a real-money
 account is refused in five places until the phase-7 gate. The execution code has been tested
 against a simulated eToro account; it has **not yet run against eToro's demo** (PLAN 4.17,
 the owner's run) and several eToro behaviours are still unverified
@@ -57,6 +58,27 @@ not a forecast and not advice. See [`docs/PLAN.md`](docs/PLAN.md).
   calls, prompts and answers included, are kept 400 days.
 
 The full list is in [`CLAUDE.md` §2](CLAUDE.md).
+
+## Live dashboard and history
+
+- **Dashboard.** The current account's figures arrive over a live stream (server-sent events,
+  `GET /api/v1/live`): equity, cash left after reservations, trading budget used and left, the
+  day's P&L, the distance to every risk limit as a bar, the open positions (cactusTrade's own
+  and the others, with stop, target and the time cactusTrade closes its own), an orders and
+  fills feed, the latest regime per watchlist share and the agent's state. A **stale** badge
+  shows when nothing arrived for 30 seconds. If the stream fails, the page refreshes every
+  15 seconds instead and keeps retrying; the kill switch and the agent's buttons never depend
+  on the stream. Nothing on the dashboard places an order.
+- **History** (Trading → History). Closed trades are read from eToro every 15 minutes
+  (read-only; the first read covers 90 days). The page shows neutral counts and sums of the
+  trades of positions cactusTrade opened (trades, wins / losses / breakeven, win rate, fees,
+  realised P&L, maximum drawdown), the figures per risk day, the equity curve with its
+  drawdowns and the trades table (cactusTrade's or all, by date, paged). Fees eToro did not
+  report are shown as *unknown*, never as 0. Figures describe past results only; they do not
+  predict future results.
+- **CSV exports** of trades, daily figures, equity snapshots, orders and decisions (viewers and
+  API keys may export): UTC times, exact dollar amounts, and any cell a spreadsheet could take
+  for a formula prefixed with `'`. At most 50 000 rows; a larger export is refused, never cut.
 
 ## Quick start: standalone (SQLite)
 

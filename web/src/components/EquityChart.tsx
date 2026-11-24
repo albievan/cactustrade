@@ -3,16 +3,18 @@ import { money } from "../lib/api";
 
 // An inline SVG line chart of equity over time: one line per account. Accounts in different
 // currencies get separate charts (amounts in different currencies are never put on one
-// axis). Colours come from CSS variables, so light and dark themes both work.
+// axis). Colours come from CSS variables, so light and dark themes both work. With drawdown,
+// the area between the highest equity so far and the equity is shaded (a picture of the
+// server's figures: the drawdown numbers themselves come from GET /api/v1/history/summary).
 
 const W = 760;
 const H = 240;
 const PAD = { l: 84, r: 16, t: 12, b: 30 };
 const COLOURS = 6;
 
-interface Props { series: EquitySeries[]; days: number }
+interface Props { series: EquitySeries[]; days: number; drawdown?: boolean }
 
-export function EquityCharts({ series, days }: Props) {
+export function EquityCharts({ series, days, drawdown = false }: Props) {
   const withPoints = series.filter((s) => s.points.length > 0);
   if (withPoints.length === 0) {
     return <p className="text-secondary mb-0">The chart fills in as snapshots are recorded every 15 minutes.</p>;
@@ -24,13 +26,13 @@ export function EquityCharts({ series, days }: Props) {
   return (
     <>
       {[...byCurrency.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([cur, ss]) => (
-        <Chart key={cur} currency={cur} series={ss} colour={colour} days={days} />
+        <Chart key={cur} currency={cur} series={ss} colour={colour} days={days} drawdown={drawdown} />
       ))}
     </>
   );
 }
 
-function Chart({ currency, series, colour, days }: { currency: string; series: EquitySeries[]; colour: Map<string, string>; days: number }) {
+function Chart({ currency, series, colour, days, drawdown }: { currency: string; series: EquitySeries[]; colour: Map<string, string>; days: number; drawdown: boolean }) {
   const pts = series.flatMap((s) => s.points);
   const ts = pts.map((p) => Date.parse(p.at));
   let t0 = Math.min(...ts);
@@ -63,6 +65,10 @@ function Chart({ currency, series, colour, days }: { currency: string; series: E
         {xTicks.map((t) => (
           <text key={`x${t}`} x={x(t)} y={H - 8} textAnchor="middle" className="axis">{fmtT(t)}</text>
         ))}
+        {drawdown && series.map((s) => {
+          const d = drawdownArea(s, x, y);
+          return d ? <path key={`dd${s.accountId}`} d={d} className="drawdown" data-testid="drawdown" /> : null;
+        })}
         {series.map((s) => {
           const c = colour.get(s.accountId);
           if (s.points.length === 1) {
@@ -80,4 +86,23 @@ function Chart({ currency, series, colour, days }: { currency: string; series: E
       </div>
     </figure>
   );
+}
+
+// drawdownArea is the outline between the running peak of a series and the series itself
+// (empty when it never falls below its peak).
+function drawdownArea(s: EquitySeries, x: (t: number) => number, y: (v: number) => number): string {
+  if (s.points.length < 2) return "";
+  let peak = -Infinity;
+  let below = false;
+  const top: string[] = [];
+  const bottom: string[] = [];
+  for (const p of s.points) {
+    peak = Math.max(peak, p.equity);
+    if (p.equity < peak) below = true;
+    const px = x(Date.parse(p.at)).toFixed(1);
+    top.push(`${px},${y(peak).toFixed(1)}`);
+    bottom.push(`${px},${y(p.equity).toFixed(1)}`);
+  }
+  if (!below) return "";
+  return "M" + top.join(" L") + " L" + bottom.reverse().join(" L") + " Z";
 }

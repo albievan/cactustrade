@@ -46,6 +46,7 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `SignalModel` | phase 3 |
 | `Reviewer` | `adapters/llm` (Anthropic SDK; OpenAI-compatible for the others); profiles (with the admin's prices, OD13) in settings, keys `llm.<id>.api_key`. `Review` returns the verdict and the call's trace (request body as sent, raw response, served model, tokens, latency), filled even on error, never with the key |
 | `LLMCalls`, `Decisions` (repository) | `sqlstore` (migration 00010): every LLM call (agent, scanner, test) and the decision log (one row per candidate the agent handled); both kept 400 days (OD12); `LLMCalls.Usage` sums them per profile and purpose |
+| `Trades` (repository) | `sqlstore` (`trades`, migration 00011): eToro's closed trades per account (read-only sync, PK account + position id), flagged `ours` when cactusTrade opened the position; kept as long as the account (OD16) |
 | `Mailer` | `adapters/mail` (net/smtp: STARTTLS required / implicit TLS / plain to localhost; header-injection checks); `Outbox` and `PasswordResets` repositories |
 
 The `Broker` port has no money-movement operation. Its `Open` takes a `domain.OrderIntent`,
@@ -177,6 +178,56 @@ Three paths act on an eToro demo account. Only the executor (`app/executor.go`) 
   the row had a price ("unknown" otherwise, with the known part apart).
 - **Retention (OD12).** `PurgeDecisionLog` (every 10 minutes, with the other purges) deletes
   decisions and LLM calls older than 400 days.
+
+### Live view and history (phase 6)
+
+Both are **views**: read-only for the broker (no new eToro path; the allowlist test is
+unchanged), and nothing an order path decides reads them.
+
+```
+ supervisor's portfolio read ──put──► view cache (per account, value + read time)
+ view use cases ──► viewPortfolio (≤ 1 eToro read per account per 10 s, shared flight)
+ executor / reconcile / agent / supervisor ──publish──► event bus (never blocks)
+ GET /api/v1/live ──► LiveSnapshot (cache + store only) every 5 s, and on agent.state /
+                      account.portfolio (≤ 1 per second); event / order messages filtered
+                      by LiveFilter; resync on overflow; bye on sign-out, lost access,
+                      30-min lifetime, shutdown
+ historyLoop (15 min) ──► SyncTradesAll ──► Broker.TradeHistory ──► trades (upsert in Go)
+ GET /api/v1/history/{summary,daily,trades}, /history/export/{file}.csv ──► Trades, snapshots
+```
+
+- **The view cache never feeds a decision (guardrail §2.2).** `runtimeState.views` holds the
+  last portfolio per account. The supervisor stores its own read there; the agent tick, fresh
+  prices, the executor and the budget check keep reading eToro fresh.
+  `TestEntriesNeverUseTheViewCache` and a go/ast source test (`TestViewCacheReadersAreViewsOnly`)
+  enforce it.
+- **Live figures** are `domain.LimitDistances` (integer cents and basis points): equity, cash,
+  reserved, budget used / left, day P&L, the distances to the daily and drawdown floors, slots
+  against the position cap, short exposure against its cap, and per market the time to
+  no-entry and flatten. A distance at or below 0 means `AssessEntry` refuses an entry
+  (`TestLimitDistancesAgreeWithAssessEntry`, 20 000 inputs).
+- **The stream** (`handlers_live.go`) is one account per connection (OD14), cookie or API key,
+  capped at 4 per user and 200 in total. Write deadlines are set before and cleared after each
+  write, so the server's read and write timeouts do not end it (HTTP/1.1 and HTTP/2 tests).
+  `Server.CloseStreams` runs on shutdown; a kill request in flight still completes.
+- **The web dashboard** (`web/src/lib/live.ts`, `useLive`) uses `EventSource`: backoff 1 s to
+  30 s, after 3 failures a 15-second refresh while it keeps retrying, closed after 60 s in a
+  hidden tab, a stale badge after 30 s without a snapshot (or when the server marks the
+  portfolio old). The agent panel's buttons are its own REST calls: **the kill switch works
+  while the stream is down** (Vitest). React only formats; the bar widths are the one
+  computation.
+- **History** comes from `trades` and `equity_snapshots`: `domain.TradeStats` (count, wins,
+  losses, breakeven, win rate in bp, absent without trades; gross, fees, net; unknown fees
+  counted apart, never as 0), `DailyPnL` per risk day (22:00 UTC; the equity change includes
+  deposits, withdrawals and other positions, and is labelled so) and `Drawdown`. The summary
+  counts cactusTrade's own trades (OD15); positions opened elsewhere are listed and flagged.
+- **CSV exports** (`encoding/csv`, at most 50 000 rows, 422 beyond: never cut short) write
+  exact decimal amounts and UTC RFC 3339 times, and prefix any text cell a spreadsheet could
+  read as a formula with `'` (OD17).
+- **Wording.** The History page carries the fixed note "Figures describe past results only;
+  they do not predict future results." `TestNoProfitabilityClaims` (`cmd/cactustrade`) scans
+  `web/src`, `README.md`, `docs/` and `api/openapi` for banned phrases; each allowed line is
+  listed in the test with its reason.
 
 ## Accounts
 

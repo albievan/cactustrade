@@ -20,6 +20,7 @@ import { ResetPassword } from "./pages/ResetPassword";
 import { Overview } from "./pages/Overview";
 import { Orders } from "./pages/Orders";
 import { DecisionLog } from "./pages/DecisionLog";
+import { History } from "./pages/History";
 
 export function App() {
   const { me, loading } = useSession();
@@ -42,6 +43,7 @@ export function App() {
         <Route path="watchlist" element={<Watchlist />} />
         <Route path="orders" element={<Orders />} />
         <Route path="decisions" element={<DecisionLog />} />
+        <Route path="history" element={<History />} />
         <Route path="accounts" element={<Accounts />} />
         <Route path="themes" element={<Themes />} />
         <Route path="credentials" element={<Navigate to="/accounts" replace />} />

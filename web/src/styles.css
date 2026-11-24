@@ -149,3 +149,13 @@ body[data-mode=real] .app-head .brand-version { color: rgba(255, 255, 255, .8); 
   padding: 0.5rem;
   margin: 0.25rem 0 0;
 }
+
+/* ---- live dashboard: limit distance bars ---- */
+.limit-bar { height: 6px; background: var(--border); }
+
+/* ---- history: daily bars and the equity curve's drawdown shading ---- */
+.daily-bars svg { width: 100%; height: 140px; display: block; }
+.daily-bars .zero { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.daily-bars .up { fill: var(--chart-1); }
+.daily-bars .down { fill: var(--chart-5); }
+.equity-chart .drawdown { fill: var(--chart-5); opacity: .18; }

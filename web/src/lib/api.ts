@@ -65,6 +65,25 @@ export type LlmUsage = components["schemas"]["LlmUsage"];
 export type LlmUsageRow = components["schemas"]["LlmUsageRow"];
 export type Missing = components["schemas"]["Missing"];
 export type MissingItem = components["schemas"]["MissingItem"];
+export type HistorySummary = components["schemas"]["HistorySummary"];
+export type HistoryTrade = components["schemas"]["HistoryTrade"];
+export type HistoryDay = components["schemas"]["HistoryDay"];
+export type DailyHistory = components["schemas"]["DailyHistory"];
+
+// HistoryFile is one of the CSV exports of GET /api/v1/history/export/{file}.
+export type HistoryFile = "trades.csv" | "daily.csv" | "equity.csv" | "orders.csv" | "decisions.csv";
+
+// historyQuery builds a query string from the set values only.
+function historyQuery(q: Record<string, string | number | boolean | undefined>): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== "") p.set(k, String(v));
+  return p.toString();
+}
+
+// exportUrl is the address of a CSV export: the browser downloads it with the session cookie.
+export function exportUrl(file: HistoryFile, accountId: string, from?: string, to?: string): string {
+  return `/api/v1/history/export/${file}?${historyQuery({ accountId, from, to })}`;
+}
 
 // ApiError is a refused request with the server's problem (RFC 9457), kept whole so a page
 // can show what is missing (problem.missing, problem.canFix; R22).
@@ -216,6 +235,13 @@ export const api = {
   },
   decision: (id: string) => request<DecisionDetail>("GET", `/api/v1/decisions/${encodeURIComponent(id)}`),
   llmUsage: (days = 30) => request<LlmUsage>("GET", `/api/v1/llm/usage?days=${days}`),
+  // An account's history (PLAN 6.12): figures describe past results only.
+  historySummary: (accountId: string, days: number) =>
+    request<HistorySummary>("GET", `/api/v1/history/summary?${historyQuery({ accountId, days })}`),
+  historyDaily: (accountId: string, days: number) =>
+    request<DailyHistory>("GET", `/api/v1/history/daily?${historyQuery({ accountId, days })}`),
+  historyTrades: (q: { accountId: string; from?: string; to?: string; ours?: boolean; before?: string; limit?: number }) =>
+    request<HistoryTrade[]>("GET", `/api/v1/history/trades?${historyQuery(q)}`),
   connectSaxo: (id: string) => request<ConnectStart>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/saxo/connect`),
   testAccount: (id: string) => request<BrokerCheck>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/test`),
   accountShares: (id: string) => request<AccountShare[]>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/shares`),
