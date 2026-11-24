@@ -1228,6 +1228,217 @@ type KillRequest struct {
 	Reason *string `json:"reason,omitempty"`
 }
 
+// LiveEvent A new event of the feed (the `event` message)
+type LiveEvent struct {
+	// AccountId the account it is about (empty = system-wide)
+	AccountId string `json:"accountId"`
+	Event     Event  `json:"event"`
+}
+
+// LiveFigures The account's figures and its distance to every limit the risk engine applies, from
+// the cached portfolio (`asOf`). Distances are the amounts left before a limit refuses
+// an entry; a distance at or below 0 means no new entry.
+type LiveFigures struct {
+	AsOf time.Time `json:"asOf"`
+
+	// BudgetCents US dollars in cents (the eToro account currency is USD)
+	BudgetCents Cents `json:"budgetCents"`
+
+	// BudgetLeftCents US dollars in cents (the eToro account currency is USD)
+	BudgetLeftCents Cents `json:"budgetLeftCents"`
+
+	// BudgetUsedCents US dollars in cents (the eToro account currency is USD)
+	BudgetUsedCents Cents `json:"budgetUsedCents"`
+
+	// Cap the position cap
+	Cap int `json:"cap"`
+
+	// CashCents US dollars in cents (the eToro account currency is USD)
+	CashCents Cents `json:"cashCents"`
+
+	// CashLeftCents US dollars in cents (the eToro account currency is USD)
+	CashLeftCents Cents `json:"cashLeftCents"`
+
+	// DailyFloorCents US dollars in cents (the eToro account currency is USD)
+	DailyFloorCents Cents `json:"dailyFloorCents"`
+
+	// Day today's risk day (22:00 UTC boundary)
+	Day string `json:"day"`
+
+	// DayKnown the day figures (start of day, day P&L, daily floor) are today's
+	DayKnown bool `json:"dayKnown"`
+
+	// DayPnlCents US dollars in cents (the eToro account currency is USD)
+	DayPnlCents Cents `json:"dayPnlCents"`
+	DayStopped  bool  `json:"dayStopped"`
+
+	// DrawdownFloorCents US dollars in cents (the eToro account currency is USD)
+	DrawdownFloorCents Cents `json:"drawdownFloorCents"`
+
+	// EquityCents US dollars in cents (the eToro account currency is USD)
+	EquityCents Cents `json:"equityCents"`
+
+	// HighWaterMarkCents US dollars in cents (the eToro account currency is USD)
+	HighWaterMarkCents Cents             `json:"highWaterMarkCents"`
+	Killed             bool              `json:"killed"`
+	Markets            []LiveMarketClock `json:"markets"`
+
+	// Open open positions plus our unfinished open orders
+	Open int `json:"open"`
+
+	// ReservedCents US dollars in cents (the eToro account currency is USD)
+	ReservedCents Cents `json:"reservedCents"`
+
+	// ShortCapCents US dollars in cents (the eToro account currency is USD)
+	ShortCapCents Cents `json:"shortCapCents"`
+
+	// ShortLeftCents US dollars in cents (the eToro account currency is USD)
+	ShortLeftCents Cents `json:"shortLeftCents"`
+
+	// ShortUsedCents US dollars in cents (the eToro account currency is USD)
+	ShortUsedCents Cents `json:"shortUsedCents"`
+	SlotsLeft      int   `json:"slotsLeft"`
+
+	// StartOfDayCents US dollars in cents (the eToro account currency is USD)
+	StartOfDayCents Cents `json:"startOfDayCents"`
+
+	// ToDailyFloorCents US dollars in cents (the eToro account currency is USD)
+	ToDailyFloorCents Cents `json:"toDailyFloorCents"`
+
+	// ToDrawdownFloorCents US dollars in cents (the eToro account currency is USD)
+	ToDrawdownFloorCents Cents `json:"toDrawdownFloorCents"`
+}
+
+// LiveMarketClock defines model for LiveMarketClock.
+type LiveMarketClock struct {
+	Closes *time.Time `json:"closes,omitempty"`
+
+	// FlattenAt cactusTrade's positions of this market are closed from then on
+	FlattenAt *time.Time `json:"flattenAt,omitempty"`
+
+	// Market LSE, NYSE (NYSE and NASDAQ share a calendar), ASX or "" when not tradable here
+	Market Market `json:"market"`
+
+	// NoEntryAt no new entries from then on
+	NoEntryAt *time.Time `json:"noEntryAt,omitempty"`
+	Opens     *time.Time `json:"opens,omitempty"`
+
+	// ToFlattenSeconds seconds until flattenAt (0 = passed or not trading)
+	ToFlattenSeconds int64 `json:"toFlattenSeconds"`
+
+	// ToNoEntrySeconds seconds until noEntryAt (0 = passed or not trading)
+	ToNoEntrySeconds int64 `json:"toNoEntrySeconds"`
+
+	// Trading the market trades today
+	Trading bool `json:"trading"`
+}
+
+// LiveNotice Why the server sent `resync` or `bye`
+type LiveNotice struct {
+	// Reason resync: behind; bye: signed_out, no_access, unavailable (the check could not be made), lifetime or shutdown
+	Reason string `json:"reason"`
+}
+
+// LiveOrder One of cactusTrade's orders as just stored (the `order` message)
+type LiveOrder struct {
+	AccountId string `json:"accountId"`
+	Order     Order  `json:"order"`
+}
+
+// LivePosition defines model for LivePosition.
+type LivePosition struct {
+	// AmountCents US dollars in cents (the eToro account currency is USD)
+	AmountCents Cents `json:"amountCents"`
+
+	// FlattenAt when cactusTrade closes it today (ours only)
+	FlattenAt    *time.Time `json:"flattenAt,omitempty"`
+	InstrumentId int64      `json:"instrumentId"`
+	Leverage     int        `json:"leverage"`
+	Long         bool       `json:"long"`
+
+	// Market LSE, NYSE (NYSE and NASDAQ share a calendar), ASX or "" when not tradable here
+	Market Market `json:"market"`
+
+	// OpenRate An exact decimal (prices and units, up to 6 places)
+	OpenRate Decimal `json:"openRate"`
+
+	// OpenRequestId the x-request-id of our open order
+	OpenRequestId *string   `json:"openRequestId,omitempty"`
+	OpenedAt      time.Time `json:"openedAt"`
+
+	// Ours cactusTrade opened it (only these are ever closed by cactusTrade)
+	Ours       bool  `json:"ours"`
+	PositionId int64 `json:"positionId"`
+	RealAsset  bool  `json:"realAsset"`
+
+	// StopLossRate An exact decimal (prices and units, up to 6 places)
+	StopLossRate *Decimal `json:"stopLossRate,omitempty"`
+
+	// Symbol empty when the instrument is not cached
+	Symbol string `json:"symbol"`
+
+	// TakeProfitRate An exact decimal (prices and units, up to 6 places)
+	TakeProfitRate *Decimal `json:"takeProfitRate,omitempty"`
+
+	// Units An exact decimal (prices and units, up to 6 places)
+	Units Decimal `json:"units"`
+
+	// UnrealisedPnlCents US dollars in cents (the eToro account currency is USD)
+	UnrealisedPnlCents Cents `json:"unrealisedPnlCents"`
+}
+
+// LiveRegime defines model for LiveRegime.
+type LiveRegime struct {
+	At           *time.Time `json:"at,omitempty"`
+	InstrumentId int64      `json:"instrumentId"`
+
+	// Known a review with regime probabilities exists
+	Known bool `json:"known"`
+
+	// Probabilities the regime model's probabilities (regime → 0..1)
+	Probabilities *map[string]float64 `json:"probabilities,omitempty"`
+
+	// Regime the most likely regime of the latest review
+	Regime *string `json:"regime,omitempty"`
+	Symbol string  `json:"symbol"`
+}
+
+// LiveSnapshot An account's live view (the `snapshot` message of GET /api/v1/live)
+type LiveSnapshot struct {
+	Account Account `json:"account"`
+
+	// At when the snapshot was built
+	At         time.Time `json:"at"`
+	DayStopped bool      `json:"dayStopped"`
+
+	// Figures The account's figures and its distance to every limit the risk engine applies, from
+	// the cached portfolio (`asOf`). Distances are the amounts left before a limit refuses
+	// an entry; a distance at or below 0 means no new entry.
+	Figures    *LiveFigures `json:"figures,omitempty"`
+	KillReason *string      `json:"killReason,omitempty"`
+	Killed     bool         `json:"killed"`
+
+	// Lease Who may send orders for the account (one process at a time)
+	Lease AgentLease `json:"lease"`
+
+	// OpenOrders our orders that are not final, oldest first
+	OpenOrders  []Order    `json:"openOrders"`
+	PortfolioAt *time.Time `json:"portfolioAt,omitempty"`
+
+	// PortfolioKnown a cached portfolio exists; figures and positions need one
+	PortfolioKnown bool           `json:"portfolioKnown"`
+	Positions      []LivePosition `json:"positions"`
+
+	// RecentOrders the latest 20 orders, newest first
+	RecentOrders   []Order        `json:"recentOrders"`
+	Reconciliation Reconciliation `json:"reconciliation"`
+	Regimes        []LiveRegime   `json:"regimes"`
+
+	// Stale no portfolio, or one older than 30 seconds
+	Stale bool       `json:"stale"`
+	State AgentState `json:"state"`
+}
+
 // LlmCall One call to an LLM reviewer as sent and received (never a key or a header)
 type LlmCall struct {
 	At time.Time `json:"at"`
@@ -2014,6 +2225,12 @@ type SearchInstrumentsParams struct {
 	Q string `form:"q" json:"q"`
 }
 
+// GetLiveStreamParams defines parameters for GetLiveStream.
+type GetLiveStreamParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
 // GetLlmUsageParams defines parameters for GetLlmUsage.
 type GetLlmUsageParams struct {
 	Days *int `form:"days,omitempty" json:"days,omitempty"`
@@ -2264,6 +2481,9 @@ type ServerInterface interface {
 	// SearchInstruments Search eToro instruments by name or symbol (admin)
 	// (GET /api/v1/instruments/search)
 	SearchInstruments(w http.ResponseWriter, r *http.Request, params SearchInstrumentsParams)
+	// GetLiveStream The live view of one account as a server-sent event stream (viewer; session cookie or API key)
+	// (GET /api/v1/live)
+	GetLiveStream(w http.ResponseWriter, r *http.Request, params GetLiveStreamParams)
 	// GetLlmSetup The LLM reviewer's profiles, the active one and the providers to choose from (viewer; never a key)
 	// (GET /api/v1/llm)
 	GetLlmSetup(w http.ResponseWriter, r *http.Request)
@@ -3673,6 +3893,39 @@ func (siw *ServerInterfaceWrapper) SearchInstruments(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetLiveStream operation middleware
+func (siw *ServerInterfaceWrapper) GetLiveStream(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetLiveStreamParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLiveStream(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLlmSetup operation middleware
 func (siw *ServerInterfaceWrapper) GetLlmSetup(w http.ResponseWriter, r *http.Request) {
 
@@ -4667,6 +4920,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/trades", wrapper.ListHistoryTrades)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/daily", wrapper.GetHistoryDaily)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/export/{file}", wrapper.ExportHistory)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/live", wrapper.GetLiveStream)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/themes", wrapper.ListThemes)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/themes", wrapper.CreateTheme)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/themes/{themeId}", wrapper.DeleteTheme)

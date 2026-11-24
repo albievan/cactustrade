@@ -7,3 +7,6 @@ generate:
   embedded-spec: false
 output-options:
   prefer-skip-optional-pointer: false
+  # The live stream's message schemas (LiveSnapshot …) are referenced only from the
+  # text/event-stream description, so pruning would drop them (PLAN 6.8).
+  skip-prune: true

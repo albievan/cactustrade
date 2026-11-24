@@ -19,6 +19,21 @@ type trader interface {
 	// SetAgentLoop says whether the agent loop runs: StartAgent is refused until it does.
 	SetAgentLoop(running bool)
 	ReleaseLeases(ctx context.Context) error
+	// SyncTradesAll reads every eToro account's closed trades (read-only; the history loop).
+	SyncTradesAll(ctx context.Context) ([]app.TradeSync, error)
+}
+
+// tradingSchedule holds the start-up timing of the trading side's periodic work.
+type tradingSchedule struct {
+	// HistoryFirst is when the first trade-history sync runs after the start, HistoryEvery
+	// how often it runs after that (PLAN 6.10).
+	HistoryFirst, HistoryEvery time.Duration
+}
+
+// prodSchedule is the production timing: the history first 2 minutes after the start (the
+// start-up reconciliation has the eToro quota first), then every 15 minutes.
+func prodSchedule() tradingSchedule {
+	return tradingSchedule{HistoryFirst: 2 * time.Minute, HistoryEvery: 15 * time.Minute}
 }
 
 var _ trader = (*app.Service)(nil)
@@ -60,12 +75,16 @@ func leaseHolderID(host string, r ports.Random) string {
 //     still run. SetAgentLoop records which it was, so StartAgent is refused (with the
 //     reason on the panel) until the loop runs (PLAN 6.13).
 //
+// Beside them the history loop (PLAN 6.10) syncs the trade history on sched. It only reads
+// (closed trades, never an order), so it does not wait for the reconciliation.
+//
 // The returned stop ends the loops, waits for them, and then releases this process's
 // leases so another process can take over at once. Positions are left as they are (OD6:
 // they carry eToro-side stops and the next supervisor closes what is due).
-func startTrading(parent context.Context, t trader, log *slog.Logger) (stop func()) {
+func startTrading(parent context.Context, t trader, log *slog.Logger, sched tradingSchedule) (stop func()) {
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
+	wg.Go(func() { historyLoop(ctx, t, log, sched.HistoryFirst, sched.HistoryEvery) })
 	wg.Go(func() {
 		rctx, rcancel := context.WithTimeout(ctx, startupReconcileTimeout)
 		rs, err := t.ReconcileAll(rctx)
@@ -107,6 +126,32 @@ func startTrading(parent context.Context, t trader, log *slog.Logger) (stop func
 		defer rcancel()
 		if err := t.ReleaseLeases(rctx); err != nil {
 			log.WarnContext(rctx, "releasing the account leases failed: another process takes over when they expire", "err", err)
+		}
+	}
+}
+
+// historyLoop syncs every eToro account's closed trades (demo and real, read-only: OD18's
+// 90-day backfill on the first sync, then from the latest stored close) first after first,
+// then every interval, until ctx ends. A failed account is logged by the sync and tried
+// again next time.
+func historyLoop(ctx context.Context, t trader, log *slog.Logger, first, every time.Duration) {
+	tm := time.NewTimer(first)
+	defer tm.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tm.C:
+			rs, err := t.SyncTradesAll(ctx)
+			if err != nil && ctx.Err() == nil {
+				log.WarnContext(ctx, "trade history sync failed", "err", err)
+			}
+			for _, r := range rs {
+				if r.Err == nil && r.Stored > 0 {
+					log.InfoContext(ctx, "trade history synced", "account", r.AccountID, "stored", r.Stored, "ours", r.Ours)
+				}
+			}
+			tm.Reset(every)
 		}
 	}
 }

@@ -17,11 +17,12 @@ import (
 
 // orderHook is a trader that records the order of the calls (the ordering hook of PLAN 4.14).
 type orderHook struct {
-	mu        sync.Mutex
-	calls     []string
-	reconErr  error
-	resumeErr error
-	started   chan string // a loop has started
+	mu         sync.Mutex
+	calls      []string
+	reconErr   error
+	resumeErr  error
+	historyErr error
+	started    chan string // a loop has started
 }
 
 func newOrderHook() *orderHook { return &orderHook{started: make(chan string, 4)} }
@@ -66,6 +67,11 @@ func (h *orderHook) SetAgentLoop(running bool) {
 	h.note("loop off")
 }
 
+func (h *orderHook) SyncTradesAll(context.Context) ([]app.TradeSync, error) {
+	h.note("history")
+	return []app.TradeSync{{AccountID: "a", Stored: 1}, {AccountID: "b", Err: errors.New("test")}}, h.historyErr
+}
+
 func (h *orderHook) ReleaseLeases(context.Context) error {
 	h.note("release")
 	return nil
@@ -98,7 +104,7 @@ func TestStartTradingOrder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newOrderHook()
 			h.reconErr, h.resumeErr = tt.reconErr, tt.resumeErr
-			stop := startTrading(context.Background(), h, slog.New(slog.DiscardHandler))
+			stop := startTrading(context.Background(), h, slog.New(slog.DiscardHandler), prodSchedule())
 			waitStarted(t, h, len(tt.loops))
 			stop()
 			got := h.seen()
@@ -133,7 +139,7 @@ func TestStartTradingStoppedDuringStartup(t *testing.T) {
 	h := newOrderHook()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // shut down before the start-up finished: no loop starts, leases are released
-	stop := startTrading(ctx, h, slog.New(slog.DiscardHandler))
+	stop := startTrading(ctx, h, slog.New(slog.DiscardHandler), prodSchedule())
 	stop()
 	got := h.seen()
 	if slices.Contains(got, "supervise") || slices.Contains(got, "agent") || got[len(got)-1] != "release" {
@@ -167,19 +173,27 @@ type tradingEnv struct {
 
 func newTradingEnv(t *testing.T) *tradingEnv {
 	t.Helper()
+	return newTradingEnvWith(t, func(*app.Deps) {})
+}
+
+// newTradingEnvWith is newTradingEnv with the service's dependencies changed by edit.
+func newTradingEnvWith(t *testing.T, edit func(*app.Deps)) *tradingEnv {
+	t.Helper()
 	ctx := context.Background()
 	st := fakes.NewStore()
 	clk := &fakes.Clock{T: time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)}
 	sec := &fakes.SecretStore{Now: clk.Now}
 	b := &fakes.SimBroker{Now: clk.Now, Cash: 10_000_00}
-	svc, err := app.New(app.Deps{
+	deps := app.Deps{
 		Store: st, Secrets: sec, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: clk,
 		Broker: b, Market: &fakes.Broker{}, Calendar: nil,
 		Sleep: func(ctx context.Context, _ time.Duration) error {
 			<-ctx.Done() // one round of each loop, then wait for the shutdown
 			return ctx.Err()
 		},
-	}, app.Config{Version: "test", LeaseHolder: "this-process"})
+	}
+	edit(&deps)
+	svc, err := app.New(deps, app.Config{Version: "test", LeaseHolder: "this-process"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +246,7 @@ func TestStartTradingWithTheService(t *testing.T) {
 	if e.svc.Reconciled(e.v.ID).OK {
 		t.Fatal("reconciled before the start")
 	}
-	stop := startTrading(ctx, e.svc, slog.New(slog.DiscardHandler))
+	stop := startTrading(ctx, e.svc, slog.New(slog.DiscardHandler), prodSchedule())
 	// the first supervisor pass takes the lease; reconciliation must have happened before
 	e.waitLease(t)
 	if !e.svc.Reconciled(e.v.ID).OK {
@@ -273,7 +287,7 @@ func TestStartAgentNeedsTheAgentLoop(t *testing.T) {
 			if _, err := e.svc.StartAgent(ctx, e.p, e.v.ID); !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "starting up") {
 				t.Fatalf("start before start-up decided: %v", err)
 			}
-			stop := startTrading(ctx, tt.trader(e.svc), slog.New(slog.DiscardHandler))
+			stop := startTrading(ctx, tt.trader(e.svc), slog.New(slog.DiscardHandler), prodSchedule())
 			defer stop()
 			e.waitLease(t) // the supervisor runs either way: exits still work
 			_, err := e.svc.StartAgent(ctx, e.p, e.v.ID)
@@ -301,5 +315,89 @@ func TestStartAgentNeedsTheAgentLoop(t *testing.T) {
 				t.Fatalf("kill and stop must stay available: %+v", view.Controls)
 			}
 		})
+	}
+}
+
+// TestStartTradingHistoryLoop (PLAN 6.10): the history loop runs on its schedule (it may run
+// before the reconciliation: it only reads), the 4.14 order of reconcile → resume → loops is
+// unchanged, and the leases are released only after the history loop ended.
+func TestStartTradingHistoryLoop(t *testing.T) {
+	tests := []struct {
+		name       string
+		historyErr error
+	}{
+		{"syncs", nil},
+		{"a failed sync is tried again", errors.New("db down")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newOrderHook()
+			h.historyErr = tt.historyErr
+			stop := startTrading(context.Background(), h, slog.New(slog.DiscardHandler),
+				tradingSchedule{HistoryFirst: 0, HistoryEvery: 5 * time.Millisecond})
+			waitStarted(t, h, 2)
+			deadline := time.Now().Add(5 * time.Second)
+			for countOf(h.seen(), "history") < 3 {
+				if time.Now().After(deadline) {
+					t.Fatalf("the history loop did not repeat: %v", h.seen())
+				}
+				time.Sleep(time.Millisecond)
+			}
+			stop()
+			got := h.seen()
+			if got[len(got)-1] != "release" {
+				t.Fatalf("leases released before the loops ended: %v", got)
+			}
+			trading := slices.DeleteFunc(slices.Clone(got), func(c string) bool { return c == "history" })
+			if trading[0] != "reconcile" || trading[1] != "resume" {
+				t.Fatalf("calls = %v", got)
+			}
+			if slices.Index(got, "reconcile") > slices.Index(got, "supervise") || slices.Index(got, "reconcile") > slices.Index(got, "agent") {
+				t.Fatalf("a loop before the reconciliation: %v", got)
+			}
+		})
+	}
+}
+
+func countOf(calls []string, c string) int {
+	n := 0
+	for _, x := range calls {
+		if x == c {
+			n++
+		}
+	}
+	return n
+}
+
+// TestHistoryLoopIsReadOnly (PLAN 6.10): with the real use cases, the history loop stores
+// eToro's closed trades and sends nothing to eToro (no open, close or cancel), and the
+// start-up reconciliation still comes before the first supervisor pass.
+func TestHistoryLoopIsReadOnly(t *testing.T) {
+	ctx := context.Background()
+	e := newTradingEnv(t)
+	closed := e.clk.Now().Add(-24 * time.Hour)
+	e.b.History = []domain.ClosedTrade{{
+		PositionID: 77, Instrument: 1001, OpenedAt: closed.Add(-time.Hour), ClosedAt: closed,
+		OpenRate: 100_000_000, CloseRate: 101_000_000, NetProfit: 1_00, Long: true, Leverage: 1, Investment: 100_00,
+	}}
+	stop := sync.OnceFunc(startTrading(ctx, e.svc, slog.New(slog.DiscardHandler), tradingSchedule{HistoryFirst: 0, HistoryEvery: time.Hour}))
+	t.Cleanup(stop)
+	e.waitLease(t)
+	if !e.svc.Reconciled(e.v.ID).OK {
+		t.Fatalf("not reconciled before the supervisor: %+v", e.svc.Reconciled(e.v.ID))
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if last, err := e.st.Trades().LastClosedAt(ctx, e.v.ID); err == nil && last.Equal(closed) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the history loop stored nothing")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	stop() // the loops have ended: the broker's records are settled
+	if e.b.Opens != 0 || e.b.Closes != 0 || e.b.Cancels != 0 || len(e.b.Violations) != 0 {
+		t.Fatalf("the history loop traded: opens %d closes %d cancels %d violations %v", e.b.Opens, e.b.Closes, e.b.Cancels, e.b.Violations)
 	}
 }

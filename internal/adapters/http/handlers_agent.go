@@ -205,30 +205,34 @@ func (s *Server) ListOrders(w http.ResponseWriter, r *http.Request, params ListO
 	}
 	out := make([]Order, 0, len(orders))
 	for _, o := range orders {
-		x := Order{
-			RequestId: o.RequestID, Mode: TradingMode(o.Mode), Kind: string(o.Kind), Direction: string(o.Direction),
-			InstrumentId: int64(o.Instrument), Symbol: o.Symbol, AmountCents: Cents(o.Amount), State: string(o.State),
-			Reason: o.Reason, Sends: o.Sends, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt,
-		}
-		if o.Entry > 0 {
-			x.Entry = ptr(dec(o.Entry))
-		}
-		if o.StopLoss > 0 {
-			x.StopLoss = ptr(dec(o.StopLoss))
-		}
-		if o.TakeProfit > 0 {
-			x.TakeProfit = ptr(dec(o.TakeProfit))
-		}
-		if o.PositionID > 0 {
-			x.PositionId = ptr(o.PositionID)
-		}
-		if o.EtoroOrderID > 0 {
-			x.EtoroOrderId = ptr(o.EtoroOrderID)
-		}
-		if !o.SentAt.IsZero() {
-			x.SentAt = ptr(o.SentAt)
-		}
-		out = append(out, x)
+		out = append(out, toOrder(o))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func toOrder(o app.OrderView) Order {
+	x := Order{
+		RequestId: o.RequestID, Mode: TradingMode(o.Mode), Kind: string(o.Kind), Direction: string(o.Direction),
+		InstrumentId: int64(o.Instrument), Symbol: o.Symbol, AmountCents: Cents(o.Amount), State: string(o.State),
+		Reason: o.Reason, Sends: o.Sends, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt,
+	}
+	if o.Entry > 0 {
+		x.Entry = ptr(dec(o.Entry))
+	}
+	if o.StopLoss > 0 {
+		x.StopLoss = ptr(dec(o.StopLoss))
+	}
+	if o.TakeProfit > 0 {
+		x.TakeProfit = ptr(dec(o.TakeProfit))
+	}
+	if o.PositionID > 0 {
+		x.PositionId = ptr(o.PositionID)
+	}
+	if o.EtoroOrderID > 0 {
+		x.EtoroOrderId = ptr(o.EtoroOrderID)
+	}
+	if !o.SentAt.IsZero() {
+		x.SentAt = ptr(o.SentAt)
+	}
+	return x
 }

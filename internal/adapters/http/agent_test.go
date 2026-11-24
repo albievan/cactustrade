@@ -26,6 +26,7 @@ func (nyseOpen) Session(_ domain.Market, at time.Time) (time.Time, time.Time, bo
 
 type agentTC struct {
 	*tc
+	h    *Server
 	b    *fakes.SimBroker
 	sec  *fakes.SecretStore
 	acct string // the demo account's id
@@ -40,6 +41,13 @@ func newAgentTC(t *testing.T) *agentTC {
 
 // newAgentTCWith is newAgentTC with the service's dependencies changed by edit.
 func newAgentTCWith(t *testing.T, edit func(*app.Deps)) *agentTC {
+	t.Helper()
+	return newAgentTCServer(t, edit, Config{}, slog.New(slog.DiscardHandler))
+}
+
+// newAgentTCServer is newAgentTCWith with the HTTP adapter's settings (cfg; OpenAPI and
+// CookieSecure are set here) and its logger.
+func newAgentTCServer(t *testing.T, edit func(*app.Deps), cfg Config, log *slog.Logger) *agentTC {
 	t.Helper()
 	st := fakes.NewStore()
 	clk := &fakes.Clock{T: time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)}
@@ -56,11 +64,14 @@ func newAgentTCWith(t *testing.T, edit func(*app.Deps)) *agentTC {
 		t.Fatal(err)
 	}
 	svc.SetAgentLoop(true) // as after a clean start-up (6.13)
-	srv := httptest.NewTLSServer(New(svc, slog.New(slog.DiscardHandler), Config{CookieSecure: true, OpenAPI: []byte("openapi: 3.0.3\n")}, nil))
+	cfg.CookieSecure, cfg.OpenAPI = true, []byte("openapi: 3.0.3\n")
+	h := New(svc, log, cfg, nil)
+	srv := httptest.NewTLSServer(h)
 	t.Cleanup(srv.Close)
+	t.Cleanup(h.CloseStreams) // before srv.Close (cleanups run last first): open streams end
 	c := srv.Client()
 	c.Jar, _ = cookiejar.New(nil)
-	x := &agentTC{tc: &tc{t: t, srv: srv, c: c, store: st, svc: svc}, b: b, sec: sec}
+	x := &agentTC{tc: &tc{t: t, srv: srv, c: c, store: st, svc: svc}, b: b, sec: sec, h: h}
 	x.setupAndLogin()
 	code, m, _ := x.do("POST", "/api/v1/accounts", `{"name":"Main demo","mode":"demo"}`, x.csrfHdr()...)
 	if code != 201 {

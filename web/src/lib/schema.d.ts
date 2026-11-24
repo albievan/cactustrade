@@ -1098,6 +1098,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The live view of one account as a server-sent event stream (viewer; session cookie or API key)
+         * @description A `text/event-stream` (server-sent events) of one account's live view (OD14). It is a
+         *     view only: nothing is decided on it, and the kill switch and every exit work without it.
+         *     Every message is one `event:` line and one `data:` line holding JSON:
+         *
+         *     - `snapshot` (`LiveSnapshot`): first on connect, then every 5 seconds and after the
+         *       agent's state or the account's portfolio changed. Built from cached and stored data
+         *       only; `stale` is true when the portfolio is missing or older than 30 seconds.
+         *     - `event` (`LiveEvent`): a new event of the account's feed (or a system-wide one).
+         *     - `order` (`LiveOrder`): one of cactusTrade's orders after a stored change.
+         *     - `resync` (`LiveNotice`): messages may have been missed (the stream fell behind);
+         *       fetch again what the page shows. A new snapshot follows.
+         *     - `bye` (`LiveNotice`): the server closes the stream: the session ended or was
+         *       revoked, access to the account was removed or could not be checked, the stream
+         *       reached its 30-minute lifetime, or the server is shutting down. Reconnect unless the
+         *       reason is `signed_out` or `no_access`.
+         *
+         *     A comment line (`: ping`) is sent every 15 seconds. Each user may hold 4 streams and
+         *     the server 200 in total; more are refused with 429. The session or API key and the
+         *     access to the account are checked again every 30 seconds.
+         */
+        get: operations["getLiveStream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/themes": {
         parameters: {
             query?: never;
@@ -2346,6 +2384,161 @@ export interface components {
             /** Format: date-time */
             to: string;
             rows: components["schemas"]["HistoryDay"][];
+        };
+        LiveMarketClock: {
+            market: components["schemas"]["Market"];
+            /** @description the market trades today */
+            trading: boolean;
+            /** Format: date-time */
+            opens?: string;
+            /** Format: date-time */
+            closes?: string;
+            /**
+             * Format: date-time
+             * @description no new entries from then on
+             */
+            noEntryAt?: string;
+            /**
+             * Format: date-time
+             * @description cactusTrade's positions of this market are closed from then on
+             */
+            flattenAt?: string;
+            /**
+             * Format: int64
+             * @description seconds until noEntryAt (0 = passed or not trading)
+             */
+            toNoEntrySeconds: number;
+            /**
+             * Format: int64
+             * @description seconds until flattenAt (0 = passed or not trading)
+             */
+            toFlattenSeconds: number;
+        };
+        /**
+         * @description The account's figures and its distance to every limit the risk engine applies, from
+         *     the cached portfolio (`asOf`). Distances are the amounts left before a limit refuses
+         *     an entry; a distance at or below 0 means no new entry.
+         */
+        LiveFigures: {
+            /** Format: date-time */
+            asOf: string;
+            equityCents: components["schemas"]["Cents"];
+            cashCents: components["schemas"]["Cents"];
+            reservedCents: components["schemas"]["Cents"];
+            cashLeftCents: components["schemas"]["Cents"];
+            budgetCents: components["schemas"]["Cents"];
+            budgetUsedCents: components["schemas"]["Cents"];
+            budgetLeftCents: components["schemas"]["Cents"];
+            /** @description the day figures (start of day, day P&L, daily floor) are today's */
+            dayKnown: boolean;
+            /** @description today's risk day (22:00 UTC boundary) */
+            day: string;
+            startOfDayCents: components["schemas"]["Cents"];
+            dayPnlCents: components["schemas"]["Cents"];
+            dailyFloorCents: components["schemas"]["Cents"];
+            toDailyFloorCents: components["schemas"]["Cents"];
+            dayStopped: boolean;
+            highWaterMarkCents: components["schemas"]["Cents"];
+            drawdownFloorCents: components["schemas"]["Cents"];
+            toDrawdownFloorCents: components["schemas"]["Cents"];
+            killed: boolean;
+            /** @description open positions plus our unfinished open orders */
+            open: number;
+            /** @description the position cap */
+            cap: number;
+            slotsLeft: number;
+            shortUsedCents: components["schemas"]["Cents"];
+            shortCapCents: components["schemas"]["Cents"];
+            shortLeftCents: components["schemas"]["Cents"];
+            markets: components["schemas"]["LiveMarketClock"][];
+        };
+        LivePosition: {
+            /** Format: int64 */
+            positionId: number;
+            /** Format: int64 */
+            instrumentId: number;
+            /** @description empty when the instrument is not cached */
+            symbol: string;
+            market: components["schemas"]["Market"];
+            /** Format: date-time */
+            openedAt: string;
+            openRate: components["schemas"]["Decimal"];
+            units: components["schemas"]["Decimal"];
+            amountCents: components["schemas"]["Cents"];
+            unrealisedPnlCents: components["schemas"]["Cents"];
+            stopLossRate?: components["schemas"]["Decimal"];
+            takeProfitRate?: components["schemas"]["Decimal"];
+            realAsset: boolean;
+            long: boolean;
+            leverage: number;
+            /** @description cactusTrade opened it (only these are ever closed by cactusTrade) */
+            ours: boolean;
+            /** @description the x-request-id of our open order */
+            openRequestId?: string;
+            /**
+             * Format: date-time
+             * @description when cactusTrade closes it today (ours only)
+             */
+            flattenAt?: string;
+        };
+        LiveRegime: {
+            /** Format: int64 */
+            instrumentId: number;
+            symbol: string;
+            /** @description a review with regime probabilities exists */
+            known: boolean;
+            /** @description the most likely regime of the latest review */
+            regime?: string;
+            /** @description the regime model's probabilities (regime → 0..1) */
+            probabilities?: {
+                [key: string]: number;
+            };
+            /** Format: date-time */
+            at?: string;
+        };
+        /** @description An account's live view (the `snapshot` message of GET /api/v1/live) */
+        LiveSnapshot: {
+            account: components["schemas"]["Account"];
+            /**
+             * Format: date-time
+             * @description when the snapshot was built
+             */
+            at: string;
+            /** @description a cached portfolio exists; figures and positions need one */
+            portfolioKnown: boolean;
+            /** Format: date-time */
+            portfolioAt?: string;
+            /** @description no portfolio, or one older than 30 seconds */
+            stale: boolean;
+            figures?: components["schemas"]["LiveFigures"];
+            positions: components["schemas"]["LivePosition"][];
+            /** @description our orders that are not final, oldest first */
+            openOrders: components["schemas"]["Order"][];
+            /** @description the latest 20 orders, newest first */
+            recentOrders: components["schemas"]["Order"][];
+            regimes: components["schemas"]["LiveRegime"][];
+            state: components["schemas"]["AgentState"];
+            reconciliation: components["schemas"]["Reconciliation"];
+            killed: boolean;
+            killReason?: string;
+            dayStopped: boolean;
+            lease: components["schemas"]["AgentLease"];
+        };
+        /** @description A new event of the feed (the `event` message) */
+        LiveEvent: {
+            /** @description the account it is about (empty = system-wide) */
+            accountId: string;
+            event: components["schemas"]["Event"];
+        };
+        /** @description One of cactusTrade's orders as just stored (the `order` message) */
+        LiveOrder: {
+            accountId: string;
+            order: components["schemas"]["Order"];
+        };
+        /** @description Why the server sent `resync` or `bye` */
+        LiveNotice: {
+            /** @description resync: behind; bye: signed_out, no_access, unavailable (the check could not be made), lifetime or shutdown */
+            reason: string;
         };
     };
     responses: {
@@ -4103,6 +4296,34 @@ export interface operations {
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
             422: components["responses"]["Problem"];
+        };
+    };
+    getLiveStream: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
         };
     };
     listThemes: {

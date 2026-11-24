@@ -37,25 +37,37 @@ type Config struct {
 	Web fs.FS
 	// OpenAPI is the contract served at /api/openapi.yaml.
 	OpenAPI []byte
+	// Live tunes the live stream (zero fields: PLAN 6.9's values).
+	Live LiveLimits
 }
 
-// Server implements ServerInterface on the use cases.
+// Server implements ServerInterface on the use cases. It is the HTTP handler (ServeHTTP)
+// and owns the open live streams (CloseStreams).
 type Server struct {
 	svc     *app.Service
 	log     *slog.Logger
 	cfg     Config
 	limiter *loginLimiter
 	metrics *metrics
+	streams *liveStreams
+	handler http.Handler
 }
 
-var _ ServerInterface = (*Server)(nil)
+var (
+	_ ServerInterface = (*Server)(nil)
+	_ http.Handler    = (*Server)(nil)
+)
 
 // New builds the HTTP handler. reg receives the HTTP metrics (nil = a private registry).
-func New(svc *app.Service, log *slog.Logger, cfg Config, reg *prometheus.Registry) http.Handler {
+// Register CloseStreams with the http.Server's RegisterOnShutdown so that open live streams
+// do not hold up a shutdown.
+func New(svc *app.Service, log *slog.Logger, cfg Config, reg *prometheus.Registry) *Server {
 	if reg == nil {
 		reg = prometheus.NewRegistry()
 	}
+	cfg.Live = cfg.Live.withDefaults()
 	s := &Server{svc: svc, log: log, cfg: cfg, limiter: newLoginLimiter(), metrics: newMetrics(reg)}
+	s.streams = newLiveStreams(cfg.Live, s.metrics.liveStreams)
 	mux := http.NewServeMux()
 	HandlerWithOptions(s, StdHTTPServerOptions{
 		BaseRouter:       mux,
@@ -73,8 +85,12 @@ func New(svc *app.Service, log *slog.Logger, cfg Config, reg *prometheus.Registr
 	web := s.webHandler()
 	mux.Handle("GET /api/docs", web) // Swagger UI page of the web bundle
 	mux.Handle("/", web)
-	return s.chain(mux)
+	s.handler = s.chain(mux)
+	return s
 }
+
+// ServeHTTP serves a request through the middleware chain.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
 // chain wraps the mux: recover → state → log/metrics → security headers → auth → CSRF.
 func (s *Server) chain(h http.Handler) http.Handler {

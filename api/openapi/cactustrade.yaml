@@ -39,6 +39,7 @@ tags:
   - name: email
   - name: audit
   - name: history
+  - name: live
 security:
   - sessionCookie: []
   - bearerApiKey: []
@@ -1194,6 +1195,44 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/live:
+    get:
+      tags: [live]
+      operationId: getLiveStream
+      summary: The live view of one account as a server-sent event stream (viewer; session cookie or API key)
+      description: |
+        A `text/event-stream` (server-sent events) of one account's live view (OD14). It is a
+        view only: nothing is decided on it, and the kill switch and every exit work without it.
+        Every message is one `event:` line and one `data:` line holding JSON:
+
+        - `snapshot` (`LiveSnapshot`): first on connect, then every 5 seconds and after the
+          agent's state or the account's portfolio changed. Built from cached and stored data
+          only; `stale` is true when the portfolio is missing or older than 30 seconds.
+        - `event` (`LiveEvent`): a new event of the account's feed (or a system-wide one).
+        - `order` (`LiveOrder`): one of cactusTrade's orders after a stored change.
+        - `resync` (`LiveNotice`): messages may have been missed (the stream fell behind);
+          fetch again what the page shows. A new snapshot follows.
+        - `bye` (`LiveNotice`): the server closes the stream: the session ended or was
+          revoked, access to the account was removed or could not be checked, the stream
+          reached its 30-minute lifetime, or the server is shutting down. Reconnect unless the
+          reason is `signed_out` or `no_access`.
+
+        A comment line (`: ping`) is sent every 15 seconds. Each user may hold 4 streams and
+        the server 200 in total; more are refused with 429. The session or API key and the
+        access to the account are checked again every 30 seconds.
+      parameters:
+        - $ref: "#/components/parameters/AccountIdQuery"
+      responses:
+        "200":
+          description: The event stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/themes:
     get:
       tags: [research]
@@ -2552,3 +2591,139 @@ components:
         rows:
           type: array
           items: { $ref: "#/components/schemas/HistoryDay" }
+    LiveMarketClock:
+      type: object
+      required: [market, trading, toNoEntrySeconds, toFlattenSeconds]
+      properties:
+        market: { $ref: "#/components/schemas/Market" }
+        trading: { type: boolean, description: "the market trades today" }
+        opens: { type: string, format: date-time }
+        closes: { type: string, format: date-time }
+        noEntryAt: { type: string, format: date-time, description: "no new entries from then on" }
+        flattenAt: { type: string, format: date-time, description: "cactusTrade's positions of this market are closed from then on" }
+        toNoEntrySeconds: { type: integer, format: int64, description: "seconds until noEntryAt (0 = passed or not trading)" }
+        toFlattenSeconds: { type: integer, format: int64, description: "seconds until flattenAt (0 = passed or not trading)" }
+    LiveFigures:
+      type: object
+      description: |
+        The account's figures and its distance to every limit the risk engine applies, from
+        the cached portfolio (`asOf`). Distances are the amounts left before a limit refuses
+        an entry; a distance at or below 0 means no new entry.
+      required: [asOf, equityCents, cashCents, reservedCents, cashLeftCents, budgetCents, budgetUsedCents, budgetLeftCents,
+                 dayKnown, day, startOfDayCents, dayPnlCents, dailyFloorCents, toDailyFloorCents, dayStopped,
+                 highWaterMarkCents, drawdownFloorCents, toDrawdownFloorCents, killed, open, cap, slotsLeft,
+                 shortUsedCents, shortCapCents, shortLeftCents, markets]
+      properties:
+        asOf: { type: string, format: date-time }
+        equityCents: { $ref: "#/components/schemas/Cents" }
+        cashCents: { $ref: "#/components/schemas/Cents" }
+        reservedCents: { $ref: "#/components/schemas/Cents" }
+        cashLeftCents: { $ref: "#/components/schemas/Cents" }
+        budgetCents: { $ref: "#/components/schemas/Cents" }
+        budgetUsedCents: { $ref: "#/components/schemas/Cents" }
+        budgetLeftCents: { $ref: "#/components/schemas/Cents" }
+        dayKnown: { type: boolean, description: "the day figures (start of day, day P&L, daily floor) are today's" }
+        day: { type: string, description: "today's risk day (22:00 UTC boundary)" }
+        startOfDayCents: { $ref: "#/components/schemas/Cents" }
+        dayPnlCents: { $ref: "#/components/schemas/Cents" }
+        dailyFloorCents: { $ref: "#/components/schemas/Cents" }
+        toDailyFloorCents: { $ref: "#/components/schemas/Cents" }
+        dayStopped: { type: boolean }
+        highWaterMarkCents: { $ref: "#/components/schemas/Cents" }
+        drawdownFloorCents: { $ref: "#/components/schemas/Cents" }
+        toDrawdownFloorCents: { $ref: "#/components/schemas/Cents" }
+        killed: { type: boolean }
+        open: { type: integer, description: "open positions plus our unfinished open orders" }
+        cap: { type: integer, description: "the position cap" }
+        slotsLeft: { type: integer }
+        shortUsedCents: { $ref: "#/components/schemas/Cents" }
+        shortCapCents: { $ref: "#/components/schemas/Cents" }
+        shortLeftCents: { $ref: "#/components/schemas/Cents" }
+        markets:
+          type: array
+          items: { $ref: "#/components/schemas/LiveMarketClock" }
+    LivePosition:
+      type: object
+      required: [positionId, instrumentId, symbol, market, openedAt, openRate, units, amountCents, unrealisedPnlCents, realAsset, long, leverage, ours]
+      properties:
+        positionId: { type: integer, format: int64 }
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string, description: "empty when the instrument is not cached" }
+        market: { $ref: "#/components/schemas/Market" }
+        openedAt: { type: string, format: date-time }
+        openRate: { $ref: "#/components/schemas/Decimal" }
+        units: { $ref: "#/components/schemas/Decimal" }
+        amountCents: { $ref: "#/components/schemas/Cents" }
+        unrealisedPnlCents: { $ref: "#/components/schemas/Cents" }
+        stopLossRate: { $ref: "#/components/schemas/Decimal" }
+        takeProfitRate: { $ref: "#/components/schemas/Decimal" }
+        realAsset: { type: boolean }
+        long: { type: boolean }
+        leverage: { type: integer }
+        ours: { type: boolean, description: "cactusTrade opened it (only these are ever closed by cactusTrade)" }
+        openRequestId: { type: string, description: "the x-request-id of our open order" }
+        flattenAt: { type: string, format: date-time, description: "when cactusTrade closes it today (ours only)" }
+    LiveRegime:
+      type: object
+      required: [instrumentId, symbol, known]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string }
+        known: { type: boolean, description: "a review with regime probabilities exists" }
+        regime: { type: string, description: "the most likely regime of the latest review" }
+        probabilities:
+          type: object
+          description: the regime model's probabilities (regime → 0..1)
+          additionalProperties: { type: number, format: double }
+        at: { type: string, format: date-time }
+    LiveSnapshot:
+      type: object
+      description: An account's live view (the `snapshot` message of GET /api/v1/live)
+      required: [account, at, portfolioKnown, stale, positions, openOrders, recentOrders, regimes, state, reconciliation, killed, dayStopped, lease]
+      properties:
+        account: { $ref: "#/components/schemas/Account" }
+        at: { type: string, format: date-time, description: "when the snapshot was built" }
+        portfolioKnown: { type: boolean, description: "a cached portfolio exists; figures and positions need one" }
+        portfolioAt: { type: string, format: date-time }
+        stale: { type: boolean, description: "no portfolio, or one older than 30 seconds" }
+        figures: { $ref: "#/components/schemas/LiveFigures" }
+        positions:
+          type: array
+          items: { $ref: "#/components/schemas/LivePosition" }
+        openOrders:
+          type: array
+          description: our orders that are not final, oldest first
+          items: { $ref: "#/components/schemas/Order" }
+        recentOrders:
+          type: array
+          description: the latest 20 orders, newest first
+          items: { $ref: "#/components/schemas/Order" }
+        regimes:
+          type: array
+          items: { $ref: "#/components/schemas/LiveRegime" }
+        state: { $ref: "#/components/schemas/AgentState" }
+        reconciliation: { $ref: "#/components/schemas/Reconciliation" }
+        killed: { type: boolean }
+        killReason: { type: string }
+        dayStopped: { type: boolean }
+        lease: { $ref: "#/components/schemas/AgentLease" }
+    LiveEvent:
+      type: object
+      description: A new event of the feed (the `event` message)
+      required: [accountId, event]
+      properties:
+        accountId: { type: string, description: "the account it is about (empty = system-wide)" }
+        event: { $ref: "#/components/schemas/Event" }
+    LiveOrder:
+      type: object
+      description: One of cactusTrade's orders as just stored (the `order` message)
+      required: [accountId, order]
+      properties:
+        accountId: { type: string }
+        order: { $ref: "#/components/schemas/Order" }
+    LiveNotice:
+      type: object
+      description: Why the server sent `resync` or `bye`
+      required: [reason]
+      properties:
+        reason: { type: string, description: "resync: behind; bye: signed_out, no_access, unavailable (the check could not be made), lifetime or shutdown" }

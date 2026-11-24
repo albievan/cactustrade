@@ -84,8 +84,9 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 type metrics struct {
-	requests *prometheus.CounterVec
-	duration *prometheus.HistogramVec
+	requests    *prometheus.CounterVec
+	duration    *prometheus.HistogramVec
+	liveStreams prometheus.Gauge
 }
 
 func newMetrics(reg *prometheus.Registry) *metrics {
@@ -97,8 +98,11 @@ func newMetrics(reg *prometheus.Registry) *metrics {
 			Name: "cactustrade_http_request_duration_seconds", Help: "HTTP request latency by route.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"method", "route"}),
+		liveStreams: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "cactustrade_live_streams", Help: "Open live streams (GET /api/v1/live).",
+		}),
 	}
-	reg.MustRegister(m.requests, m.duration)
+	reg.MustRegister(m.requests, m.duration, m.liveStreams)
 	return m
 }
 
@@ -116,7 +120,9 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		}
 		d := time.Since(start)
 		s.metrics.requests.WithLabelValues(r.Method, route, strconv.Itoa(sw.status)).Inc()
-		s.metrics.duration.WithLabelValues(r.Method, route).Observe(d.Seconds())
+		if route != liveRoute { // a stream lasts up to 30 minutes: not a latency
+			s.metrics.duration.WithLabelValues(r.Method, route).Observe(d.Seconds())
+		}
 		if route == "GET /healthz" || route == "GET /readyz" {
 			return
 		}

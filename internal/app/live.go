@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 )
 
 // The live view of an account (PLAN 6.6b): what the dashboard stream sends. It is built from
@@ -169,6 +170,18 @@ func (s *Service) LiveFilter(ctx context.Context, p Principal) (map[string]bool,
 		}
 	}
 	return out, nil
+}
+
+// SubscribeLive subscribes to the live bus (PLAN 6.9) with a buffer of the given size: the
+// stream filters what it receives with LiveFilter and BusAccount. ok is false when no bus is
+// configured (the stream then sends snapshots only). cancel ends the subscription and closes
+// the channel. It is a view only: nothing is ever decided on what it carries.
+func (s *Service) SubscribeLive(buffer int) (events <-chan ports.Event, cancel func(), ok bool) {
+	if s.d.Bus == nil {
+		return nil, func() {}, false
+	}
+	events, cancel = s.d.Bus.Subscribe(buffer)
+	return events, cancel, true
 }
 
 func (s *Service) liveOrders(ctx context.Context, accountID string, out *LiveSnapshot) error {

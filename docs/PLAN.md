@@ -852,9 +852,9 @@ Each is the **default until the owner answers**. OD14–OD18 shape phase 6; OD19
 | 6.6a | **App: portfolio view cache (MINOR 1).** `runtimeState` keeps the last portfolio per account (value + read time). The supervisor stores its read there (no extra eToro call); `viewPortfolio` refreshes only when the cache is older than 10 s, with one read per account in flight (`sync.Mutex` + waiter; no new dependency). `AgentStatusView` uses it. **Only view use cases may read it.** | `internal/app/{viewcache.go,agent_view.go,supervisor.go}`, `viewcache_test.go` | `go test -race ./internal/app -run 'ViewCache\|AgentStatusView\|EntriesNeverUseTheViewCache'`. 50 concurrent `AgentStatusView` calls in 10 s → ≤ 1 `Portfolio` read. **Guardrail §2.2:** `TestEntriesNeverUseTheViewCache` primes the cache with 100× the cash; `AgentTick`'s `Open` amount is still ≤ the SimBroker's fresh cash − reserved. A source test fails if `agent.go`, `executor.go`, `supervisor.go` (except the store call) or `risk.go` read the cache. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.6b | **App: event bus and live snapshot.** `Deps.Bus ports.EventBus` (nil = no-op). `emitFor` publishes after the DB write. Bus-only events: `order.updated` after every stored order transition (executor and reconcile), `agent.state` on every state write, `account.portfolio` after the supervisor's read. `LiveSnapshot(p, acct)` = `LimitDistances` + positions (ours flag, stop, take-profit, flatten time) + open orders + the last 20 orders + the latest regime per watchlist share (from `reviews`) + agent state, reconciliation, kill, latch, lease + freshness (`portfolioAt`, `stale` after 30 s). `LiveFilter(p)` = the account ids the caller may view. | `internal/app/{live.go,events.go,executor.go,reconcile.go,agent_control.go}`, `live_test.go`, `internal/ports/fakes` (recording bus) | `go test -race ./internal/app -run 'Live\|Publish'`. Every executor table case publishes the same transitions it stores, in order. A bus that drops events never blocks an order (full subscriber). `LiveFilter` excludes unshared accounts and view-only rules are kept. The snapshot uses only cached or stored data. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.7 | **Contract and handlers: history and exports.** Contract first: `GET /api/v1/history/summary?accountId&days`, `/history/trades?accountId&from&to&ours&before&limit`, `/history/daily?accountId&days`, `/history/export/{kind}.csv?accountId&from&to` (kinds trades / daily / equity / orders / decisions). Then `make gen` and the handlers. CSV: `encoding/csv`; money as decimal strings from cents; times UTC RFC 3339; any cell starting with `= + - @ \t \r` prefixed with `'`; `Content-Disposition: attachment`, `nosniff`, `no-store`; written while streaming rows. | `api/openapi/cactustrade.yaml`, `internal/adapters/http/{api.gen.go,handlers_history.go,csv.go,history_test.go}`, `web/src/lib/schema.d.ts` | `make gen && go test ./internal/adapters/http -run 'History\|CSV'`. Status codes 200/400/403/404/422; an API key (viewer) may export; the injection table (`=1+1`, `-2`, `@SUM`, tab) is neutralised; amounts are exact for ±9e15 cents; contract drift green. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
-| 6.8 | **Live stream: contract and server timeouts.** Contract `GET /api/v1/live?accountId` (`text/event-stream`; components `LiveSnapshot`, `LiveEvent`, `LiveOrder`; event names `snapshot`, `event`, `order`, `resync`, `bye`, documented in the description). In `cmd`, factor `newHTTPServer(cfg, handler)` so tests use the production timeouts. | `api/openapi/cactustrade.yaml`, `api.gen.go`, `cmd/cactustrade/{main.go,server.go}`, `schema.d.ts` | `make gen`, contract drift green, `go build ./...` (handler stub answers 503 until 6.9). | todo |
-| 6.9 | **Live stream: handler.** Cookie or API key; no CSRF (GET); view access to the account. `http.ResponseController`: `SetReadDeadline(zero)` once, `SetWriteDeadline(now + 10 s)` before every write, `Flush`. Headers `text/event-stream`, `Cache-Control: no-store`, `X-Accel-Buffering: no`. On connect: a full snapshot. Then `event` / `order` messages from the bus filtered by `LiveFilter`, a snapshot every 5 s (cache only), `: ping` every 15 s. Session and access re-checked every 30 s (expired, revoked, password changed or share removed → `bye` and close). Stream lifetime ≤ 30 min (the client reconnects). Bus overflow → `resync`. Caps: 4 per user, 200 total → 429. `Server.CloseStreams()` is registered with `srv.RegisterOnShutdown`. The request histogram skips the route; gauge `cactustrade_live_streams`. | `internal/adapters/http/{handlers_live.go,live_test.go,middleware.go,server.go}`, `cmd/cactustrade/{main.go,main_test.go}` | `go test -race ./internal/adapters/http -run Live && go test ./cmd/cactustrade -run 'Stream\|Shutdown'`. Over `httptest` TLS with `newHTTPServer`, timeouts scaled to 200/300 ms, on HTTP/1.1 **and** HTTP/2: events still arrive after 3× ReadTimeout and 3× WriteTimeout. `Shutdown` returns in < 1 s with 3 open streams, and a kill request in flight still completes (4.14-b). A revoked session gets `bye` within one recheck. A viewer of A never receives B's events. The 5th stream → 429. API key works. No body, cookie or token is logged. | todo |
-| 6.10 | **Wiring.** `eventbus.New()` into `app.Deps.Bus` (dropped count as a metric); `historyLoop` (every 15 min, 2 min after start, read-only, may run before `ReconcileAll`); the `trades` sync covers real accounts read-only. | `cmd/cactustrade/{main.go,trading.go,main_test.go}` | `go test ./cmd/cactustrade`: the 4.14 ordering hook still sees `ReconcileAll` before the first `Supervise`; history sync is read-only (SimBroker `Opens == 0`, no close or cancel); `make build`. | todo |
+| 6.8 | **Live stream: contract and server timeouts.** Contract `GET /api/v1/live?accountId` (`text/event-stream`; components `LiveSnapshot`, `LiveEvent`, `LiveOrder`; event names `snapshot`, `event`, `order`, `resync`, `bye`, documented in the description). In `cmd`, factor `newHTTPServer(cfg, handler)` so tests use the production timeouts. | `api/openapi/cactustrade.yaml`, `api.gen.go`, `cmd/cactustrade/{main.go,server.go}`, `schema.d.ts` | `make gen`, contract drift green, `go build ./...` (handler stub answers 503 until 6.9). | done (2026-11-24; `make check` green incl. MariaDB test-int) |
+| 6.9 | **Live stream: handler.** Cookie or API key; no CSRF (GET); view access to the account. `http.ResponseController`: `SetReadDeadline(zero)` once, `SetWriteDeadline(now + 10 s)` before every write, `Flush`. Headers `text/event-stream`, `Cache-Control: no-store`, `X-Accel-Buffering: no`. On connect: a full snapshot. Then `event` / `order` messages from the bus filtered by `LiveFilter`, a snapshot every 5 s (cache only), `: ping` every 15 s. Session and access re-checked every 30 s (expired, revoked, password changed or share removed → `bye` and close). Stream lifetime ≤ 30 min (the client reconnects). Bus overflow → `resync`. Caps: 4 per user, 200 total → 429. `Server.CloseStreams()` is registered with `srv.RegisterOnShutdown`. The request histogram skips the route; gauge `cactustrade_live_streams`. | `internal/adapters/http/{handlers_live.go,live_test.go,middleware.go,server.go}`, `cmd/cactustrade/{main.go,main_test.go}` | `go test -race ./internal/adapters/http -run Live && go test ./cmd/cactustrade -run 'Stream\|Shutdown'`. Over `httptest` TLS with `newHTTPServer`, timeouts scaled to 200/300 ms, on HTTP/1.1 **and** HTTP/2: events still arrive after 3× ReadTimeout and 3× WriteTimeout. `Shutdown` returns in < 1 s with 3 open streams, and a kill request in flight still completes (4.14-b). A revoked session gets `bye` within one recheck. A viewer of A never receives B's events. The 5th stream → 429. API key works. No body, cookie or token is logged. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
+| 6.10 | **Wiring.** `eventbus.New()` into `app.Deps.Bus` (dropped count as a metric); `historyLoop` (every 15 min, 2 min after start, read-only, may run before `ReconcileAll`); the `trades` sync covers real accounts read-only. | `cmd/cactustrade/{main.go,trading.go,main_test.go}` | `go test ./cmd/cactustrade`: the 4.14 ordering hook still sees `ReconcileAll` before the first `Supervise`; history sync is read-only (SimBroker `Opens == 0`, no close or cancel); `make build`. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.11 | **Web: live dashboard.** `useLive(accountId)`: `EventSource`; backoff 1 s … 30 s; after 3 failures, polling every 15 s; the stream closes after 60 s hidden. The Dashboard shows equity, cash, budget used / remaining, day P&L, positions (ours / not ours, stop, flatten time), an orders and fills feed, regimes per share, agent state and limit distances as bars (all from the server; no arithmetic in React beyond formatting). `AgentPanel` reads the stream instead of its 15 s poll. A "stale" badge appears after 30 s without a snapshot. | `web/src/lib/live.ts`, `web/src/pages/Dashboard.tsx`, `components/{AgentPanel.tsx,LiveCards.tsx}`, tests | `pnpm -C web check`. Vitest with a fake `EventSource`: snapshot renders; an `order` event updates the feed; `resync` refetches; stale badge; fallback polling after 3 errors; kill button still enabled while the stream is down. | todo |
 | 6.12 | **Web: History page** (under Trading, after Decision log). Neutral summary cards (trades, wins / losses / breakeven, win rate, fees, realised P&L, max drawdown), daily P&L table + inline-SVG bars, equity curve with drawdown shading (reuse `EquityChart`), trades table (ours / all, date range, paging), CSV buttons, and a fixed note "Figures describe past results only; they do not predict future results." | `web/src/pages/{History.tsx,History.test.tsx}`, `components/{Layout.tsx,EquityChart.tsx}`, `lib/api.ts` | `pnpm -C web check`. Vitest: empty history shows "no closed trades" (no 0 % win rate); unknown fees show "unknown"; export links carry `accountId` and the range. | todo |
 | 6.13 | **MINORs 2 and 3 (app).** (2) `Service.SetAgentLoop(running bool)`, set by `startTrading`. While it is false, `startable` refuses with `ErrUnavailable` ("the agent loop is not running: start-up resume failed; restart cactusTrade") and `controls.start` is false with that reason (`AgentView.StartBlocked`). (3) `ResetKill` reads equity **before** the control lock and checks the kill again inside it (as m5). | `internal/app/{agent_control.go,agent_view.go}`, `cmd/cactustrade/trading.go`, tests; `api/openapi` (`AgentControls.startBlockedReason`), `handlers_agent.go` | `go test -race ./internal/app -run 'StartWithoutLoop\|ResetKillDoesNotDelayAKill'`, `go test ./cmd/cactustrade` (a failed resume → Start refused), `make gen`, drift green. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
@@ -1029,7 +1029,7 @@ parameter `HistoryDays`, tag `history`).
   filename="cactustrade-<kind>-<account id>.csv"` (id reduced to `[A-Za-z0-9_-]`),
   `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. A write error after the
   status is logged (kind, account id, error; no row data).
-- **Open:** the 6.10 wiring still has to pass `eventbus.New()` as `Deps.Bus`; until then the
+- **Open (closed by 6.10):** the 6.10 wiring still has to pass `eventbus.New()` as `Deps.Bus`; until then the
   production bus is nil (no events, nothing blocked). `internal/adapters/http` coverage
   79.6 %.
 
@@ -1038,6 +1038,94 @@ Verification (2026-11-24): `make check` green: gofumpt, golangci-lint 0 issues, 
 container did not publish port 3306, a Docker flake; the rerun and the full `make check`
 passed), govulncheck (no vulnerabilities), contracts in sync, `pnpm -C web check` (18 files,
 89 tests).
+
+### Steps 6.8, 6.9, 6.10: decisions (2026-11-24)
+
+No new dependency, no migration, no eToro path (the allowlist and its tests are unchanged),
+no change to what an order path decides. Contract changes are additive: `GET /api/v1/live`
+(tag `live`) and the schemas `LiveSnapshot`, `LiveFigures`, `LiveMarketClock`,
+`LivePosition`, `LiveRegime`, `LiveEvent`, `LiveOrder`, `LiveNotice`.
+
+- **6.8-a Generated message types.** The stream's 200 is `text/event-stream` (a string), so
+  nothing references the message schemas and oapi-codegen pruned them. `oapi-codegen.yaml`
+  now sets `skip-prune: true`; the only types it adds are the eight `Live*` ones (checked by
+  diffing the generated file), and `make contracts` uses the same config.
+- **6.8-b `newHTTPServer(cfg, handler, log)`** (`cmd/cactustrade/server.go`) builds the
+  production server from `prodTimeouts()` (10 s header, 30 s read, 60 s write, 120 s idle,
+  64 KiB headers); `newHTTPServerWith(addr, handler, timeouts, log)` is what tests use with
+  scaled timeouts, so they run the same construction. It also registers
+  `handler.CloseStreams` with `RegisterOnShutdown`, so the handler is `*httpapi.Server`:
+  `httpapi.New` now returns `*Server` (it implements `http.Handler`; existing callers are
+  unchanged).
+- **6.9-a Message shapes.** `snapshot` = `LiveSnapshot`, `event` = `LiveEvent{accountId,
+  event}`, `order` = `LiveOrder{accountId, order}` (the symbol from the latest snapshot;
+  empty when the snapshot did not name the instrument), `resync` / `bye` = `LiveNotice{reason}`.
+  bye reasons: `signed_out`, `no_access`, `unavailable` (the recheck could not be made: fail
+  closed), `lifetime`, `shutdown`. One account per stream (OD14): the account is resolved
+  once (`accountId` absent = the current account at connect) and kept.
+- **6.9-b Connect order.** Signed out → 401; then the caps (`429` with `Retry-After: 30`;
+  after `CloseStreams` new streams get 503); then the bus subscription (before the first
+  snapshot, so nothing in between is missed); then `WarmLiveView` bounded to 5 s (its error
+  is logged at debug level and ignored: the snapshot is marked stale); then `LiveSnapshot`,
+  whose authorization error is answered as problem+json before any stream byte (404 for
+  another user's account, 403 view-only / password change); then `LiveFilter`.
+- **6.9-c Filtering.** An `event` is forwarded when `BusAccount` is the stream's account and
+  that account is in the caller's `LiveFilter`, or when it is system-wide (account "", in
+  everyone's feed already); `order` only for the stream's account in the filter; `agent.state`
+  and `account.portfolio` of that account trigger a snapshot (at once, or `liveSnapshotGap`
+  = 1 s after the previous one). Everything else is dropped.
+- **6.9-d Deadlines.** `SetReadDeadline(zero)` once after the header; before every write
+  `SetWriteDeadline(now + 10 s)`, then `Flush`, then **`SetWriteDeadline(zero)`**: no write is
+  pending until the next one, and on HTTP/2 a deadline that passes resets even an idle stream
+  (the 15 s ping gap is longer than 10 s). `TestStreamOutlivesServerTimeouts` (HTTP/1.1 and
+  HTTP/2 over httptest TLS, server timeouts 200/300 ms, the stream's own write timeout
+  100 ms, 1 s of silence) fails on HTTP/2 when the clear is removed, and on both protocols
+  when all deadline handling is removed. Go 1.26's HTTP/1.1 server clears the read deadline
+  itself when it starts the background read, so the explicit `SetReadDeadline(zero)` is
+  defensive (kept as the step specifies; not separately detectable). The 10 s write deadline
+  bounds a stalled client, it is not what keeps a stream alive.
+- **6.9-e Overflow → resync.** The port has no per-subscriber drop signal, so the stream
+  treats a buffer found full on receipt (`len ≥ cap − 1` after the receive, buffer 256) as
+  "an event may have been dropped": it discards what is buffered, sends `resync` and a fresh
+  snapshot. Sound (a drop always leaves the buffer full until the stream's next receive) and
+  conservative (a full buffer without a drop also resyncs; the client only refetches).
+- **6.9-f Recheck (30 s).** The request's API key or session cookie is resolved again exactly
+  as the middleware does (`APIKeyPrincipal` / `SessionPrincipal`), then `LiveFilter`. A
+  session recheck refreshes the session's idle timer like any request: an open dashboard is
+  in use (and its reconnect every 30 min would refresh it anyway). Signed out, expired,
+  revoked key, password changed (sessions end) → bye `signed_out`; share removed, role or
+  password-change rule → bye `no_access`; a store error → bye `unavailable`. Snapshots after
+  a recheck use the refreshed principal. A snapshot that fails for lost access also ends the
+  stream; any other snapshot error is logged and skipped (the client's stale badge shows it).
+- **6.9-g Limits** are `httpapi.Config.Live` (`LiveLimits`; zero fields = 5 s snapshot, 15 s
+  ping, 30 s recheck, 30 min lifetime, 10 s write, 5 s warm, 4 per user (API keys count
+  for their owner), 200 total, buffer 256), so tests scale them. Gauge
+  `cactustrade_live_streams`; the latency histogram skips `GET /api/v1/live` (the request
+  counter still counts it). The access log line is the usual one (method, path, status,
+  duration, IP, user): no query string, body, cookie or token (tested with an API key and a
+  session).
+- **6.9-h Shutdown.** `CloseStreams` closes one channel: every stream sends bye `shutdown`
+  and returns, and new streams are refused. `TestShutdownWithOpenStreams` (HTTP/1.1 and
+  HTTP/2): 3 open streams and a kill request held in flight for 150 ms; `Shutdown` returns
+  in < 1 s, after the kill completed (200, kill stored), and every stream got bye.
+- **6.10-a Bus.** `eventbus.New()` is `Deps.Bus`; its drop count is the counter
+  `cactustrade_live_bus_dropped_total` (a `CounterFunc` over `Bus.Dropped`).
+- **6.10-b History loop.** `historyLoop` runs inside `startTrading`'s wait group (so `stop`
+  waits for it before the leases are released) but independently of the 4.14 sequence: it
+  only reads closed trades (`SyncTradesAll`: demo and real accounts, OD18's 90-day first
+  backfill), so it may run before `ReconcileAll`. `startTrading` takes a `tradingSchedule`
+  (`prodSchedule()`: first after 2 min, then every 15 min). The `trader` interface gained
+  `SyncTradesAll`. Tests: `TestStartTradingHistoryLoop` (ordering hook: reconcile → resume →
+  loops unchanged with the history loop running from t = 0; release last; a failed sync is
+  tried again), `TestHistoryLoopIsReadOnly` (real use cases on the SimBroker: the trade is
+  stored, `Opens`, `Closes`, `Cancels` 0, no violation, reconciliation before the first
+  supervisor pass).
+
+Verification (2026-11-24): `make check` green: gofumpt, golangci-lint 0 issues, vet,
+`go test -race` with coverage domain 99.8 % / app 89.0 %, MariaDB `test-int`, govulncheck
+(no vulnerabilities), contracts in sync, `pnpm -C web check` (18 files, 89 tests); `make
+build`. `internal/adapters/http` coverage 79.7 %, `cmd/cactustrade` 49.7 %. The stream and
+shutdown tests passed 5 runs in a row under `-race`.
 
 ### Steps 6.13–6.15: decisions (2026-11-24)
 

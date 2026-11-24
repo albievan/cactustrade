@@ -38,13 +38,17 @@ func (s *Server) ListEvents(w http.ResponseWriter, r *http.Request, params ListE
 	}
 	out := EventFeed{Unread: f.Unread, Events: make([]Event, 0, len(f.Events))}
 	for _, e := range f.Events {
-		ev := Event{Id: e.ID, At: e.At, Kind: e.Kind, Severity: EventSeverity(e.Severity), Title: e.Title, Actor: e.Actor}
-		if e.Detail != "" {
-			ev.Detail = ptr(e.Detail)
-		}
-		out.Events = append(out.Events, ev)
+		out.Events = append(out.Events, toEvent(e))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func toEvent(e domain.Event) Event {
+	ev := Event{Id: e.ID, At: e.At, Kind: e.Kind, Severity: EventSeverity(e.Severity), Title: e.Title, Actor: e.Actor}
+	if e.Detail != "" {
+		ev.Detail = ptr(e.Detail)
+	}
+	return ev
 }
 
 // MarkEventsSeen clears the caller's unread count.

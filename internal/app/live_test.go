@@ -221,6 +221,45 @@ func TestPublishWithoutBus(t *testing.T) {
 	}
 }
 
+// TestSubscribeLive: with a bus the stream gets what is published until it cancels; without
+// one it is told so and gets a harmless cancel.
+func TestSubscribeLive(t *testing.T) {
+	tests := []struct {
+		name  string
+		noBus bool
+	}{
+		{"bus", false},
+		{"no bus", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			x := newExecEnv(t)
+			if tt.noBus {
+				x.svc.d.Bus = nil
+			}
+			ch, cancel, ok := x.svc.SubscribeLive(4)
+			if ok == tt.noBus {
+				t.Fatalf("ok = %v", ok)
+			}
+			if tt.noBus {
+				cancel()
+				if ch != nil {
+					t.Fatal("a channel without a bus")
+				}
+				return
+			}
+			x.svc.emitFor(x.ctx, x.a.ID, "", "test.kind", domain.SeverityInfo, "title", "")
+			if e := <-ch; e.Type != BusEvent || BusAccount(e) != x.a.ID {
+				t.Fatalf("event %+v", e)
+			}
+			cancel()
+			if _, open := <-ch; open {
+				t.Fatal("still subscribed after cancel")
+			}
+		})
+	}
+}
+
 func TestBusAccount(t *testing.T) {
 	tests := []struct {
 		data any

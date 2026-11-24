@@ -37,6 +37,7 @@ import (
 	"github.com/albievan/cactustrade/internal/adapters/argon2"
 	"github.com/albievan/cactustrade/internal/adapters/calendar"
 	"github.com/albievan/cactustrade/internal/adapters/etoro"
+	"github.com/albievan/cactustrade/internal/adapters/eventbus"
 	httpapi "github.com/albievan/cactustrade/internal/adapters/http"
 	"github.com/albievan/cactustrade/internal/adapters/llm"
 	"github.com/albievan/cactustrade/internal/adapters/mail"
@@ -200,6 +201,10 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	}
 	host, _ := os.Hostname()
 	reviewer := llm.New(&http.Client{Timeout: 10 * time.Minute})
+	// The live bus (PLAN 6.10): stored events, order changes, agent states and portfolio
+	// reads for the dashboard streams. A view only: nothing decides on it, and a full stream
+	// misses events instead of holding up an order.
+	bus := eventbus.New()
 	svc, err = app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.New(argon2.Default),
 		Random: system.Random{}, Clock: clock, Log: log,
@@ -211,6 +216,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		LLM:          reviewer,
 		Research:     broker,
 		Mailer:       mail.New(time.Now, host),
+		Bus:          bus,
 		MailFallback: fallback.get,
 		Reload: func(ctx context.Context) error {
 			if err := fallback.load(getenv); err != nil {
@@ -260,17 +266,17 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	}
 
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{
+			Name: "cactustrade_live_bus_dropped_total",
+			Help: "Live events not delivered to a stream that was behind (the stream was told to resync).",
+		}, func() float64 { return float64(bus.Dropped()) }))
 	handler := httpapi.New(svc, log, httpapi.Config{
 		CookieSecure: cfg.CookieSecure, TrustedProxies: cfg.TrustedProxies, MetricsToken: cfg.MetricsToken,
 		Web: web.FS(), OpenAPI: api.OpenAPI,
 	}, reg)
 
-	srv := &http.Server{
-		Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10,
-		ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelWarn),
-	}
+	srv := newHTTPServer(cfg, handler, log)
 	scheme := "http"
 	if cfg.TLS == "auto" {
 		tc, generated, err := tlsConfig(cfg.TLSCert, cfg.TLSKey, cfg.DataDir, time.Now())
@@ -294,9 +300,10 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	go scannerLoop(ctx, svc, cal, 15*time.Minute)
 	go equityLoop(ctx, svc, time.Minute, 15*time.Minute)
 	go mailLoop(ctx, svc, log, 15*time.Second)
-	// Trading (PLAN 4.14): start-up reconciliation → OD5 resume → supervisor → agent. The
-	// web server is up meanwhile, so the kill switch works from the first second.
-	stopTrading := startTrading(ctx, svc, log)
+	// Trading (PLAN 4.14): start-up reconciliation → OD5 resume → supervisor → agent, and the
+	// read-only trade-history loop (6.10). The web server is up meanwhile, so the kill switch
+	// works from the first second.
+	stopTrading := startTrading(ctx, svc, log, prodSchedule())
 
 	errc := make(chan error, 2)
 	var redirect *http.Server
