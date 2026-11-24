@@ -468,6 +468,9 @@ var sampleReview = ports.ReviewInput{
 
 // TestLLM asks a stored profile to review a made-up trade (admin). A provider failure is a
 // result (OK=false), not an error.
+// testLLMTimeout bounds the admin's test call (well under the HTTP write timeout).
+var testLLMTimeout = 45 * time.Second
+
 func (s *Service) TestLLM(ctx context.Context, p Principal, profileID string) (LLMTestResult, error) {
 	if err := s.authorize(p, domain.PermManageSettings); err != nil {
 		return LLMTestResult{}, err
@@ -498,7 +501,11 @@ func (s *Service) TestLLM(ctx context.Context, p Principal, profileID string) (L
 		}
 	}
 	start := s.d.Clock.Now()
-	v, call, err := s.d.LLM.Review(ctx, pr.LLMConfig, key, sampleReview)
+	// A test answers within testLLMTimeout so the browser always gets a reply before the
+	// server's write timeout (60 s) cuts the request ("Failed to fetch").
+	tctx, cancel := context.WithTimeout(ctx, testLLMTimeout)
+	defer cancel()
+	v, call, err := s.d.LLM.Review(tctx, pr.LLMConfig, key, sampleReview)
 	latency := s.d.Clock.Now().Sub(start)
 	if err != nil && call.Error == "" {
 		call.Error = err.Error()
@@ -517,6 +524,9 @@ func (s *Service) TestLLM(ctx context.Context, p Principal, profileID string) (L
 			return LLMTestResult{}, ctx.Err() // the caller went away
 		}
 		res.Error = err.Error()
+		if tctx.Err() != nil {
+			res.Error = fmt.Sprintf("the provider did not answer within %d s (busy, or a slow model); try again or choose a faster model", int(testLLMTimeout/time.Second))
+		}
 		s.audit(ctx, p, "llm.test", pr.ID, "failed")
 		return res, nil
 	}

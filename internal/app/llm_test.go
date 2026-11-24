@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
@@ -276,5 +278,32 @@ func TestLLMProfilePricesStored(t *testing.T) {
 	_ = e.store.Settings().Set(ctx, settingLLMProfiles, `{"enabled":false,"active":"a","profiles":[{"id":"a","name":"A","provider":"openai","model":"m"}]}`, e.clock.T)
 	if st, err := e.svc.LLMSetup(ctx, e.admin); err != nil || st.Profiles[0].InputPrice != 0 || st.Profiles[0].Cost(1, 1) != domain.CostUnknown {
 		t.Fatalf("old profile = %+v %v", st, err)
+	}
+}
+
+type slowReviewer struct{ fakeReviewer }
+
+func (s *slowReviewer) Review(ctx context.Context, _ domain.LLMConfig, _ string, _ ports.ReviewInput) (domain.Verdict, domain.LLMCall, error) {
+	<-ctx.Done() // never answers in time
+	return domain.Verdict{}, domain.LLMCall{}, ctx.Err()
+}
+
+// TestTestLLMTimesOutBeforeTheServer: a provider that does not answer gets a clear message
+// within testLLMTimeout, so the browser never sees the server's write timeout ("Failed to fetch").
+func TestTestLLMTimesOutBeforeTheServer(t *testing.T) {
+	old := testLLMTimeout
+	testLLMTimeout = 20 * time.Millisecond
+	defer func() { testLLMTimeout = old }()
+	ctx := context.Background()
+	e := newEnv(t)
+	e.svc.d.LLM = &slowReviewer{}
+	key := "sk-slow-123456"
+	pr, err := e.svc.SaveLLMProfile(ctx, e.admin, domain.LLMProfile{Name: "Slow", LLMConfig: domain.LLMConfig{Provider: "deepseek", Model: "m"}}, &key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TestLLM(ctx, e.admin, pr.ID)
+	if err != nil || res.OK || !strings.Contains(res.Error, "did not answer within") {
+		t.Fatalf("test = %+v %v", res, err)
 	}
 }

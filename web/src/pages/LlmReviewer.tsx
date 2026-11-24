@@ -54,7 +54,7 @@ export function LlmReviewer() {
           <li>It can never enlarge a trade, propose another one, or place an order: it has no tools, no eToro access and no keys but its own.</li>
           <li>It fails closed: no answer, a timeout, a quota error, an unreadable answer or a refusal all count as <strong>reject</strong>.</li>
           <li>The deterministic risk engine still has the final say (budget, cash, loss limits, kill switch).</li>
-          <li>Each review is one request to the provider, paid with that profile's key. A <em>429 / quota</em> error comes from the provider: check your plan there.</li>
+          <li>Each review is one request to the provider, paid with that profile's key. A <em>429 / quota</em> error comes from the provider: check your plan there. A <em>503 / high demand</em> answer means the provider is busy for a moment (not your key or credit): cactusTrade asks once more after 2 s, otherwise try again later or pick another model.</li>
         </ul>
       </InfoCard>
       {msg && <div className="alert alert-success" role="status">{msg}</div>}

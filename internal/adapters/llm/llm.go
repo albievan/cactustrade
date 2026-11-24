@@ -329,14 +329,47 @@ func (c *Client) reviewAnthropic(ctx context.Context, cfg domain.LLMConfig, apiK
 
 // do sends body (nil = none) and returns the response body, also with an error status (then
 // with an error that explains it).
+// statusOverloaded is Anthropic's and some proxies' "overloaded" status (not in net/http).
+const statusOverloaded = 529
+
+// retryAfterBusy is the pause before the one retry of a request the provider answered as
+// busy (502/503/529): such spikes are usually over within seconds (Gemini: "high demand").
+var retryAfterBusy = 2 * time.Second
+
+func busy(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == statusOverloaded
+}
+
+// do sends one request and, when the provider answers that it is busy, tries once more
+// after retryAfterBusy if the deadline leaves room for it (a failure is still a rejection:
+// the caller fails closed).
 func (c *Client) do(ctx context.Context, method, url, apiKey string, body []byte) ([]byte, error) {
+	data, status, err := c.doOnce(ctx, method, url, apiKey, body)
+	if err == nil || !busy(status) {
+		return data, err
+	}
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < retryAfterBusy+5*time.Second {
+		return data, err
+	}
+	t := time.NewTimer(retryAfterBusy)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return data, err
+	case <-t.C:
+	}
+	data, _, err = c.doOnce(ctx, method, url, apiKey, body)
+	return data, err
+}
+
+func (c *Client) doOnce(ctx context.Context, method, url, apiKey string, body []byte) ([]byte, int, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, rd)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
@@ -347,17 +380,17 @@ func (c *Client) do(ctx context.Context, method, url, apiKey string, body []byte
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
 	if err != nil {
-		return data, err
+		return data, resp.StatusCode, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return data, fmt.Errorf("HTTP %d: %s", resp.StatusCode, providerMessage(resp.StatusCode, data))
+		return data, resp.StatusCode, fmt.Errorf("HTTP %d: %s", resp.StatusCode, providerMessage(resp.StatusCode, data))
 	}
-	return data, nil
+	return data, resp.StatusCode, nil
 }
 
 // chatRequest is the whole request: system and user message and JSON mode. There is
@@ -494,6 +527,10 @@ func providerMessage(status int, data []byte) string {
 	case http.StatusTooManyRequests:
 		return "the provider's quota or rate limit for this key is used up — not a cactusTrade problem; " +
 			"check the plan and billing at the provider, wait, or choose a model your plan includes: " + msg
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout, statusOverloaded:
+		return "the provider is overloaded or having a problem right now — temporary, not your key " +
+			"or credit; try again in a minute or choose another model: " + msg
 	}
 	return msg
 }
