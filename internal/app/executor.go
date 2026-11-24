@@ -67,6 +67,9 @@ type runtimeState struct {
 	// killed latches every kill in this process (review m3): even when neither kill write
 	// reached the database, entries stay refused after it recovers, until ResetKill.
 	killed map[string]bool
+	// views is the portfolio view cache (PLAN 6.6a): read by view use cases only, never by
+	// an order path (CLAUDE.md §2.2).
+	views *viewCache
 }
 
 // agentLocks are one account's agent locks. Lock order: ctl before entry, never the other
@@ -84,7 +87,7 @@ func newRuntimeState() *runtimeState {
 	return &runtimeState{
 		reconciled: map[string]Reconciliation{}, supervising: map[string]bool{},
 		agents: map[string]*agentLocks{}, entryCancel: map[string]context.CancelFunc{}, ticking: map[string]bool{},
-		killed: map[string]bool{},
+		killed: map[string]bool{}, views: newViewCache(),
 	}
 }
 
@@ -234,7 +237,17 @@ func (s *Service) move(ctx context.Context, o domain.Order, to domain.OrderState
 	if err := s.d.Store.Orders().Update(ctx, o, next); err != nil {
 		return o, fmt.Errorf("storing order %s (%s → %s): %w", o.RequestID, o.State, to, err)
 	}
+	s.publishOrder(next)
 	return next, nil
+}
+
+// createOrder stores a new order row and announces it on the bus (after the write).
+func (s *Service) createOrder(ctx context.Context, o domain.Order) error {
+	if err := s.d.Store.Orders().Create(ctx, o); err != nil {
+		return err
+	}
+	s.publishOrder(o)
+	return nil
 }
 
 // waitToResend waits out a 429's Retry-After (at least minRetryAfter) and renews the lease:
@@ -303,7 +316,7 @@ func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryReque
 	if err != nil {
 		return domain.Order{}, fmt.Errorf("executor.placeEntry: %w", err)
 	}
-	if err := s.d.Store.Orders().Create(ctx, o); err != nil {
+	if err := s.createOrder(ctx, o); err != nil {
 		return domain.Order{}, fmt.Errorf("executor.placeEntry: storing the order (nothing sent): %w", err)
 	}
 	now := s.d.Clock.Now()
@@ -617,7 +630,7 @@ func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain
 		return domain.Order{}, fmt.Errorf("executor.closePosition: %w", err)
 	}
 	o.Reason = why
-	if err := s.d.Store.Orders().Create(ctx, o); err != nil {
+	if err := s.createOrder(ctx, o); err != nil {
 		return domain.Order{}, fmt.Errorf("executor.closePosition: storing the close (nothing sent): %w", err)
 	}
 	ap.CloseRequestID = o.RequestID
@@ -806,7 +819,7 @@ func (s *Service) cancelOrder(ctx context.Context, a domain.Account, target doma
 		return domain.Order{}, fmt.Errorf("executor.cancelOrder: %w", err)
 	}
 	o.Reason = why
-	if err := s.d.Store.Orders().Create(ctx, o); err != nil {
+	if err := s.createOrder(ctx, o); err != nil {
 		return domain.Order{}, fmt.Errorf("executor.cancelOrder: storing the cancel (nothing sent): %w", err)
 	}
 	if o, err = s.move(ctx, o, domain.OrderSent, "", nil); err != nil {

@@ -76,6 +76,9 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problemFor(w, r, err, http.StatusNotFound, "Not found", detail(err, domain.ErrNotFound), "")
 	case errors.Is(err, domain.ErrPasswordChangeRequired):
 		problemFor(w, r, err, http.StatusForbidden, "Password change required", "change the default password first", "")
+	case errors.Is(err, domain.ErrTooLarge):
+		problemFor(w, r, err, http.StatusUnprocessableEntity, "Too large",
+			"more rows than one answer may hold (at most 50 000): narrow the date range", "")
 	case errors.Is(err, domain.ErrConflict):
 		problemFor(w, r, err, http.StatusConflict, "Conflict", detail(err, domain.ErrConflict), "")
 	case errors.Is(err, domain.ErrUnavailable):

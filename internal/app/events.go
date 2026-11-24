@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 )
 
 // eventRetention is how long the feed keeps events.
@@ -29,7 +30,70 @@ func (s *Service) emitFor(ctx context.Context, accountID, actor, kind string, se
 	if err := s.d.Store.Events().Append(ctx, e); err != nil {
 		s.d.Log.ErrorContext(ctx, "event write failed", "kind", kind, "err", err)
 	}
+	// After the write (attempted): a live viewer still learns of a kill when the database
+	// is down; the feed has it once the write succeeds.
+	s.publish(BusEvent, e.At, e)
 	s.notify(ctx, e)
+}
+
+// Live bus event types (PLAN 6.6b). Each event's Data names its account (BusAccount).
+const (
+	// BusEvent: an event of the feed (Data domain.Event; AccountID "" = system-wide).
+	BusEvent = "event"
+	// BusOrder: one of our orders after a stored transition, creation included (Data
+	// domain.Order as stored).
+	BusOrder = "order.updated"
+	// BusAgentState: an account's agent state after it was written (Data AgentStatus).
+	BusAgentState = "agent.state"
+	// BusPortfolio: the supervisor read an account's portfolio (Data PortfolioRead).
+	BusPortfolio = "account.portfolio"
+)
+
+// PortfolioRead says that an account's portfolio was read at At (the figures are in the view
+// cache; a stream sends a new snapshot).
+type PortfolioRead struct {
+	AccountID string
+	At        time.Time
+	Equity    domain.Cents
+}
+
+// BusAccount returns the account a bus event is about ("" = system-wide or unknown, which
+// a stream shows to no one but the system feed's readers).
+func BusAccount(e ports.Event) string {
+	switch d := e.Data.(type) {
+	case domain.Event:
+		return d.AccountID
+	case domain.Order:
+		return d.AccountID
+	case AgentStatus:
+		return d.AccountID
+	case PortfolioRead:
+		return d.AccountID
+	default:
+		return ""
+	}
+}
+
+// publish puts one event on the bus (none configured: nothing). The bus never blocks: a
+// subscriber that is full misses the event (ports.EventBus).
+func (s *Service) publish(typ string, at time.Time, data any) {
+	if s.d.Bus == nil {
+		return
+	}
+	s.d.Bus.Publish(ports.Event{Type: typ, At: at, Data: data})
+}
+
+// publishOrder announces an order version that was just stored.
+func (s *Service) publishOrder(o domain.Order) { s.publish(BusOrder, o.UpdatedAt, o) }
+
+// publishAgentState announces an account's agent state that was just written.
+func (s *Service) publishAgentState(accountID string, st domain.AgentState) {
+	s.publish(BusAgentState, s.d.Clock.Now().UTC(), AgentStatus{AccountID: accountID, State: st})
+}
+
+// publishPortfolio announces the supervisor's portfolio read.
+func (s *Service) publishPortfolio(accountID string, pf domain.Portfolio) {
+	s.publish(BusPortfolio, s.d.Clock.Now().UTC(), PortfolioRead{AccountID: accountID, At: s.d.Clock.Now().UTC(), Equity: pf.Equity()})
 }
 
 // EventFeed is the newest events and how many the caller has not seen.

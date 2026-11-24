@@ -38,6 +38,7 @@ tags:
   - name: llm
   - name: email
   - name: audit
+  - name: history
 security:
   - sessionCookie: []
   - bearerApiKey: []
@@ -1092,6 +1093,107 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/history/summary:
+    get:
+      tags: [history]
+      operationId: getHistorySummary
+      summary: Counts and sums of the account's closed trades and its equity drawdown over the last days risk days (viewer)
+      description: |
+        The trade figures are over the trades of positions cactusTrade opened (OD15);
+        `foreignTrades` counts the others in the period. The drawdown is over the whole
+        account's equity snapshots. The figures describe past results only.
+      parameters:
+        - $ref: "#/components/parameters/AccountIdQuery"
+        - $ref: "#/components/parameters/HistoryDays"
+      responses:
+        "200":
+          description: The summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HistorySummary" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/history/trades:
+    get:
+      tags: [history]
+      operationId: listHistoryTrades
+      summary: The account's closed trades, newest close first (viewer; positions not opened by cactusTrade are listed with ours false)
+      parameters:
+        - $ref: "#/components/parameters/AccountIdQuery"
+        - { name: from, in: query, description: "only trades closed at or after this time", schema: { type: string, format: date-time } }
+        - { name: to, in: query, description: "only trades closed before this time", schema: { type: string, format: date-time } }
+        - { name: ours, in: query, description: "true = only cactusTrade's trades, false = only the others (absent = all)", schema: { type: boolean } }
+        - { name: before, in: query, description: "only trades closed before this time (the next page: the last row's closedAt)", schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Trades
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/HistoryTrade" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/history/daily:
+    get:
+      tags: [history]
+      operationId: getHistoryDaily
+      summary: The account's figures per risk day (22:00 UTC) over the last days risk days, today included (viewer)
+      parameters:
+        - $ref: "#/components/parameters/AccountIdQuery"
+        - $ref: "#/components/parameters/HistoryDays"
+      responses:
+        "200":
+          description: Daily figures, oldest day first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DailyHistory" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/history/export/{file}:
+    get:
+      tags: [history]
+      operationId: exportHistory
+      summary: Download the account's history as CSV (viewer; an API key may export)
+      description: |
+        `file` is `trades.csv`, `daily.csv`, `equity.csv`, `orders.csv` or `decisions.csv`.
+        Comma-separated with a header row, oldest row first; times are UTC RFC 3339, US
+        dollar amounts exact decimal strings, unknown values empty (unknown trade fees:
+        `unknown`). A cell that a spreadsheet could take for a formula (starting with `=`,
+        `+`, `-`, `@`, a tab or a carriage return) is prefixed with `'` (OD17). At most
+        50 000 rows: a larger export is refused with 422, never cut short.
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema: { type: string, enum: [trades.csv, daily.csv, equity.csv, orders.csv, decisions.csv] }
+        - $ref: "#/components/parameters/AccountIdQuery"
+        - { name: from, in: query, description: "from this time (absent = the whole history)", schema: { type: string, format: date-time } }
+        - { name: to, in: query, description: "until this time, exclusive (absent = now)", schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: The CSV file (sent as an attachment)
+          headers:
+            Content-Disposition:
+              description: attachment with the file name
+              schema: { type: string }
+          content:
+            text/csv:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
   /api/v1/themes:
     get:
       tags: [research]
@@ -1394,6 +1496,12 @@ components:
       required: false
       description: The account (default the caller's current account)
       schema: { type: string, maxLength: 64 }
+    HistoryDays:
+      name: days
+      in: query
+      required: false
+      description: The period in risk days, today included
+      schema: { type: integer, minimum: 1, maximum: 400, default: 30 }
   responses:
     AgentStatus:
       description: The agent's state after the action
@@ -2364,3 +2472,83 @@ components:
           type: array
           items: { $ref: "#/components/schemas/LlmUsageRow" }
         total: { $ref: "#/components/schemas/LlmUsageRow" }
+    HistoryTrade:
+      type: object
+      description: One closed trade as eToro reported it (PLAN 6.4)
+      required: [positionId, instrumentId, symbol, direction, leverage, units, investedCents, openRate, closeRate, netProfitCents, feesKnown, openedAt, closedAt, ours, openRequestId, etoroOrderId, mode]
+      properties:
+        positionId: { type: integer, format: int64 }
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string, description: "empty when the instrument is not cached" }
+        direction: { type: string, description: "long or short" }
+        leverage: { type: integer }
+        units: { $ref: "#/components/schemas/Decimal" }
+        investedCents: { $ref: "#/components/schemas/Cents" }
+        openRate: { $ref: "#/components/schemas/Decimal" }
+        closeRate: { $ref: "#/components/schemas/Decimal" }
+        stopLoss: { $ref: "#/components/schemas/Decimal" }
+        takeProfit: { $ref: "#/components/schemas/Decimal" }
+        netProfitCents: { $ref: "#/components/schemas/Cents" }
+        feesCents: { $ref: "#/components/schemas/Cents" }
+        feesKnown: { type: boolean, description: "false when eToro did not report the fees (feesCents is then absent, never 0)" }
+        openedAt: { type: string, format: date-time }
+        closedAt: { type: string, format: date-time }
+        ours: { type: boolean, description: "cactusTrade opened the position (OD1)" }
+        openRequestId: { type: string, description: "the x-request-id of our open order (empty when not ours)" }
+        etoroOrderId: { type: integer, format: int64, description: "eToro's order id of the open (0 = not reported)" }
+        mode: { $ref: "#/components/schemas/TradingMode" }
+    HistoryDrawdown:
+      type: object
+      description: The account's equity drawdown over its snapshots in the period (known false = no snapshot)
+      required: [known, peakCents, maxDrawdownCents, maxDrawdownBp, currentCents, currentBp]
+      properties:
+        known: { type: boolean }
+        peakCents: { $ref: "#/components/schemas/Cents" }
+        peakAt: { type: string, format: date-time }
+        maxDrawdownCents: { $ref: "#/components/schemas/Cents" }
+        maxDrawdownBp: { type: integer, format: int64 }
+        currentCents: { $ref: "#/components/schemas/Cents" }
+        currentBp: { type: integer, format: int64 }
+    HistorySummary:
+      type: object
+      required: [accountId, days, from, to, trades, wins, losses, breakeven, grossCents, feesCents, netCents, feesUnknownTrades, foreignTrades, drawdown]
+      properties:
+        accountId: { type: string }
+        days: { type: integer }
+        from: { type: string, format: date-time, description: "the start of the first risk day" }
+        to: { type: string, format: date-time }
+        trades: { type: integer, description: "cactusTrade's closed trades in the period" }
+        wins: { type: integer }
+        losses: { type: integer }
+        breakeven: { type: integer }
+        winRateBp: { type: integer, format: int64, description: "wins / trades in basis points (absent when there are no trades)" }
+        grossCents: { $ref: "#/components/schemas/Cents" }
+        feesCents: { $ref: "#/components/schemas/Cents" }
+        netCents: { $ref: "#/components/schemas/Cents" }
+        feesUnknownTrades: { type: integer, description: "trades whose fees eToro did not report (in neither fees nor gross)" }
+        foreignTrades: { type: integer, description: "closed trades of positions cactusTrade did not open (not counted above)" }
+        drawdown: { $ref: "#/components/schemas/HistoryDrawdown" }
+    HistoryDay:
+      type: object
+      required: [day, trades, realisedCents, feesCents, feesUnknownTrades]
+      properties:
+        day: { type: string, description: "the risk day (YYYY-MM-DD, starting 22:00 UTC the day before)" }
+        trades: { type: integer }
+        realisedCents: { $ref: "#/components/schemas/Cents" }
+        feesCents: { $ref: "#/components/schemas/Cents" }
+        feesUnknownTrades: { type: integer }
+        equityEndCents: { $ref: "#/components/schemas/Cents" }
+        equityChangeCents:
+          allOf: [{ $ref: "#/components/schemas/Cents" }]
+          description: "the change of the account's equity that day; it includes deposits, withdrawals and positions not opened by cactusTrade (absent = no snapshot)"
+    DailyHistory:
+      type: object
+      required: [accountId, days, from, to, rows]
+      properties:
+        accountId: { type: string }
+        days: { type: integer }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/HistoryDay" }

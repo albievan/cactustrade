@@ -849,9 +849,9 @@ Each is the **default until the owner answers**. OD14–OD18 shape phase 6; OD19
 | 6.3 | **eToro adapter: read the full trade history (read-only).** Parse `fees`, `investment`, `initialInvestment`, `units`, `orderId`, `stopLossRate`, `takeProfitRate`. Split lookbacks over 1 year − 1 day into windows (spec), at most 50 pages per window. Missing `fees` = unknown (kept apart, never 0). | `internal/adapters/etoro/{read.go,client_test.go}`, `testdata/history*.json` (synthetic, spec-shaped) | `go test ./internal/adapters/etoro/...`, coverage ≥ 90 %. The fixture with fees parses to cents. A 400-day request makes 2 windows. A missing `fees` field is flagged unknown. `TestAllowlist*` unchanged and green (no new path). | done |
 | 6.4 | **Migration 00011 `trades` + repository.** `trades` (account_id FK cascade, position_id, PK (account_id, position_id); mode, instrument_id, direction, leverage, ours, open_request_id, opened_at, closed_at, units_micros, invested_cents, open/close/stop/tp micros, net_profit_cents, fees_cents, fees_known, etoro_order_id, synced_at; index (account_id, closed_at)). `ports.Trades{Upsert (update-then-insert in Go), List(account, from, to, ours filter, before, limit), LastClosedAt}`. No purge (OD16). | `migrations/{sqlite,mariadb}/00011_trades.sql`, `internal/ports/ports.go`, `internal/ports/fakes/*`, `internal/adapters/sqlstore/trades.go`, `storetest/trades.go` | `make test && make test-int`, `TestMigrationParity`. Shared suite: upsert twice = one row with the newer values; `List` newest first, `before` exclusive, filters; other account → empty; cascade on account delete; MariaDB up→down→up. | done |
 | 6.5 | **App: trade sync and history use cases.** `SyncTrades(ctx, accountID)` (system, read-only; eToro accounts with keys, demo and real): since `LastClosedAt − 2 days` (first run: OD18). `ours` = position in `agent_positions`, plus `open_request_id`. `SyncTradesAll` with per-account timeout. Viewer use cases with view access: `Trades(p, acct, from, to, ours, before, limit 1–500)`, `DailyPnL(p, acct, days 1–400)`, `HistorySummary(p, acct, days)` (`TradeStats` + `Drawdown` over `equity_snapshots`), `ExportRows(p, acct, kind, from, to)` (≤ 50 000 rows, kinds trades / daily / equity / orders / decisions). | `internal/app/history.go`, `history_test.go` | `go test -race ./internal/app -run 'History\|SyncTrades\|Export'`. Tables: another account → 404; viewer allowed; trade access not needed; a broker error leaves the stored rows unchanged and returns the error; syncing twice is idempotent; ours / foreign marked correctly (OD1); a view-only platform → `ErrViewOnly`; export over the cap → 422. | done |
-| 6.6a | **App: portfolio view cache (MINOR 1).** `runtimeState` keeps the last portfolio per account (value + read time). The supervisor stores its read there (no extra eToro call); `viewPortfolio` refreshes only when the cache is older than 10 s, with one read per account in flight (`sync.Mutex` + waiter; no new dependency). `AgentStatusView` uses it. **Only view use cases may read it.** | `internal/app/{viewcache.go,agent_view.go,supervisor.go}`, `viewcache_test.go` | `go test -race ./internal/app -run 'ViewCache\|AgentStatusView\|EntriesNeverUseTheViewCache'`. 50 concurrent `AgentStatusView` calls in 10 s → ≤ 1 `Portfolio` read. **Guardrail §2.2:** `TestEntriesNeverUseTheViewCache` primes the cache with 100× the cash; `AgentTick`'s `Open` amount is still ≤ the SimBroker's fresh cash − reserved. A source test fails if `agent.go`, `executor.go`, `supervisor.go` (except the store call) or `risk.go` read the cache. | todo |
-| 6.6b | **App: event bus and live snapshot.** `Deps.Bus ports.EventBus` (nil = no-op). `emitFor` publishes after the DB write. Bus-only events: `order.updated` after every stored order transition (executor and reconcile), `agent.state` on every state write, `account.portfolio` after the supervisor's read. `LiveSnapshot(p, acct)` = `LimitDistances` + positions (ours flag, stop, take-profit, flatten time) + open orders + the last 20 orders + the latest regime per watchlist share (from `reviews`) + agent state, reconciliation, kill, latch, lease + freshness (`portfolioAt`, `stale` after 30 s). `LiveFilter(p)` = the account ids the caller may view. | `internal/app/{live.go,events.go,executor.go,reconcile.go,agent_control.go}`, `live_test.go`, `internal/ports/fakes` (recording bus) | `go test -race ./internal/app -run 'Live\|Publish'`. Every executor table case publishes the same transitions it stores, in order. A bus that drops events never blocks an order (full subscriber). `LiveFilter` excludes unshared accounts and view-only rules are kept. The snapshot uses only cached or stored data. | todo |
-| 6.7 | **Contract and handlers: history and exports.** Contract first: `GET /api/v1/history/summary?accountId&days`, `/history/trades?accountId&from&to&ours&before&limit`, `/history/daily?accountId&days`, `/history/export/{kind}.csv?accountId&from&to` (kinds trades / daily / equity / orders / decisions). Then `make gen` and the handlers. CSV: `encoding/csv`; money as decimal strings from cents; times UTC RFC 3339; any cell starting with `= + - @ \t \r` prefixed with `'`; `Content-Disposition: attachment`, `nosniff`, `no-store`; written while streaming rows. | `api/openapi/cactustrade.yaml`, `internal/adapters/http/{api.gen.go,handlers_history.go,csv.go,history_test.go}`, `web/src/lib/schema.d.ts` | `make gen && go test ./internal/adapters/http -run 'History\|CSV'`. Status codes 200/400/403/404/422; an API key (viewer) may export; the injection table (`=1+1`, `-2`, `@SUM`, tab) is neutralised; amounts are exact for ±9e15 cents; contract drift green. | todo |
+| 6.6a | **App: portfolio view cache (MINOR 1).** `runtimeState` keeps the last portfolio per account (value + read time). The supervisor stores its read there (no extra eToro call); `viewPortfolio` refreshes only when the cache is older than 10 s, with one read per account in flight (`sync.Mutex` + waiter; no new dependency). `AgentStatusView` uses it. **Only view use cases may read it.** | `internal/app/{viewcache.go,agent_view.go,supervisor.go}`, `viewcache_test.go` | `go test -race ./internal/app -run 'ViewCache\|AgentStatusView\|EntriesNeverUseTheViewCache'`. 50 concurrent `AgentStatusView` calls in 10 s → ≤ 1 `Portfolio` read. **Guardrail §2.2:** `TestEntriesNeverUseTheViewCache` primes the cache with 100× the cash; `AgentTick`'s `Open` amount is still ≤ the SimBroker's fresh cash − reserved. A source test fails if `agent.go`, `executor.go`, `supervisor.go` (except the store call) or `risk.go` read the cache. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
+| 6.6b | **App: event bus and live snapshot.** `Deps.Bus ports.EventBus` (nil = no-op). `emitFor` publishes after the DB write. Bus-only events: `order.updated` after every stored order transition (executor and reconcile), `agent.state` on every state write, `account.portfolio` after the supervisor's read. `LiveSnapshot(p, acct)` = `LimitDistances` + positions (ours flag, stop, take-profit, flatten time) + open orders + the last 20 orders + the latest regime per watchlist share (from `reviews`) + agent state, reconciliation, kill, latch, lease + freshness (`portfolioAt`, `stale` after 30 s). `LiveFilter(p)` = the account ids the caller may view. | `internal/app/{live.go,events.go,executor.go,reconcile.go,agent_control.go}`, `live_test.go`, `internal/ports/fakes` (recording bus) | `go test -race ./internal/app -run 'Live\|Publish'`. Every executor table case publishes the same transitions it stores, in order. A bus that drops events never blocks an order (full subscriber). `LiveFilter` excludes unshared accounts and view-only rules are kept. The snapshot uses only cached or stored data. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
+| 6.7 | **Contract and handlers: history and exports.** Contract first: `GET /api/v1/history/summary?accountId&days`, `/history/trades?accountId&from&to&ours&before&limit`, `/history/daily?accountId&days`, `/history/export/{kind}.csv?accountId&from&to` (kinds trades / daily / equity / orders / decisions). Then `make gen` and the handlers. CSV: `encoding/csv`; money as decimal strings from cents; times UTC RFC 3339; any cell starting with `= + - @ \t \r` prefixed with `'`; `Content-Disposition: attachment`, `nosniff`, `no-store`; written while streaming rows. | `api/openapi/cactustrade.yaml`, `internal/adapters/http/{api.gen.go,handlers_history.go,csv.go,history_test.go}`, `web/src/lib/schema.d.ts` | `make gen && go test ./internal/adapters/http -run 'History\|CSV'`. Status codes 200/400/403/404/422; an API key (viewer) may export; the injection table (`=1+1`, `-2`, `@SUM`, tab) is neutralised; amounts are exact for ±9e15 cents; contract drift green. | done (2026-11-24; `make check` green incl. MariaDB test-int) |
 | 6.8 | **Live stream: contract and server timeouts.** Contract `GET /api/v1/live?accountId` (`text/event-stream`; components `LiveSnapshot`, `LiveEvent`, `LiveOrder`; event names `snapshot`, `event`, `order`, `resync`, `bye`, documented in the description). In `cmd`, factor `newHTTPServer(cfg, handler)` so tests use the production timeouts. | `api/openapi/cactustrade.yaml`, `api.gen.go`, `cmd/cactustrade/{main.go,server.go}`, `schema.d.ts` | `make gen`, contract drift green, `go build ./...` (handler stub answers 503 until 6.9). | todo |
 | 6.9 | **Live stream: handler.** Cookie or API key; no CSRF (GET); view access to the account. `http.ResponseController`: `SetReadDeadline(zero)` once, `SetWriteDeadline(now + 10 s)` before every write, `Flush`. Headers `text/event-stream`, `Cache-Control: no-store`, `X-Accel-Buffering: no`. On connect: a full snapshot. Then `event` / `order` messages from the bus filtered by `LiveFilter`, a snapshot every 5 s (cache only), `: ping` every 15 s. Session and access re-checked every 30 s (expired, revoked, password changed or share removed → `bye` and close). Stream lifetime ≤ 30 min (the client reconnects). Bus overflow → `resync`. Caps: 4 per user, 200 total → 429. `Server.CloseStreams()` is registered with `srv.RegisterOnShutdown`. The request histogram skips the route; gauge `cactustrade_live_streams`. | `internal/adapters/http/{handlers_live.go,live_test.go,middleware.go,server.go}`, `cmd/cactustrade/{main.go,main_test.go}` | `go test -race ./internal/adapters/http -run Live && go test ./cmd/cactustrade -run 'Stream\|Shutdown'`. Over `httptest` TLS with `newHTTPServer`, timeouts scaled to 200/300 ms, on HTTP/1.1 **and** HTTP/2: events still arrive after 3× ReadTimeout and 3× WriteTimeout. `Shutdown` returns in < 1 s with 3 open streams, and a kill request in flight still completes (4.14-b). A revoked session gets `bye` within one recheck. A viewer of A never receives B's events. The 5th stream → 429. API key works. No body, cookie or token is logged. | todo |
 | 6.10 | **Wiring.** `eventbus.New()` into `app.Deps.Bus` (dropped count as a metric); `historyLoop` (every 15 min, 2 min after start, read-only, may run before `ReconcileAll`); the `trades` sync covers real accounts read-only. | `cmd/cactustrade/{main.go,trading.go,main_test.go}` | `go test ./cmd/cactustrade`: the 4.14 ordering hook still sees `ReconcileAll` before the first `Supervise`; history sync is read-only (SimBroker `Opens == 0`, no close or cancel); `make build`. | todo |
@@ -946,6 +946,98 @@ Verification (2026-11-24): `make check` green — gofumpt, golangci-lint 0 issue
 `go test -race` with coverage domain 99.8 % / app 88.7 %, MariaDB `test-int` (incl. `trades`,
 `trades_cascade`, migrations up→down→up), govulncheck (no vulnerabilities), contracts in sync,
 `pnpm -C web check`. `internal/adapters/etoro` coverage 95.2 %.
+
+### Steps 6.6a, 6.6b, 6.7: decisions (2026-11-24)
+
+No new dependency, no migration, no eToro path (the allowlist and its tests are unchanged),
+no change to what an order path decides. Contract changes are additive (four GET routes,
+schemas `HistoryTrade`, `HistorySummary`, `HistoryDrawdown`, `HistoryDay`, `DailyHistory`,
+parameter `HistoryDays`, tag `history`).
+
+- **6.6a-a The cache** (`internal/app/viewcache.go`) is `runtimeState.views`: the last
+  portfolio per account with its read time (the clock's time when the read returned), and at
+  most one read per account in flight (a `sync.Mutex` and a `done` channel per flight; no
+  `singleflight` dependency). A view reads eToro only when the entry is ≥ 10 s old; waiters
+  share the flight's result, error included. The shared read runs on
+  `context.WithoutCancel(ctx)` bounded by `agentViewTimeout`, so one closed tab does not fail
+  the others; a waiter whose own context ends leaves without its answer. An error is never
+  cached. An older read never replaces a newer one. The new entry is stored and the flight
+  removed under one lock (no second read in the gap).
+- **6.6a-b Guardrail §2.2.** The supervisor stores its own read (`s.rt.views.put`, once) and
+  never reads the cache back; the agent tick, `freshPrices`, the executor and
+  `SetRiskLimits`' budget check keep reading eToro fresh. `TestEntriesNeverUseTheViewCache`
+  primes the cache with 100× the SimBroker's cash (equity held in a foreign position's gain
+  so the budget is unchanged) and asserts every `Open` amount ≤ fresh cash − reserved and that
+  the tick does not touch the cache. `TestViewCacheReadersAreViewsOnly` parses `agent.go`,
+  `executor.go`, `risk.go` and `supervisor.go` (go/ast, no `os`: depguard) and fails on any
+  cache reader (`viewPortfolio`, `peek`, the cache's maps, `viewEquity`, `AgentStatusView`,
+  `LiveSnapshot`, `WarmLiveView`) or any use of `.views` other than supervisor.go's one
+  `.views.put(`; it also fails if any other non-view file calls them.
+  `TestViewCacheSourceTestCatchesReads` proves it catches planted reads. Declaring and
+  building the field in executor.go reads nothing and is allowed.
+- **6.6a-c `AgentStatusView`** reads the equity through the cache (doc: "within the last
+  10 s"); no contract change.
+- **6.6b-a Bus events** (`internal/app/events.go`): `event` (Data `domain.Event`, after the
+  write is attempted: a live viewer still sees a kill when the database is down),
+  `order.updated` (Data `domain.Order`, after every successful `Orders().Create` (new helper
+  `createOrder`) and `Orders().Update` in `move`; reconcile and the supervisor use `move`, so
+  they are covered), `agent.state` (Data `AgentStatus`, in `setAgentState` after a successful
+  write; `tripLocked` now writes through `setAgentState` and also publishes `killed` when the
+  write failed, because the kill is latched in memory), `account.portfolio` (Data
+  `PortfolioRead{AccountID, At, Equity}`, after the supervisor's read). `BusAccount(e)` names
+  an event's account for 6.9's filter. `Deps.Bus` nil = no bus. The `ports.EventBus` doc now
+  says `Publish` must never block; `eventbus` and the new `fakes.Bus` (recording) drop for a
+  full subscriber. No goroutine per publish (it would reorder transitions).
+- **6.6b-b Tests.** `newExecEnv` wraps the order store with a recorder and installs a
+  `fakes.Bus`; every case of `TestExecutorPlaceEntry`, `TestExecutorClosePosition` and
+  `TestExecutorCancelOrder` asserts the published order versions equal the stored ones, in
+  order; `TestPublishReconcileTransitions` does so through `Reconcile`.
+  `TestPublishNeverBlocksAnOrder` places an order with a never-read, full subscriber.
+- **6.6b-c `LiveSnapshot(ctx, p, account)`** (view access) never calls eToro: the portfolio
+  comes from the view cache only (`PortfolioKnown`, `PortfolioAt`, `Stale` when missing or
+  older than 30 s); without one there are no figures or positions. Figures are
+  `domain.LimitDistances` with the stored risk state, the limits, `reservations` (stored
+  orders) and today's session per market. Positions carry `Ours`, the open request id, the
+  symbol and market, stop and take-profit, and the flatten time for ours. Open orders, the
+  last 20 orders, the latest regime per watchlist share (the most likely regime of its latest
+  review with probabilities, ties by name), agent state, reconciliation, kill (stored or
+  latched) with its reason, the daily latch of today and the lease.
+- **6.6b-d `WarmLiveView(ctx, p, account)`** (new, view access) fills the cache through
+  `viewPortfolio` (≤ 1 eToro read per account per 10 s, shared with every view) for accounts
+  the supervisor does not read (real accounts, before the first pass). 6.9 calls it on
+  connect; the 5-s snapshots stay cache-only.
+- **6.6b-e `LiveFilter(ctx, p)`** = the ids of `Accounts(p)` (owned and shared, the role and
+  API-key rules of `Accounts` kept; default password refused). System-wide events (account
+  "") are left to the stream's choice.
+- **6.7-a Route `/history/export/{file}`** with `file` an enum of `trades.csv`, `daily.csv`,
+  `equity.csv`, `orders.csv`, `decisions.csv`: Go's `ServeMux` refuses a wildcard that is
+  not a whole path segment (`{kind}.csv` would panic at start-up). The URLs are the ones the
+  step named. An unknown file is 404.
+- **6.7-b Status codes.** `domain.ErrTooLarge` → 422 "Too large" (problem+json, before any
+  byte of the file); invalid days, limit, range or time → 400; another or unknown account →
+  404; a view-only platform → 403; signed out → 401. Summary and daily also list 422 (more
+  than 50 000 trades in the period). A viewer API key may read and export.
+- **6.7-c CSV** (`csv.go`): `encoding/csv`, header row, rows written as they are formatted.
+  Money from cents with exactly two places and micros trimmed, both by integer arithmetic
+  exact over the whole int64 range; times `RFC3339Nano` in UTC (whole seconds print without
+  a fraction); unknown cells empty, unknown fees `unknown`. **Formula neutralising applies
+  to every text cell** (strings and any other type, header included): a leading `= + - @`
+  tab or CR gets `'`. Numeric cells written from integers are not prefixed: they contain
+  only digits, one `-` and one `.`, which a spreadsheet reads as a number, never a formula,
+  and a `'` would turn every loss into text (OD17 "formula cells"). Headers:
+  `Content-Type: text/csv; charset=utf-8`, `Content-Disposition: attachment;
+  filename="cactustrade-<kind>-<account id>.csv"` (id reduced to `[A-Za-z0-9_-]`),
+  `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. A write error after the
+  status is logged (kind, account id, error; no row data).
+- **Open:** the 6.10 wiring still has to pass `eventbus.New()` as `Deps.Bus`; until then the
+  production bus is nil (no events, nothing blocked). `internal/adapters/http` coverage
+  79.6 %.
+
+Verification (2026-11-24): `make check` green: gofumpt, golangci-lint 0 issues, vet,
+`go test -race` with coverage domain 99.8 % / app 89.0 %, MariaDB `test-int` (the first run's
+container did not publish port 3306, a Docker flake; the rerun and the full `make check`
+passed), govulncheck (no vulnerabilities), contracts in sync, `pnpm -C web check` (18 files,
+89 tests).
 
 ### Steps 6.13–6.15: decisions (2026-11-24)
 

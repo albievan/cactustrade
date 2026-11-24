@@ -13,7 +13,7 @@ import (
 // What the agent panel and the orders page read (PLAN 4.13), plus the manual reconcile and
 // the lease release at shutdown (4.14). Nothing here sends anything to eToro.
 
-// agentViewTimeout bounds the one portfolio read of AgentStatusView.
+// agentViewTimeout bounds the one portfolio read of a view (viewPortfolio).
 const agentViewTimeout = 10 * time.Second
 
 // AgentControls says which agent actions the caller may take on the account, as the use
@@ -56,8 +56,9 @@ type AgentView struct {
 	// the daily floor applies only when Risk.State.Day == Today.
 	Risk  domain.AccountRiskState
 	Today domain.RiskDate
-	// Equity is eToro's figure read now (EquityKnown false with EquityError when it could
-	// not be read). The floors and distances are set only when it is known.
+	// Equity is eToro's figure, read within the last viewCacheTTL (the view cache, PLAN
+	// 6.6a; EquityKnown false with EquityError when it could not be read). The floors and
+	// distances are set only when it is known.
 	Equity          domain.Cents
 	EquityKnown     bool
 	EquityError     string
@@ -91,7 +92,8 @@ type MissingItem struct {
 // AgentStatusView returns the agent of an account the caller can view (accountID "" = the
 // current account): its state, reconciliation, kill switch, risk-day figures and distances
 // to the daily floor and the drawdown limit, blocked instruments, today's flatten times and
-// which controls the caller may use. It reads the portfolio once (read-only).
+// which controls the caller may use. It reads the portfolio through the view cache: at most
+// one eToro read per account every viewCacheTTL, however many dashboards ask (read-only).
 func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID string) (AgentView, error) {
 	if err := s.authorize(p, domain.PermView); err != nil {
 		return AgentView{}, err
@@ -246,9 +248,7 @@ func (s *Service) viewEquity(ctx context.Context, v domain.AccountView, out *Age
 		out.EquityError = "the account's eToro keys are not set"
 		return
 	}
-	cctx, cancel := context.WithTimeout(ctx, agentViewTimeout)
-	defer cancel()
-	pf, err := s.d.Broker.Portfolio(brokerCtx(cctx, v))
+	pf, _, err := s.viewPortfolio(ctx, v)
 	if err != nil {
 		out.EquityError = "reading the portfolio failed: " + err.Error()
 		return

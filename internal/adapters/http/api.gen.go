@@ -428,6 +428,33 @@ func (e TradingMode) Valid() bool {
 	}
 }
 
+// Defines values for ExportHistoryParamsFile.
+const (
+	DailyCsv     ExportHistoryParamsFile = "daily.csv"
+	DecisionsCsv ExportHistoryParamsFile = "decisions.csv"
+	EquityCsv    ExportHistoryParamsFile = "equity.csv"
+	OrdersCsv    ExportHistoryParamsFile = "orders.csv"
+	TradesCsv    ExportHistoryParamsFile = "trades.csv"
+)
+
+// Valid indicates whether the value is a known member of the ExportHistoryParamsFile enum.
+func (e ExportHistoryParamsFile) Valid() bool {
+	switch e {
+	case DailyCsv:
+		return true
+	case DecisionsCsv:
+		return true
+	case EquityCsv:
+		return true
+	case OrdersCsv:
+		return true
+	case TradesCsv:
+		return true
+	default:
+		return false
+	}
+}
+
 // Account defines model for Account.
 type Account struct {
 	Access    AccountAccess `json:"access"`
@@ -780,6 +807,15 @@ type CurrencyTotal struct {
 	UnrealisedPnl MinorUnits `json:"unrealisedPnl"`
 }
 
+// DailyHistory defines model for DailyHistory.
+type DailyHistory struct {
+	AccountId string       `json:"accountId"`
+	Days      int          `json:"days"`
+	From      time.Time    `json:"from"`
+	Rows      []HistoryDay `json:"rows"`
+	To        time.Time    `json:"to"`
+}
+
 // Decimal An exact decimal (prices and units, up to 6 places)
 type Decimal = string
 
@@ -962,6 +998,131 @@ type Health struct {
 
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
+
+// HistoryDay defines model for HistoryDay.
+type HistoryDay struct {
+	// Day the risk day (YYYY-MM-DD, starting 22:00 UTC the day before)
+	Day string `json:"day"`
+
+	// EquityChangeCents the change of the account's equity that day; it includes deposits, withdrawals and positions not opened by cactusTrade (absent = no snapshot)
+	EquityChangeCents *Cents `json:"equityChangeCents,omitempty"`
+
+	// EquityEndCents US dollars in cents (the eToro account currency is USD)
+	EquityEndCents *Cents `json:"equityEndCents,omitempty"`
+
+	// FeesCents US dollars in cents (the eToro account currency is USD)
+	FeesCents         Cents `json:"feesCents"`
+	FeesUnknownTrades int   `json:"feesUnknownTrades"`
+
+	// RealisedCents US dollars in cents (the eToro account currency is USD)
+	RealisedCents Cents `json:"realisedCents"`
+	Trades        int   `json:"trades"`
+}
+
+// HistoryDrawdown The account's equity drawdown over its snapshots in the period (known false = no snapshot)
+type HistoryDrawdown struct {
+	CurrentBp int64 `json:"currentBp"`
+
+	// CurrentCents US dollars in cents (the eToro account currency is USD)
+	CurrentCents  Cents `json:"currentCents"`
+	Known         bool  `json:"known"`
+	MaxDrawdownBp int64 `json:"maxDrawdownBp"`
+
+	// MaxDrawdownCents US dollars in cents (the eToro account currency is USD)
+	MaxDrawdownCents Cents      `json:"maxDrawdownCents"`
+	PeakAt           *time.Time `json:"peakAt,omitempty"`
+
+	// PeakCents US dollars in cents (the eToro account currency is USD)
+	PeakCents Cents `json:"peakCents"`
+}
+
+// HistorySummary defines model for HistorySummary.
+type HistorySummary struct {
+	AccountId string `json:"accountId"`
+	Breakeven int    `json:"breakeven"`
+	Days      int    `json:"days"`
+
+	// Drawdown The account's equity drawdown over its snapshots in the period (known false = no snapshot)
+	Drawdown HistoryDrawdown `json:"drawdown"`
+
+	// FeesCents US dollars in cents (the eToro account currency is USD)
+	FeesCents Cents `json:"feesCents"`
+
+	// FeesUnknownTrades trades whose fees eToro did not report (in neither fees nor gross)
+	FeesUnknownTrades int `json:"feesUnknownTrades"`
+
+	// ForeignTrades closed trades of positions cactusTrade did not open (not counted above)
+	ForeignTrades int `json:"foreignTrades"`
+
+	// From the start of the first risk day
+	From time.Time `json:"from"`
+
+	// GrossCents US dollars in cents (the eToro account currency is USD)
+	GrossCents Cents `json:"grossCents"`
+	Losses     int   `json:"losses"`
+
+	// NetCents US dollars in cents (the eToro account currency is USD)
+	NetCents Cents     `json:"netCents"`
+	To       time.Time `json:"to"`
+
+	// Trades cactusTrade's closed trades in the period
+	Trades int `json:"trades"`
+
+	// WinRateBp wins / trades in basis points (absent when there are no trades)
+	WinRateBp *int64 `json:"winRateBp,omitempty"`
+	Wins      int    `json:"wins"`
+}
+
+// HistoryTrade One closed trade as eToro reported it (PLAN 6.4)
+type HistoryTrade struct {
+	// CloseRate An exact decimal (prices and units, up to 6 places)
+	CloseRate Decimal   `json:"closeRate"`
+	ClosedAt  time.Time `json:"closedAt"`
+
+	// Direction long or short
+	Direction string `json:"direction"`
+
+	// EtoroOrderId eToro's order id of the open (0 = not reported)
+	EtoroOrderId int64 `json:"etoroOrderId"`
+
+	// FeesCents US dollars in cents (the eToro account currency is USD)
+	FeesCents *Cents `json:"feesCents,omitempty"`
+
+	// FeesKnown false when eToro did not report the fees (feesCents is then absent, never 0)
+	FeesKnown    bool  `json:"feesKnown"`
+	InstrumentId int64 `json:"instrumentId"`
+
+	// InvestedCents US dollars in cents (the eToro account currency is USD)
+	InvestedCents Cents       `json:"investedCents"`
+	Leverage      int         `json:"leverage"`
+	Mode          TradingMode `json:"mode"`
+
+	// NetProfitCents US dollars in cents (the eToro account currency is USD)
+	NetProfitCents Cents `json:"netProfitCents"`
+
+	// OpenRate An exact decimal (prices and units, up to 6 places)
+	OpenRate Decimal `json:"openRate"`
+
+	// OpenRequestId the x-request-id of our open order (empty when not ours)
+	OpenRequestId string    `json:"openRequestId"`
+	OpenedAt      time.Time `json:"openedAt"`
+
+	// Ours cactusTrade opened the position (OD1)
+	Ours       bool  `json:"ours"`
+	PositionId int64 `json:"positionId"`
+
+	// StopLoss An exact decimal (prices and units, up to 6 places)
+	StopLoss *Decimal `json:"stopLoss,omitempty"`
+
+	// Symbol empty when the instrument is not cached
+	Symbol string `json:"symbol"`
+
+	// TakeProfit An exact decimal (prices and units, up to 6 places)
+	TakeProfit *Decimal `json:"takeProfit,omitempty"`
+
+	// Units An exact decimal (prices and units, up to 6 places)
+	Units Decimal `json:"units"`
+}
 
 // Holding defines model for Holding.
 type Holding struct {
@@ -1719,6 +1880,9 @@ type WatchItem struct {
 // AccountIdQuery defines model for AccountIdQuery.
 type AccountIdQuery = string
 
+// HistoryDays defines model for HistoryDays.
+type HistoryDays = int
+
 // AgentStatus defines model for AgentStatus.
 type AgentStatus = AgentStatusResult
 
@@ -1791,6 +1955,58 @@ type GetDecisionParams struct {
 // ListEventsParams defines parameters for ListEvents.
 type ListEventsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetHistoryDailyParams defines parameters for GetHistoryDaily.
+type GetHistoryDailyParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+
+	// Days The period in risk days, today included
+	Days *HistoryDays `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// ExportHistoryParams defines parameters for ExportHistory.
+type ExportHistoryParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+
+	// From from this time (absent = the whole history)
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+
+	// To until this time, exclusive (absent = now)
+	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
+}
+
+// ExportHistoryParamsFile defines parameters for ExportHistory.
+type ExportHistoryParamsFile string
+
+// GetHistorySummaryParams defines parameters for GetHistorySummary.
+type GetHistorySummaryParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+
+	// Days The period in risk days, today included
+	Days *HistoryDays `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// ListHistoryTradesParams defines parameters for ListHistoryTrades.
+type ListHistoryTradesParams struct {
+	// AccountId The account (default the caller's current account)
+	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
+
+	// From only trades closed at or after this time
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+
+	// To only trades closed before this time
+	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// Ours true = only cactusTrade's trades, false = only the others (absent = all)
+	Ours *bool `form:"ours,omitempty" json:"ours,omitempty"`
+
+	// Before only trades closed before this time (the next page: the last row's closedAt)
+	Before *time.Time `form:"before,omitempty" json:"before,omitempty"`
+	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // SearchInstrumentsParams defines parameters for SearchInstruments.
@@ -2030,6 +2246,18 @@ type ServerInterface interface {
 	// MarkEventsSeen Mark every event as seen by the caller
 	// (POST /api/v1/events/seen)
 	MarkEventsSeen(w http.ResponseWriter, r *http.Request)
+	// GetHistoryDaily The account's figures per risk day (22:00 UTC) over the last days risk days, today included (viewer)
+	// (GET /api/v1/history/daily)
+	GetHistoryDaily(w http.ResponseWriter, r *http.Request, params GetHistoryDailyParams)
+	// ExportHistory Download the account's history as CSV (viewer; an API key may export)
+	// (GET /api/v1/history/export/{file})
+	ExportHistory(w http.ResponseWriter, r *http.Request, file ExportHistoryParamsFile, params ExportHistoryParams)
+	// GetHistorySummary Counts and sums of the account's closed trades and its equity drawdown over the last days risk days (viewer)
+	// (GET /api/v1/history/summary)
+	GetHistorySummary(w http.ResponseWriter, r *http.Request, params GetHistorySummaryParams)
+	// ListHistoryTrades The account's closed trades, newest close first (viewer; positions not opened by cactusTrade are listed with ours false)
+	// (GET /api/v1/history/trades)
+	ListHistoryTrades(w http.ResponseWriter, r *http.Request, params ListHistoryTradesParams)
 	// ListIndustries eToro's stock industries (view)
 	// (GET /api/v1/industries)
 	ListIndustries(w http.ResponseWriter, r *http.Request)
@@ -3140,6 +3368,264 @@ func (siw *ServerInterfaceWrapper) MarkEventsSeen(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetHistoryDaily operation middleware
+func (siw *ServerInterfaceWrapper) GetHistoryDaily(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetHistoryDailyParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHistoryDaily(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportHistory operation middleware
+func (siw *ServerInterfaceWrapper) ExportHistory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "file" -------------
+	var file ExportHistoryParamsFile
+
+	err = runtime.BindStyledParameterWithOptions("simple", "file", r.PathValue("file"), &file, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "file", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ExportHistoryParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportHistory(w, r, file, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHistorySummary operation middleware
+func (siw *ServerInterfaceWrapper) GetHistorySummary(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetHistorySummaryParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHistorySummary(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListHistoryTrades operation middleware
+func (siw *ServerInterfaceWrapper) ListHistoryTrades(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListHistoryTradesParams
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "ours" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "ours", r.URL.Query(), &params.Ours, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ours"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ours", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHistoryTrades(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListIndustries operation middleware
 func (siw *ServerInterfaceWrapper) ListIndustries(w http.ResponseWriter, r *http.Request) {
 
@@ -4177,6 +4663,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/orders", wrapper.ListOrders)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/decisions", wrapper.ListDecisions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/decisions/{id}", wrapper.GetDecision)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/summary", wrapper.GetHistorySummary)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/trades", wrapper.ListHistoryTrades)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/daily", wrapper.GetHistoryDaily)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/export/{file}", wrapper.ExportHistory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/themes", wrapper.ListThemes)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/themes", wrapper.CreateTheme)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/themes/{themeId}", wrapper.DeleteTheme)

@@ -1017,6 +1017,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/history/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Counts and sums of the account's closed trades and its equity drawdown over the last days risk days (viewer)
+         * @description The trade figures are over the trades of positions cactusTrade opened (OD15);
+         *     `foreignTrades` counts the others in the period. The drawdown is over the whole
+         *     account's equity snapshots. The figures describe past results only.
+         */
+        get: operations["getHistorySummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/history/trades": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The account's closed trades, newest close first (viewer; positions not opened by cactusTrade are listed with ours false) */
+        get: operations["listHistoryTrades"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/history/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The account's figures per risk day (22:00 UTC) over the last days risk days, today included (viewer) */
+        get: operations["getHistoryDaily"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/history/export/{file}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the account's history as CSV (viewer; an API key may export)
+         * @description `file` is `trades.csv`, `daily.csv`, `equity.csv`, `orders.csv` or `decisions.csv`.
+         *     Comma-separated with a header row, oldest row first; times are UTC RFC 3339, US
+         *     dollar amounts exact decimal strings, unknown values empty (unknown trade fees:
+         *     `unknown`). A cell that a spreadsheet could take for a formula (starting with `=`,
+         *     `+`, `-`, `@`, a tab or a carriage return) is prefixed with `'` (OD17). At most
+         *     50 000 rows: a larger export is refused with 422, never cut short.
+         */
+        get: operations["exportHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/themes": {
         parameters: {
             query?: never;
@@ -2168,6 +2249,104 @@ export interface components {
             rows: components["schemas"]["LlmUsageRow"][];
             total: components["schemas"]["LlmUsageRow"];
         };
+        /** @description One closed trade as eToro reported it (PLAN 6.4) */
+        HistoryTrade: {
+            /** Format: int64 */
+            positionId: number;
+            /** Format: int64 */
+            instrumentId: number;
+            /** @description empty when the instrument is not cached */
+            symbol: string;
+            /** @description long or short */
+            direction: string;
+            leverage: number;
+            units: components["schemas"]["Decimal"];
+            investedCents: components["schemas"]["Cents"];
+            openRate: components["schemas"]["Decimal"];
+            closeRate: components["schemas"]["Decimal"];
+            stopLoss?: components["schemas"]["Decimal"];
+            takeProfit?: components["schemas"]["Decimal"];
+            netProfitCents: components["schemas"]["Cents"];
+            feesCents?: components["schemas"]["Cents"];
+            /** @description false when eToro did not report the fees (feesCents is then absent, never 0) */
+            feesKnown: boolean;
+            /** Format: date-time */
+            openedAt: string;
+            /** Format: date-time */
+            closedAt: string;
+            /** @description cactusTrade opened the position (OD1) */
+            ours: boolean;
+            /** @description the x-request-id of our open order (empty when not ours) */
+            openRequestId: string;
+            /**
+             * Format: int64
+             * @description eToro's order id of the open (0 = not reported)
+             */
+            etoroOrderId: number;
+            mode: components["schemas"]["TradingMode"];
+        };
+        /** @description The account's equity drawdown over its snapshots in the period (known false = no snapshot) */
+        HistoryDrawdown: {
+            known: boolean;
+            peakCents: components["schemas"]["Cents"];
+            /** Format: date-time */
+            peakAt?: string;
+            maxDrawdownCents: components["schemas"]["Cents"];
+            /** Format: int64 */
+            maxDrawdownBp: number;
+            currentCents: components["schemas"]["Cents"];
+            /** Format: int64 */
+            currentBp: number;
+        };
+        HistorySummary: {
+            accountId: string;
+            days: number;
+            /**
+             * Format: date-time
+             * @description the start of the first risk day
+             */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            /** @description cactusTrade's closed trades in the period */
+            trades: number;
+            wins: number;
+            losses: number;
+            breakeven: number;
+            /**
+             * Format: int64
+             * @description wins / trades in basis points (absent when there are no trades)
+             */
+            winRateBp?: number;
+            grossCents: components["schemas"]["Cents"];
+            feesCents: components["schemas"]["Cents"];
+            netCents: components["schemas"]["Cents"];
+            /** @description trades whose fees eToro did not report (in neither fees nor gross) */
+            feesUnknownTrades: number;
+            /** @description closed trades of positions cactusTrade did not open (not counted above) */
+            foreignTrades: number;
+            drawdown: components["schemas"]["HistoryDrawdown"];
+        };
+        HistoryDay: {
+            /** @description the risk day (YYYY-MM-DD, starting 22:00 UTC the day before) */
+            day: string;
+            trades: number;
+            realisedCents: components["schemas"]["Cents"];
+            feesCents: components["schemas"]["Cents"];
+            feesUnknownTrades: number;
+            equityEndCents?: components["schemas"]["Cents"];
+            /** @description the change of the account's equity that day; it includes deposits, withdrawals and positions not opened by cactusTrade (absent = no snapshot) */
+            equityChangeCents?: components["schemas"]["Cents"];
+        };
+        DailyHistory: {
+            accountId: string;
+            days: number;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            rows: components["schemas"]["HistoryDay"][];
+        };
     };
     responses: {
         /** @description The agent's state after the action */
@@ -2201,6 +2380,8 @@ export interface components {
     parameters: {
         /** @description The account (default the caller's current account) */
         AccountIdQuery: string;
+        /** @description The period in risk days, today included */
+        HistoryDays: number;
     };
     requestBodies: never;
     headers: never;
@@ -3790,6 +3971,138 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    getHistorySummary: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+                /** @description The period in risk days, today included */
+                days?: components["parameters"]["HistoryDays"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistorySummary"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+        };
+    };
+    listHistoryTrades: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+                /** @description only trades closed at or after this time */
+                from?: string;
+                /** @description only trades closed before this time */
+                to?: string;
+                /** @description true = only cactusTrade's trades, false = only the others (absent = all) */
+                ours?: boolean;
+                /** @description only trades closed before this time (the next page: the last row's closedAt) */
+                before?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trades */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryTrade"][];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getHistoryDaily: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+                /** @description The period in risk days, today included */
+                days?: components["parameters"]["HistoryDays"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily figures, oldest day first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyHistory"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+        };
+    };
+    exportHistory: {
+        parameters: {
+            query?: {
+                /** @description The account (default the caller's current account) */
+                accountId?: components["parameters"]["AccountIdQuery"];
+                /** @description from this time (absent = the whole history) */
+                from?: string;
+                /** @description until this time, exclusive (absent = now) */
+                to?: string;
+            };
+            header?: never;
+            path: {
+                file: "trades.csv" | "daily.csv" | "equity.csv" | "orders.csv" | "decisions.csv";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The CSV file (sent as an attachment) */
+            200: {
+                headers: {
+                    /** @description attachment with the file name */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
         };
     };
     listThemes: {

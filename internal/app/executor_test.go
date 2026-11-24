@@ -29,6 +29,10 @@ type execEnv struct {
 	a   domain.Account
 	// slept is every wait the service asked for, in order.
 	slept []time.Duration
+	// bus records what the service published; orders every order version it stored (PLAN
+	// 6.6b: the two must agree, in order).
+	bus    *fakes.Bus
+	orders *orderRecorder
 }
 
 func newExecEnv(t *testing.T) *execEnv {
@@ -39,6 +43,8 @@ func newExecEnv(t *testing.T) *execEnv {
 	x.b = &fakes.SimBroker{Now: e.clock.Now, Cash: 1_000_000_00}
 	x.b.OnOpen = fakes.RequireOrderRow(e.store.Orders())
 	e.svc.d.Broker = x.b
+	x.bus, x.orders = &fakes.Bus{}, &orderRecorder{Orders: e.store.Orders()}
+	e.svc.d.Bus, e.svc.d.Store = x.bus, recordingStore{Store: e.store, orders: x.orders}
 	e.svc.d.Sleep = func(ctx context.Context, d time.Duration) error {
 		if d > 0 {
 			x.slept = append(x.slept, d)
@@ -234,6 +240,7 @@ func TestExecutorPlaceEntry(t *testing.T) {
 					t.Fatalf("close row = %+v", c)
 				}
 			}
+			x.publishedAsStored(t)
 		})
 	}
 }
@@ -686,6 +693,7 @@ func TestExecutorClosePosition(t *testing.T) {
 				t.Fatalf("close request on the position = %q", got.CloseRequestID)
 			}
 			noViolations(t, x.b)
+			x.publishedAsStored(t)
 		})
 	}
 }
@@ -838,6 +846,7 @@ func TestExecutorCancelOrder(t *testing.T) {
 					t.Fatalf("cancel ids = %v (cancel %s, target %s)", ids, c.RequestID, target.RequestID)
 				}
 			}
+			x.publishedAsStored(t)
 		})
 	}
 	t.Run("only a pending open order", func(t *testing.T) {

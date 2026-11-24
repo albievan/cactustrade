@@ -148,6 +148,9 @@ func (s *Service) Supervise(ctx context.Context, accountID string) (SupervisorRe
 		rep.LocalPositions = true
 		rep.fail("reading the portfolio: %v", perr)
 	} else {
+		// Shared with the views (PLAN 6.6a): stored only, never read back on this path.
+		s.rt.views.put(a.ID, pf, s.d.Clock.Now())
+		s.publishPortfolio(a.ID, pf)
 		st, err := s.observe(ctx, a, pf, l, now)
 		switch {
 		case err != nil:
@@ -363,8 +366,9 @@ func (s *Service) tripLocked(ctx context.Context, a domain.Account, p Principal,
 	// (review m3), until ResetKill.
 	s.rt.latchKill(a.ID)
 	already, err = s.persistKill(ctx, a.ID, why, now)
-	if serr := s.d.Store.Settings().Set(ctx, agentStateKey(a.ID), string(domain.AgentKilled), now); serr != nil {
+	if serr := s.setAgentState(ctx, a.ID, domain.AgentKilled); serr != nil {
 		err = errors.Join(err, serr)
+		s.publishAgentState(a.ID, domain.AgentKilled) // latched in memory all the same
 	}
 	s.rt.cancelEntries(a.ID)
 	if already && err == nil {

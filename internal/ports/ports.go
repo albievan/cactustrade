@@ -477,8 +477,12 @@ type Event struct {
 	Data any
 }
 
-// EventBus fans events out to subscribers (dashboard SSE, loggers).
+// EventBus fans events out to subscribers (dashboard SSE, loggers). It is a view only: no
+// decision is ever taken on it (CLAUDE.md §2.6).
 type EventBus interface {
+	// Publish delivers e to every subscriber that has room. It must never block: the
+	// executor publishes every stored order transition, so a full or slow subscriber misses
+	// the event instead of holding up an order (PLAN 6.6b).
 	Publish(e Event)
 	// Subscribe returns a channel of events and a cancel function that closes it.
 	Subscribe(buffer int) (<-chan Event, func())

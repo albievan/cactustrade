@@ -157,8 +157,13 @@ func (s *Service) startable(ctx context.Context, a domain.Account) error {
 	return nil
 }
 
+// setAgentState writes an account's agent state and announces it on the bus.
 func (s *Service) setAgentState(ctx context.Context, accountID string, st domain.AgentState) error {
-	return s.d.Store.Settings().Set(ctx, agentStateKey(accountID), string(st), s.d.Clock.Now().UTC())
+	if err := s.d.Store.Settings().Set(ctx, agentStateKey(accountID), string(st), s.d.Clock.Now().UTC()); err != nil {
+		return err
+	}
+	s.publishAgentState(accountID, st)
+	return nil
 }
 
 // PauseAgent pauses a running agent (agent.control, trade access; a web session or an API

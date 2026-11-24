@@ -75,6 +75,11 @@ type Deps struct {
 	// the app; ok=false when there is none.
 	Mailer       ports.Mailer
 	MailFallback func() (server domain.SMTPSettings, password string, ok bool)
+	// Bus carries live events to the dashboard stream (PLAN 6.6b): every stored event, every
+	// stored order transition, agent state writes and the supervisor's portfolio reads. It is
+	// a view only: nothing decides on it, and Publish must never block (a full subscriber
+	// drops). nil = no bus.
+	Bus ports.EventBus
 	// Sleep waits for d or until ctx ends (the executor's polls and back-offs, the
 	// supervisor's loop). nil = a real timer; tests pass one that advances their fake clock.
 	Sleep func(ctx context.Context, d time.Duration) error
