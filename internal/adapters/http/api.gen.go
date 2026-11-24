@@ -488,6 +488,21 @@ func (e TradingMode) Valid() bool {
 	}
 }
 
+// Defines values for WatchlistFileVersion.
+const (
+	N1 WatchlistFileVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the WatchlistFileVersion enum.
+func (e WatchlistFileVersion) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ExportHistoryParamsFile.
 const (
 	DailyCsv     ExportHistoryParamsFile = "daily.csv"
@@ -1392,6 +1407,15 @@ type Holdings struct {
 	// UnrealisedPnl An amount in minor units of the currency given next to it: hundredths for most (USD
 	// cents, GBP pence…), whole units for JPY and KRW.
 	UnrealisedPnl MinorUnits `json:"unrealisedPnl"`
+}
+
+// ImportSkip defines model for ImportSkip.
+type ImportSkip struct {
+	InstrumentId *int64 `json:"instrumentId,omitempty"`
+
+	// Name the share's symbol or the theme's name
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // Industry defines model for Industry.
@@ -2378,6 +2402,25 @@ type Theme struct {
 	UpdatedAt time.Time    `json:"updatedAt"`
 }
 
+// ThemeAssignment defines model for ThemeAssignment.
+type ThemeAssignment struct {
+	InstrumentId int64 `json:"instrumentId"`
+
+	// ThemeId empty = no theme
+	ThemeId string `json:"themeId"`
+}
+
+// ThemeAssignmentsRequest defines model for ThemeAssignmentsRequest.
+type ThemeAssignmentsRequest struct {
+	Assignments []ThemeAssignment `json:"assignments"`
+}
+
+// ThemeAssignmentsResult defines model for ThemeAssignmentsResult.
+type ThemeAssignmentsResult struct {
+	// ChangedThemes themes stored
+	ChangedThemes int `json:"changedThemes"`
+}
+
 // ThemeInput defines model for ThemeInput.
 type ThemeInput struct {
 	Enabled bool `json:"enabled"`
@@ -2390,6 +2433,25 @@ type ThemeInput struct {
 	// LlmProfileId the LLM reviewer profile for this theme's candidates (empty = the default profile)
 	LlmProfileId *string `json:"llmProfileId,omitempty"`
 	Name         string  `json:"name"`
+}
+
+// ThemeProposal defines model for ThemeProposal.
+type ThemeProposal struct {
+	InstrumentId int64    `json:"instrumentId"`
+	Reasons      []string `json:"reasons"`
+	Score        int      `json:"score"`
+	Symbol       string   `json:"symbol"`
+	ThemeId      string   `json:"themeId"`
+	ThemeName    string   `json:"themeName"`
+}
+
+// ThemeProposals defines model for ThemeProposals.
+type ThemeProposals struct {
+	Notes     []string        `json:"notes"`
+	Proposals []ThemeProposal `json:"proposals"`
+
+	// Unmatched symbols of shares without a theme that no theme matches
+	Unmatched []string `json:"unmatched"`
 }
 
 // ThemeShare defines model for ThemeShare.
@@ -2428,12 +2490,44 @@ type User struct {
 	Username           string    `json:"username"`
 }
 
+// WatchHolding What the account holds of one instrument, from the portfolio view cache (a view only)
+type WatchHolding struct {
+	// CostCents US dollars in cents (the eToro account currency is USD)
+	CostCents    Cents `json:"costCents"`
+	InstrumentId int64 `json:"instrumentId"`
+
+	// Market LSE, NYSE (also NASDAQ), ASX, or empty when not known
+	Market string `json:"market"`
+	Name   string `json:"name"`
+
+	// Ours positions cactusTrade opened
+	Ours int `json:"ours"`
+
+	// PnlCents US dollars in cents (the eToro account currency is USD)
+	PnlCents  Cents  `json:"pnlCents"`
+	Positions int    `json:"positions"`
+	Shorts    int    `json:"shorts"`
+	Symbol    string `json:"symbol"`
+
+	// Units An exact decimal (prices and units, up to 6 places)
+	Units Decimal `json:"units"`
+
+	// ValueCents US dollars in cents (the eToro account currency is USD)
+	ValueCents Cents `json:"valueCents"`
+}
+
 // WatchItem defines model for WatchItem.
 type WatchItem struct {
 	AddedAt     time.Time   `json:"addedAt"`
 	AddedBy     string      `json:"addedBy"`
 	Eligibility Eligibility `json:"eligibility"`
-	Instrument  Instrument  `json:"instrument"`
+
+	// Holding What the account holds of one instrument, from the portfolio view cache (a view only)
+	Holding    *WatchHolding `json:"holding,omitempty"`
+	Instrument Instrument    `json:"instrument"`
+
+	// ThemeId the account's theme this share is in (absent = none; R27)
+	ThemeId *string `json:"themeId,omitempty"`
 }
 
 // WatchlistCount defines model for WatchlistCount.
@@ -2441,6 +2535,83 @@ type WatchlistCount struct {
 	Account Account `json:"account"`
 	Count   int     `json:"count"`
 	Current bool    `json:"current"`
+}
+
+// WatchlistFile A cactusTrade watchlist file (R27). No secrets, no account ids.
+type WatchlistFile struct {
+	Account    WatchlistFileAccount `json:"account"`
+	ExportedAt time.Time            `json:"exportedAt"`
+	Themes     []WatchlistFileTheme `json:"themes"`
+	Version    WatchlistFileVersion `json:"version"`
+	Watchlist  []WatchlistFileShare `json:"watchlist"`
+}
+
+// WatchlistFileVersion defines model for WatchlistFile.Version.
+type WatchlistFileVersion int
+
+// WatchlistFileAccount defines model for WatchlistFileAccount.
+type WatchlistFileAccount struct {
+	Name string `json:"name"`
+}
+
+// WatchlistFileShare defines model for WatchlistFileShare.
+type WatchlistFileShare struct {
+	InstrumentId int64  `json:"instrumentId"`
+	Market       string `json:"market"`
+	Symbol       string `json:"symbol"`
+}
+
+// WatchlistFileTheme defines model for WatchlistFileTheme.
+type WatchlistFileTheme struct {
+	IndustryId     int64    `json:"industryId"`
+	Instruments    []int64  `json:"instruments"`
+	Keywords       []string `json:"keywords"`
+	LlmProfileName *string  `json:"llmProfileName,omitempty"`
+	Name           string   `json:"name"`
+}
+
+// WatchlistHoldings defines model for WatchlistHoldings.
+type WatchlistHoldings struct {
+	AsOf     *time.Time `json:"asOf,omitempty"`
+	Currency string     `json:"currency"`
+
+	// Error why the portfolio is not known
+	Error *string `json:"error,omitempty"`
+
+	// Known a portfolio was read
+	Known          bool           `json:"known"`
+	NotOnWatchlist []WatchHolding `json:"notOnWatchlist"`
+
+	// Stale older than 30 s, or none
+	Stale bool `json:"stale"`
+
+	// WatchlistPnlCents US dollars in cents (the eToro account currency is USD)
+	WatchlistPnlCents  Cents `json:"watchlistPnlCents"`
+	WatchlistPositions int   `json:"watchlistPositions"`
+
+	// WatchlistValueCents US dollars in cents (the eToro account currency is USD)
+	WatchlistValueCents Cents `json:"watchlistValueCents"`
+}
+
+// WatchlistImportResult defines model for WatchlistImportResult.
+type WatchlistImportResult struct {
+	Added []string `json:"added"`
+
+	// Already already on the watchlist
+	Already         []string     `json:"already"`
+	Notes           []string     `json:"notes"`
+	Skipped         []ImportSkip `json:"skipped"`
+	ThemesCreated   []string     `json:"themesCreated"`
+	ThemesSkipped   []ImportSkip `json:"themesSkipped"`
+	ThemesUnchanged []string     `json:"themesUnchanged"`
+	ThemesUpdated   []string     `json:"themesUpdated"`
+}
+
+// WatchlistOverview defines model for WatchlistOverview.
+type WatchlistOverview struct {
+	// CanEdit the caller has trade access to the current account
+	CanEdit  bool              `json:"canEdit"`
+	Holdings WatchlistHoldings `json:"holdings"`
 }
 
 // AccountIdQuery defines model for AccountIdQuery.
@@ -2723,6 +2894,12 @@ type UpdateUserJSONRequestBody = UpdateUserRequest
 // AddToWatchlistJSONRequestBody defines body for AddToWatchlist for application/json ContentType.
 type AddToWatchlistJSONRequestBody = AddWatchRequest
 
+// ImportWatchlistJSONRequestBody defines body for ImportWatchlist for application/json ContentType.
+type ImportWatchlistJSONRequestBody = WatchlistFile
+
+// AssignWatchlistThemesJSONRequestBody defines body for AssignWatchlistThemes for application/json ContentType.
+type AssignWatchlistThemesJSONRequestBody = ThemeAssignmentsRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListAccounts The eToro accounts you own or were given, with your access
@@ -3001,9 +3178,24 @@ type ServerInterface interface {
 	// ListWatchlistCounts How many shares the watchlist of each eToro account the caller can see holds (viewer)
 	// (GET /api/v1/watchlist/counts)
 	ListWatchlistCounts(w http.ResponseWriter, r *http.Request)
+	// ExportWatchlist Download the watchlist and themes as JSON (trade access)
+	// (GET /api/v1/watchlist/export)
+	ExportWatchlist(w http.ResponseWriter, r *http.Request)
+	// ImportWatchlist Merge a watchlist file into the current account (trade access, web UI)
+	// (POST /api/v1/watchlist/import)
+	ImportWatchlist(w http.ResponseWriter, r *http.Request)
+	// GetWatchlistOverview Whether the caller may edit the watchlist and what the account holds (viewer)
+	// (GET /api/v1/watchlist/overview)
+	GetWatchlistOverview(w http.ResponseWriter, r *http.Request)
 	// ListWatchlistQuotes Current bid/ask of the watchlist (viewer)
 	// (GET /api/v1/watchlist/quotes)
 	ListWatchlistQuotes(w http.ResponseWriter, r *http.Request)
+	// AssignWatchlistThemes Put watchlist shares into themes (trade access)
+	// (POST /api/v1/watchlist/theme-assignments)
+	AssignWatchlistThemes(w http.ResponseWriter, r *http.Request)
+	// ProposeWatchlistThemes Propose the closest theme for each watchlist share without one (trade access; changes nothing)
+	// (GET /api/v1/watchlist/theme-proposals)
+	ProposeWatchlistThemes(w http.ResponseWriter, r *http.Request)
 	// RemoveFromWatchlist Remove an instrument (admin)
 	// (DELETE /api/v1/watchlist/{instrumentId})
 	RemoveFromWatchlist(w http.ResponseWriter, r *http.Request, instrumentId int64)
@@ -5246,11 +5438,81 @@ func (siw *ServerInterfaceWrapper) ListWatchlistCounts(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ExportWatchlist operation middleware
+func (siw *ServerInterfaceWrapper) ExportWatchlist(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportWatchlist(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportWatchlist operation middleware
+func (siw *ServerInterfaceWrapper) ImportWatchlist(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportWatchlist(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWatchlistOverview operation middleware
+func (siw *ServerInterfaceWrapper) GetWatchlistOverview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWatchlistOverview(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListWatchlistQuotes operation middleware
 func (siw *ServerInterfaceWrapper) ListWatchlistQuotes(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListWatchlistQuotes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AssignWatchlistThemes operation middleware
+func (siw *ServerInterfaceWrapper) AssignWatchlistThemes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AssignWatchlistThemes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ProposeWatchlistThemes operation middleware
+func (siw *ServerInterfaceWrapper) ProposeWatchlistThemes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ProposeWatchlistThemes(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5486,6 +5748,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist", wrapper.AddToWatchlist)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/counts", wrapper.ListWatchlistCounts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/quotes", wrapper.ListWatchlistQuotes)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/overview", wrapper.GetWatchlistOverview)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist/theme-assignments", wrapper.AssignWatchlistThemes)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/theme-proposals", wrapper.ProposeWatchlistThemes)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/export", wrapper.ExportWatchlist)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist/import", wrapper.ImportWatchlist)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/watchlist/{instrumentId}", wrapper.RemoveFromWatchlist)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/reload", wrapper.ReloadSettings)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/restart", wrapper.RestartServer)

@@ -81,7 +81,10 @@ func classify(method, path, pattern string) rateClass {
 		return classNever
 	case pattern == liveRoute:
 		return classStream
-	case pattern == "GET /api/v1/history/export/{file}":
+	case pattern == "GET /api/v1/history/export/{file}",
+		// R27: the watchlist file and auto-assign's proposals (one eToro screen per theme
+		// industry) are heavy reads too.
+		pattern == "GET /api/v1/watchlist/export", pattern == "GET /api/v1/watchlist/theme-proposals":
 		return classExport
 	case method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions:
 		return classRead

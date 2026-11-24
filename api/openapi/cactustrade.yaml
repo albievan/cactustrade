@@ -927,6 +927,112 @@ paths:
                 items: { $ref: "#/components/schemas/Quote" }
         "401": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/overview:
+    get:
+      tags: [market]
+      operationId: getWatchlistOverview
+      summary: Whether the caller may edit the watchlist and what the account holds (viewer)
+      description: |
+        R27. canEdit says whether the caller has trade access to the current account (themes,
+        auto-assign, import, export); the page only shows it. holdings come from the portfolio
+        view cache (PLAN 6.6a): at most one eToro read per account every 10 s, shared with
+        every other view, never used for trading.
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WatchlistOverview" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/theme-assignments:
+    post:
+      tags: [market]
+      operationId: assignWatchlistThemes
+      summary: Put watchlist shares into themes (trade access)
+      description: |
+        One theme per watchlist share (R27-a): the share is added to the chosen theme's picked
+        shares and removed from every other theme of the account; an empty themeId removes it
+        from all of them. Everything is checked before anything is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ThemeAssignmentsRequest" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThemeAssignmentsResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/theme-proposals:
+    get:
+      tags: [market]
+      operationId: proposeWatchlistThemes
+      summary: Propose the closest theme for each watchlist share without one (trade access; changes nothing)
+      description: |
+        Deterministic scoring, no LLM (R27-c): a search word that is the symbol 5, starts a
+        word of the name 3, starts a word of the industry name 2; the theme's eToro industry
+        4. Ties go to the theme whose name sorts first. Reads eToro's industries (one screen
+        per theme industry, read-only market data); when that fails the industry is not
+        scored and a note says so.
+      responses:
+        "200":
+          description: Proposals
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThemeProposals" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/export:
+    get:
+      tags: [market]
+      operationId: exportWatchlist
+      summary: Download the watchlist and themes as JSON (trade access)
+      description: No secrets, no account ids; LLM profiles by name only.
+      responses:
+        "200":
+          description: The file (Content-Disposition attachment)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WatchlistFile" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/import:
+    post:
+      tags: [market]
+      operationId: importWatchlist
+      summary: Merge a watchlist file into the current account (trade access, web UI)
+      description: |
+        At most 1 MiB, version 1, at most 200 shares and 50 themes. Every share goes through
+        the same eToro check as adding by hand; refused ones are reported, not added. A theme
+        with the same name (case-insensitive) is updated, any other created. Importing the
+        same file twice changes nothing the second time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WatchlistFile" }
+      responses:
+        "200":
+          description: What was merged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WatchlistImportResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "415": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/watchlist/{instrumentId}:
     parameters:
       - { name: instrumentId, in: path, required: true, schema: { type: integer, format: int64, minimum: 1 } }
@@ -2155,6 +2261,128 @@ components:
         eligibility: { $ref: "#/components/schemas/Eligibility" }
         addedBy: { type: string }
         addedAt: { type: string, format: date-time }
+        themeId: { type: string, description: "the account's theme this share is in (absent = none; R27)" }
+        holding: { $ref: "#/components/schemas/WatchHolding" }
+    WatchHolding:
+      type: object
+      description: What the account holds of one instrument, from the portfolio view cache (a view only)
+      required: [instrumentId, symbol, name, market, positions, units, valueCents, costCents, pnlCents, ours, shorts]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string }
+        name: { type: string }
+        market: { type: string, description: "LSE, NYSE (also NASDAQ), ASX, or empty when not known" }
+        positions: { type: integer }
+        units: { $ref: "#/components/schemas/Decimal" }
+        valueCents: { $ref: "#/components/schemas/Cents" }
+        costCents: { $ref: "#/components/schemas/Cents" }
+        pnlCents: { $ref: "#/components/schemas/Cents" }
+        ours: { type: integer, description: "positions cactusTrade opened" }
+        shorts: { type: integer }
+    WatchlistHoldings:
+      type: object
+      required: [known, stale, currency, watchlistValueCents, watchlistPnlCents, watchlistPositions, notOnWatchlist]
+      properties:
+        known: { type: boolean, description: "a portfolio was read" }
+        stale: { type: boolean, description: "older than 30 s, or none" }
+        asOf: { type: string, format: date-time }
+        error: { type: string, description: "why the portfolio is not known" }
+        currency: { type: string }
+        watchlistValueCents: { $ref: "#/components/schemas/Cents" }
+        watchlistPnlCents: { $ref: "#/components/schemas/Cents" }
+        watchlistPositions: { type: integer }
+        notOnWatchlist:
+          type: array
+          items: { $ref: "#/components/schemas/WatchHolding" }
+    WatchlistOverview:
+      type: object
+      required: [canEdit, holdings]
+      properties:
+        canEdit: { type: boolean, description: "the caller has trade access to the current account" }
+        holdings: { $ref: "#/components/schemas/WatchlistHoldings" }
+    ThemeAssignment:
+      type: object
+      required: [instrumentId, themeId]
+      properties:
+        instrumentId: { type: integer, format: int64, minimum: 1 }
+        themeId: { type: string, maxLength: 64, description: "empty = no theme" }
+    ThemeAssignmentsRequest:
+      type: object
+      required: [assignments]
+      properties:
+        assignments: { type: array, minItems: 1, maxItems: 200, items: { $ref: "#/components/schemas/ThemeAssignment" } }
+    ThemeAssignmentsResult:
+      type: object
+      required: [changedThemes]
+      properties:
+        changedThemes: { type: integer, description: "themes stored" }
+    ThemeProposal:
+      type: object
+      required: [instrumentId, symbol, themeId, themeName, score, reasons]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string }
+        themeId: { type: string }
+        themeName: { type: string }
+        score: { type: integer }
+        reasons: { type: array, items: { type: string } }
+    ThemeProposals:
+      type: object
+      required: [proposals, unmatched, notes]
+      properties:
+        proposals: { type: array, items: { $ref: "#/components/schemas/ThemeProposal" } }
+        unmatched: { type: array, items: { type: string }, description: "symbols of shares without a theme that no theme matches" }
+        notes: { type: array, items: { type: string } }
+    WatchlistFileShare:
+      type: object
+      required: [instrumentId, symbol, market]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        symbol: { type: string, maxLength: 32 }
+        market: { type: string, maxLength: 16 }
+    WatchlistFileTheme:
+      type: object
+      required: [name, keywords, industryId, instruments]
+      properties:
+        name: { type: string, maxLength: 60 }
+        keywords: { type: array, maxItems: 10, items: { type: string, maxLength: 100 } }
+        industryId: { type: integer, format: int64, minimum: 0 }
+        instruments: { type: array, maxItems: 50, items: { type: integer, format: int64 } }
+        llmProfileName: { type: string, maxLength: 60 }
+    WatchlistFileAccount:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 100 }
+    WatchlistFile:
+      type: object
+      description: A cactusTrade watchlist file (R27). No secrets, no account ids.
+      required: [version, exportedAt, account, watchlist, themes]
+      properties:
+        version: { type: integer, enum: [1] }
+        exportedAt: { type: string, format: date-time }
+        account: { $ref: "#/components/schemas/WatchlistFileAccount" }
+        watchlist: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/WatchlistFileShare" } }
+        themes: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/WatchlistFileTheme" } }
+    ImportSkip:
+      type: object
+      required: [name, reason]
+      properties:
+        instrumentId: { type: integer, format: int64 }
+        name: { type: string, description: "the share's symbol or the theme's name" }
+        reason: { type: string }
+    WatchlistImportResult:
+      type: object
+      required: [added, already, skipped, themesCreated, themesUpdated, themesUnchanged, themesSkipped, notes]
+      properties:
+        added: { type: array, items: { type: string } }
+        already: { type: array, items: { type: string }, description: "already on the watchlist" }
+        skipped: { type: array, items: { $ref: "#/components/schemas/ImportSkip" } }
+        themesCreated: { type: array, items: { type: string } }
+        themesUpdated: { type: array, items: { type: string } }
+        themesUnchanged: { type: array, items: { type: string } }
+        themesSkipped: { type: array, items: { $ref: "#/components/schemas/ImportSkip" } }
+        notes: { type: array, items: { type: string } }
     AddWatchRequest:
       type: object
       required: [instrumentId]

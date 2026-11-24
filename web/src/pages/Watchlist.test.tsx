@@ -88,3 +88,131 @@ describe("Watchlist empty (R25)", () => {
     await waitFor(() => expect(screen.queryByText(/Shares are on the watchlist of/)).not.toBeInTheDocument());
   });
 });
+
+describe("Watchlist themes, file and holdings (R27)", () => {
+  const status = (access: string) => ({ version: "0.1.0", build: "1", mode: "demo", agentState: "stopped", database: "sqlite", startedAt: "", now: "",
+    account: { id: "a1", name: "Main", ownerId: "1", ownerName: "admin", mode: "demo", envKeys: false, access, createdAt: "2026-11-23T09:00:00Z" } });
+  const items = [
+    {
+      instrument: { instrumentId: 1001, symbol: "EXMP", name: "Example Corp", type: "Stocks", market: "NYSE" },
+      eligibility: { realLong: true }, addedBy: "admin", addedAt: "2026-11-23T09:00:00Z", themeId: "t1",
+      holding: { instrumentId: 1001, symbol: "EXMP", name: "Example Corp", market: "NYSE", positions: 1, units: "2", valueCents: 40000, costCents: 39000, pnlCents: 1000, ours: 1, shorts: 0 },
+    },
+    {
+      instrument: { instrumentId: 1002, symbol: "BARC.L", name: "Barclays", type: "Stocks", market: "LSE" },
+      eligibility: { realLong: true }, addedBy: "admin", addedAt: "2026-11-23T09:00:00Z",
+    },
+  ];
+  const themes = [{ id: "t1", name: "Tech", keywords: ["tech"], industryId: 0, enabled: true, instruments: [1001], shares: [], createdAt: "", updatedAt: "" },
+    { id: "t2", name: "Banks", keywords: ["bank"], industryId: 0, enabled: true, instruments: [], shares: [], createdAt: "", updatedAt: "" }];
+  function serve(canEdit: boolean) {
+    const posts: { url: string; body: unknown }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+      if (init?.method === "POST") posts.push({ url, body: JSON.parse(String(init.body)) });
+      if (url.endsWith("/api/v1/auth/me")) return json(me);
+      if (url.endsWith("/api/v1/system/status")) return json(status(canEdit ? "owner" : "view"));
+      if (url.endsWith("/api/v1/watchlist")) return json(items);
+      if (url.endsWith("/api/v1/themes")) return json(themes);
+      if (url.endsWith("/api/v1/watchlist/overview")) return json({ canEdit, holdings: {
+        known: true, stale: false, currency: "USD", asOf: "2026-11-23T09:00:00Z", watchlistValueCents: 40000, watchlistPnlCents: 1000, watchlistPositions: 1,
+        notOnWatchlist: [{ instrumentId: 7, symbol: "MSFT", name: "Microsoft", market: "NYSE", positions: 1, units: "1.5", valueCents: 60000, costCents: 60000, pnlCents: 0, ours: 0, shorts: 0 }],
+      } });
+      if (url.endsWith("/api/v1/watchlist/quotes")) return json([]);
+      if (url.endsWith("/api/v1/watchlist/theme-proposals")) return json({
+        proposals: [{ instrumentId: 1002, symbol: "BARC.L", themeId: "t2", themeName: "Banks", score: 3, reasons: ["name contains “bank”"] }], unmatched: [], notes: [] });
+      if (url.endsWith("/api/v1/watchlist/theme-assignments")) return json({ changedThemes: 1 });
+      if (url.endsWith("/api/v1/watchlist/import")) return json({
+        added: ["AAPL"], already: ["EXMP"], skipped: [{ instrumentId: 3, name: "SAP.DE", reason: "only shares listed in London (LSE), New York (NYSE/NASDAQ) or Sydney (ASX) can be traded" }],
+        themesCreated: ["Space"], themesUpdated: [], themesUnchanged: ["Tech"], themesSkipped: [], notes: [] });
+      return new Response("{}", { status: 404 });
+    });
+    render(<SessionProvider><ModeProvider><Watchlist /></ModeProvider></SessionProvider>);
+    return posts;
+  }
+  afterEach(() => vi.restoreAllMocks());
+
+  it("puts the theme dropdown right after Eligibility and assigns through the server", async () => {
+    const posts = serve(true);
+    const select = await screen.findByLabelText("Theme for BARC.L");
+    const heads = screen.getAllByRole("columnheader").map((h) => h.textContent);
+    expect(heads.indexOf("Theme")).toBe(heads.indexOf("Eligibility") + 1);
+    expect(heads).toContain("Exchange");
+    expect(heads).toContain("Holding");
+    expect((screen.getByLabelText("Theme for EXMP") as HTMLSelectElement).value).toBe("t1");
+    expect(Array.from((select as HTMLSelectElement).options).map((o) => o.text)).toEqual(["— none —", "Tech", "Banks"]);
+    fireEvent.change(select, { target: { value: "t2" } });
+    await waitFor(() => expect(posts).toContainEqual({ url: "/api/v1/watchlist/theme-assignments", body: { assignments: [{ instrumentId: 1002, themeId: "t2" }] } }));
+  });
+
+  it("filters by theme with chips", async () => {
+    serve(true);
+    const group = await screen.findByRole("group", { name: "Filter by theme" });
+    await screen.findByText("BARC.L");
+    expect(Array.from(group.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["All", "Tech", "Banks", "No theme"]);
+    fireEvent.click(screen.getByRole("button", { name: "Tech" }));
+    expect(screen.getByRole("button", { name: "Tech" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("BARC.L")).not.toBeInTheDocument();
+    expect(screen.getAllByText("EXMP").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "No theme" }));
+    expect(screen.getByText("BARC.L")).toBeInTheDocument();
+    expect(screen.queryByText("Example Corp")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Banks" }));
+    expect(screen.getByText("No share matches this filter.")).toBeInTheDocument();
+  });
+
+  it("links the export and shows the import result", async () => {
+    const posts = serve(true);
+    const link = await screen.findByRole("link", { name: "Export the watchlist and themes as JSON" });
+    expect(link).toHaveAttribute("href", "/api/v1/watchlist/export");
+    expect(link).toHaveAttribute("download");
+    const file = new File([JSON.stringify({ version: 1, watchlist: [], themes: [] })], "w.json", { type: "application/json" });
+    fireEvent.change(screen.getByLabelText("Watchlist file"), { target: { files: [file] } });
+    const res = await screen.findByRole("status", { name: "Import result" });
+    expect(res).toHaveTextContent("1 share added, 1 already there, 1 refused; themes 1 created, 0 updated, 1 unchanged.");
+    expect(res).toHaveTextContent("Not added: SAP.DE — only shares listed in London");
+    expect(res.className).toContain("alert-warning");
+    expect(posts).toContainEqual({ url: "/api/v1/watchlist/import", body: { version: 1, watchlist: [], themes: [] } });
+  });
+
+  it("refuses a file that is not JSON before sending it", async () => {
+    const posts = serve(true);
+    await screen.findByRole("link", { name: "Export the watchlist and themes as JSON" });
+    fireEvent.change(screen.getByLabelText("Watchlist file"), { target: { files: [new File(["not json"], "w.json")] } });
+    expect(await screen.findByText("The file is not JSON.")).toBeInTheDocument();
+    expect(posts.filter((p) => p.url.endsWith("/import"))).toEqual([]);
+  });
+
+  it("proposes themes and changes nothing until accepted", async () => {
+    const posts = serve(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Auto-assign themes" }));
+    const card = await screen.findByLabelText("Proposed themes");
+    expect(card).toHaveTextContent("BARC.L");
+    expect(card).toHaveTextContent("score 3: name contains “bank”");
+    expect(posts.filter((p) => p.url.endsWith("/theme-assignments"))).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Accept every proposal" }));
+    await waitFor(() => expect(posts).toContainEqual({ url: "/api/v1/watchlist/theme-assignments", body: { assignments: [{ instrumentId: 1002, themeId: "t2" }] } }));
+  });
+
+  it("shows holdings, the exchange and who opened them", async () => {
+    serve(true);
+    const cell = await screen.findByLabelText("Holding of EXMP");
+    expect(cell).toHaveTextContent("2 sh · $400.00");
+    expect(cell).toHaveTextContent("P&L $10.00");
+    expect(cell).toHaveTextContent("cactusTrade");
+    expect(screen.getByText("NYSE / NASDAQ")).toBeInTheDocument();
+    expect(screen.getByText("LSE")).toBeInTheDocument();
+    const sum = screen.getByLabelText("Holdings");
+    expect(sum).toHaveTextContent("$400.00 on watchlist shares (1 position, P&L $10.00)");
+    expect(screen.getByLabelText("Held but not on the watchlist")).toHaveTextContent("MSFT 1.5 sh · $600.00");
+  });
+
+  it("shows the theme as text and no tools when the server says the caller cannot edit", async () => {
+    serve(false);
+    expect(await screen.findByText("Tech", { selector: "td span" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Theme for EXMP")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Auto-assign themes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Export the watchlist and themes as JSON" })).not.toBeInTheDocument();
+  });
+});

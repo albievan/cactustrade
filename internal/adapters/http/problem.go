@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/albievan/cactustrade/internal/app"
@@ -133,15 +134,21 @@ func (s *Server) paramError(w http.ResponseWriter, r *http.Request, err error) {
 
 // decode reads a JSON body strictly: size-limited, unknown fields refused, one value only.
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	return decodeLimit(w, r, v, maxBody)
+}
+
+// decodeLimit is decode with its own size cap (at most maxRequestBody, which limitBody
+// enforces for every request).
+func decodeLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		writeProblem(w, r, http.StatusUnsupportedMediaType, "Unsupported media type", "send application/json", "")
 		return false
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			writeProblem(w, r, http.StatusRequestEntityTooLarge, "Request too large", "the JSON body may hold at most 64 KiB", "")
+			writeProblem(w, r, http.StatusRequestEntityTooLarge, "Request too large", "the JSON body may hold at most "+sizeText(limit), "")
 			return false
 		}
 		writeProblem(w, r, http.StatusBadRequest, "Invalid JSON", err.Error(), "")
@@ -152,4 +159,12 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// sizeText says a body cap for people ("64 KiB", "1 MiB").
+func sizeText(n int64) string {
+	if n >= 1<<20 && n%(1<<20) == 0 {
+		return strconv.FormatInt(n>>20, 10) + " MiB"
+	}
+	return strconv.FormatInt(n>>10, 10) + " KiB"
 }

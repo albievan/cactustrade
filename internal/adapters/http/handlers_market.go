@@ -123,20 +123,6 @@ func (s *Server) SearchInstruments(w http.ResponseWriter, r *http.Request, param
 	writeJSON(w, http.StatusOK, out)
 }
 
-// ListWatchlist lists the watchlist.
-func (s *Server) ListWatchlist(w http.ResponseWriter, r *http.Request) {
-	items, err := s.svc.Watchlist(r.Context(), state(r).principal)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	out := make([]WatchItem, 0, len(items))
-	for _, it := range items {
-		out = append(out, toWatchItem(it))
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
 // AddToWatchlist adds an eligible share.
 func (s *Server) AddToWatchlist(w http.ResponseWriter, r *http.Request) {
 	var req AddWatchRequest
