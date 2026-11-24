@@ -262,9 +262,11 @@ describe("Dashboard", () => {
       expect(FakeEventSource.all).toHaveLength(i + 2);
     }
     act(() => FakeEventSource.latest().fail()); // 7th: 64 s would be next, capped at 30 s
-    await advance(29_999);
+    // 1 s of slack on each side: shouldAdvanceTime also moves the fake clock with real time,
+    // so a 1 ms margin failed on a busy machine. 29 s → not yet; 31 s → retried (not 64 s).
+    await advance(29_000);
     expect(FakeEventSource.all).toHaveLength(7);
-    await advance(1);
+    await advance(2_000);
     expect(FakeEventSource.all).toHaveLength(8);
   });
 

@@ -10,12 +10,13 @@ BUILD     := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
 LDFLAGS   := -s -w -X main.version=$(VERSION) -X main.build=$(BUILD)
 
 DOCKER     ?= docker
-GO_IMAGE   ?= golang:1.26.11-bookworm
-LINT_IMAGE ?= golangci/golangci-lint:v2.14.0
+GO_IMAGE   ?= golang:1.26.11-bookworm@sha256:4ebd099cae89439fff17af404a9c724079d439b4d92178819318735312ee9eb3
+LINT_IMAGE ?= golangci/golangci-lint:v2.14.0@sha256:ad862ba6b3798cbe0fd9fd7408d498fd74fbd2623a92406b2fd3898faf0bf98f
 IN_GO       = $(DOCKER) run --rm -v "$(CURDIR)":/src -w /src -v cactustrade-gomod:/go/pkg/mod -v cactustrade-gobuild:/root/.cache/go-build $(GO_IMAGE)
 CONTRACTS_TMP := .cache/contracts
+AUDIT_TMP     := .cache/audit
 
-.PHONY: help gen fmt fmt-check lint vet test cover test-int vuln contracts web-install web-check build run \
+.PHONY: help gen fmt fmt-check lint vet test cover test-int vuln audit contracts web-install web-check build run \
         image check etoro-spec install uninstall status backup \
         lint-in-container test-in-container build-in-container check-in-container
 
@@ -27,10 +28,10 @@ gen: web-install ## regenerate the OpenAPI server and the web API types
 	pnpm -C web gen:api
 
 fmt: ## format Go code
-	gofumpt -w cmd internal web api migrations
+	gofumpt -w cmd internal tools web api migrations
 
 fmt-check:
-	@out="$$(gofumpt -l cmd internal web api migrations | grep -v '\.gen\.go$$' || true)"; \
+	@out="$$(gofumpt -l cmd internal tools web api migrations | grep -v '\.gen\.go$$' || true)"; \
 	  if [[ -n "$$out" ]]; then echo "gofumpt needed:"; echo "$$out"; exit 1; fi
 
 lint: ## golangci-lint (incl. depguard layering rules)
@@ -55,6 +56,16 @@ test-int: ## MariaDB 11 integration tests (Docker; testcontainers)
 
 vuln: ## known-vulnerability scan
 	go run golang.org/x/vuln/cmd/govulncheck@latest $(GO_PKGS)
+
+audit: vuln web-install ## dependency audit (PLAN 7.7): go mod verify, govulncheck, licences, pnpm audit, image digests
+	go mod verify
+	@mkdir -p $(AUDIT_TMP)
+	go list -m -json all >$(AUDIT_TMP)/modules.json
+	go list -deps -test -tags integration -f '{{with .Module}}{{.Path}}{{end}}' $(GO_PKGS) | sort -u >$(AUDIT_TMP)/build.txt
+	pnpm -C web licenses list --prod --json >$(AUDIT_TMP)/pnpm.json
+	go run ./tools/licencecheck -go-modules $(AUDIT_TMP)/modules.json -go-build $(AUDIT_TMP)/build.txt -pnpm $(AUDIT_TMP)/pnpm.json
+	pnpm -C web audit --prod --audit-level=moderate
+	go test -count=1 -run 'TestImagesPinnedByDigest' ./cmd/cactustrade
 
 contracts: web-install ## generated code must match the OpenAPI contract
 	@mkdir -p $(CONTRACTS_TMP)
@@ -87,7 +98,7 @@ etoro-spec: ## download eToro's OpenAPI spec; report allowlisted paths it no lon
 	@head -1 .cache/etoro/paths.txt; echo "allowlisted paths missing from the spec (should be none):"; \
 	  grep -oE '"/api/[^"]+"' internal/adapters/etoro/allowlist.go | tr -d '"' | sort -u | while read -r p; do grep -q " $$p$$" .cache/etoro/paths.txt || echo "  $$p"; done
 
-check: fmt-check lint vet cover test-int vuln contracts web-check ## THE quality bar
+check: fmt-check lint vet cover test-int vuln audit contracts web-check ## THE quality bar
 
 # ---- container-only variants (need nothing but Docker/Podman) ---------------------------
 lint-in-container: ## golangci-lint in its image
