@@ -50,6 +50,7 @@ Dependency rule, enforced by depguard: `domain ← app ← ports ← adapters �
 | `Trades` (repository) | `sqlstore` (`trades`, migration 00011): eToro's closed trades per account (read-only sync, PK account + position id), flagged `ours` when cactusTrade opened the position; kept as long as the account (OD16) |
 | `Mailer` | `adapters/mail` (net/smtp: STARTTLS required / implicit TLS / plain to localhost; header-injection checks; MIME multipart/mixed with attachments, R30); `Outbox` (with `outbox_attachments`, migration 00013) and `PasswordResets` repositories |
 | `StatementRenderer` | `adapters/pdf` (R30): a built `domain.Statement` as an A4 PDF with `codeberg.org/go-pdf/fpdf`; standard fonts (Windows-1252), the logo as vector shapes, no I/O (depguard) |
+| `AnalysisRenderer` | `adapters/pdf` (R31): a built `domain.Analysis` as a one-page PDF, 210 mm wide, A4 tall when it fits, else as tall as the content (rounded up to 10 mm); vector charts in the Okabe–Ito palette |
 | `StatementSchedules` (repository) | `sqlstore` (`statement_schedules`, migration 00013): per user; `MarkPeriod` is a compare-and-set on the last period sent |
 
 The `Broker` port has no money-movement operation. Its `Open` takes a `domain.OrderIntent`,
@@ -298,6 +299,27 @@ holdings read when it is made. No eToro path; nothing an order path decides read
   cactusTrade opened (others counted apart), equity per currency (never summed across
   currencies), unknown fees apart, a deterministic summary paragraph; the same records give
   the same statement.
+
+### Analysis page (R31)
+
+Also a **view** of stored records; it reads no broker, not even a view-only platform's
+holdings.
+
+```
+ GET /api/v1/analysis[.pdf]?preset|from&to&accountId…   (viewer; view access per account, else 404)
+   → app.Analysis: AnalysisWindowFor(preset, from, to, now) + chosen accounts
+   → per account: trades, snapshots, themes, decisions (3 days before the period too, for
+     the playbook join), events, LLM usage
+   → domain.BuildAnalysis (groupings, equity curves per currency, risk, activity, narrative)
+   → JSON, or ports.AnalysisRenderer (adapters/pdf) → one page, sized to fit
+```
+
+- **Groupings** by date (bucket: day ≤ 31 days, week ≤ 186, month beyond), exchange,
+  trading account, theme (the share's theme now), direction, playbook (decision
+  `order_request_id` = trade `open_request_id`) and outcome; per group trades, wins/losses,
+  win rate (absent without trades), realised P&L, fees (unknown apart), average, best, worst.
+- **Narrative** is deterministic (no LLM): six headed sections written from the analysis's
+  own figures, neutral and never predictive; every amount in it appears in a table.
 
 ## Accounts
 

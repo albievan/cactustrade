@@ -188,3 +188,23 @@ body[data-mode=real] .app-head .brand-version { color: rgba(255, 255, 255, .8); 
 .activity-line.tone-danger { --act-tone: var(--act-danger); }
 .activity-line.tone-muted { --act-tone: var(--act-muted); }
 @media (max-width: 576px) { .activity-line { grid-template-columns: auto auto 1fr; } .activity-line .acct { display: none; } }
+
+/* ---- analysis (R31): Okabe–Ito colours, distinguishable with common colour-vision deficiencies ---- */
+:root { --cb-pos: #0072b2; --cb-neg: #d55e00; --cb-even: #8c8c8c; }
+@media (prefers-color-scheme: dark) {
+  :root { --cb-pos: #56b4e9; --cb-neg: #e69f00; --cb-even: #a7a7a7; }
+}
+.pnl-up { color: var(--cb-pos); }
+.pnl-down { color: var(--cb-neg); }
+.analysis-bars svg { width: 100%; height: 160px; display: block; }
+.analysis-bars .zero { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.analysis-bars .up { fill: var(--cb-pos); }
+.analysis-bars .down { fill: var(--cb-neg); }
+.analysis-hbars .hbar-track { position: relative; height: 6px; background: var(--border); border-radius: 3px; }
+.analysis-hbars .hbar { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.analysis-hbars .hbar.up { background: var(--cb-pos); }
+.analysis-hbars .hbar.down { background: var(--cb-neg); }
+.split-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--border); }
+.split-bar .up, .legend-dot.up { background: var(--cb-pos); }
+.split-bar .down, .legend-dot.down { background: var(--cb-neg); }
+.split-bar .even, .legend-dot.even { background: var(--cb-even); }

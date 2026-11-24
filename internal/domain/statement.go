@@ -534,20 +534,7 @@ func statementSummary(st Statement) string {
 			plural(st.ForeignTrades, "closed trade", "closed trades"))
 	}
 	if st.AccountWide {
-		if len(st.EquityTotals) == 0 {
-			b.WriteString(" No equity was recorded in the period.")
-		} else {
-			parts := make([]string, 0, len(st.EquityTotals))
-			for _, e := range st.EquityTotals {
-				parts = append(parts, fmt.Sprintf("from %s to %s (%s, %s)", FormatMoney(e.Currency, e.Opening), FormatMoney(e.Currency, e.Closing),
-					e.Currency, plural(e.Accounts, "account", "accounts")))
-			}
-			b.WriteString(" Recorded equity went " + strings.Join(parts, " and "))
-			if len(st.EquityTotals) > 1 {
-				b.WriteString("; amounts in different currencies are not added together")
-			}
-			b.WriteString(".")
-		}
+		b.WriteString(" " + equitySentence(st.EquityTotals))
 	}
 	switch n := len(st.OpenPositions); n {
 	case 0:
@@ -582,6 +569,25 @@ func statementSummary(st Statement) string {
 		}
 	}
 	return b.String()
+}
+
+// equitySentence says how recorded equity went, per currency (never added across
+// currencies): "Recorded equity went from $1.00 to $2.00 (USD, 1 account)." Statements (R30)
+// and analyses (R31) share it.
+func equitySentence(totals []StatementEquityTotal) string {
+	if len(totals) == 0 {
+		return "No equity was recorded in the period."
+	}
+	parts := make([]string, 0, len(totals))
+	for _, e := range totals {
+		parts = append(parts, fmt.Sprintf("from %s to %s (%s, %s)", FormatMoney(e.Currency, e.Opening), FormatMoney(e.Currency, e.Closing),
+			e.Currency, plural(e.Accounts, "account", "accounts")))
+	}
+	s := "Recorded equity went " + strings.Join(parts, " and ")
+	if len(totals) > 1 {
+		s += "; amounts in different currencies are not added together"
+	}
+	return s + "."
 }
 
 func symbolOr(s string) string {

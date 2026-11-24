@@ -578,6 +578,12 @@ type StatementRenderer interface {
 	Render(ctx context.Context, s domain.Statement) ([]byte, error)
 }
 
+// AnalysisRenderer turns a built analysis into a one-page document (R31: a PDF whose page
+// is sized to fit). Like StatementRenderer it only formats what it is given.
+type AnalysisRenderer interface {
+	RenderAnalysis(ctx context.Context, a domain.Analysis) ([]byte, error)
+}
+
 // Mailer delivers one message through the given server. A nil error means the server
 // accepted the message (it must then never be sent again).
 type Mailer interface {

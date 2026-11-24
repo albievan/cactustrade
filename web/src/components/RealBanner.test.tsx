@@ -8,7 +8,7 @@ import appSource from "../App.tsx?raw";
 
 // Every route of the signed-in app (App.tsx), checked below against its source so a new page
 // cannot miss the banner.
-const paths = ["/", "/risk", "/llm", "/email", "/system", "/overview", "/watchlist", "/orders", "/decisions", "/history",
+const paths = ["/", "/risk", "/llm", "/email", "/system", "/overview", "/watchlist", "/orders", "/decisions", "/history", "/analysis",
   "/accounts", "/real-trading", "/themes", "/users", "/api-keys", "/audit", "/account", "/credentials"];
 
 const me = {

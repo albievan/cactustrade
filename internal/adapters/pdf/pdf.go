@@ -4,6 +4,8 @@
 // same bytes. Text uses the PDF standard fonts (Helvetica) in the Windows-1252 encoding, which
 // covers £, €, ¥, A$ and Western European names; any other character prints as "?". The
 // cactusTrade logo is drawn as vector shapes from the web app's SVG (no image file, no fetch).
+// It also renders the analysis page (R31) as a one-page PDF (ports.AnalysisRenderer,
+// analysis.go).
 package pdf
 
 import (
@@ -19,7 +21,7 @@ import (
 	"github.com/albievan/cactustrade/internal/ports"
 )
 
-// Renderer renders statements as A4 PDF documents. It is safe for concurrent use: every
+// Renderer renders statements as A4 PDF documents and analyses as one-page PDF documents. It is safe for concurrent use: every
 // Render builds its own document.
 type Renderer struct{}
 

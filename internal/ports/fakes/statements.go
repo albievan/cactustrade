@@ -172,3 +172,31 @@ func (r *StatementRenderer) All() []domain.Statement {
 	defer r.mu.Unlock()
 	return slices.Clone(r.Rendered)
 }
+
+// AnalysisRenderer records the analyses it renders and returns a small stand-in document
+// ("%PDF-fake " + the title); Err (when set) is returned instead.
+type AnalysisRenderer struct {
+	mu       sync.Mutex
+	Rendered []domain.Analysis
+	Err      error
+}
+
+var _ ports.AnalysisRenderer = (*AnalysisRenderer)(nil)
+
+// RenderAnalysis records a.
+func (r *AnalysisRenderer) RenderAnalysis(_ context.Context, a domain.Analysis) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Err != nil {
+		return nil, r.Err
+	}
+	r.Rendered = append(r.Rendered, a)
+	return []byte("%PDF-fake " + a.Title), nil
+}
+
+// All returns the analyses rendered so far.
+func (r *AnalysisRenderer) All() []domain.Analysis {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.Rendered)
+}

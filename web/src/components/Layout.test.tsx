@@ -29,5 +29,10 @@ describe("Layout", () => {
     expect(links).toContain("Platform accounts");
     expect(links.indexOf("Orders")).toBeGreaterThan(links.indexOf("Dashboard")); // under Trading
     expect(links.indexOf("Decision log")).toBe(links.indexOf("Orders") + 1);
+    // R31: Analysis under Trading, right after History, with the graph-up-arrow icon.
+    expect(links.indexOf("Analysis")).toBe(links.indexOf("History") + 1);
+    const analysis = screen.getAllByRole("link").find((l) => l.textContent === "Analysis");
+    expect(analysis).toHaveAttribute("href", "/analysis");
+    expect(analysis?.querySelector("i.bi-graph-up-arrow")).not.toBeNull();
   });
 });

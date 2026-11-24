@@ -77,6 +77,90 @@ func (e AgentState) Valid() bool {
 	}
 }
 
+// Defines values for AnalysisBucket.
+const (
+	AnalysisBucketDay   AnalysisBucket = "day"
+	AnalysisBucketMonth AnalysisBucket = "month"
+	AnalysisBucketWeek  AnalysisBucket = "week"
+)
+
+// Valid indicates whether the value is a known member of the AnalysisBucket enum.
+func (e AnalysisBucket) Valid() bool {
+	switch e {
+	case AnalysisBucketDay:
+		return true
+	case AnalysisBucketMonth:
+		return true
+	case AnalysisBucketWeek:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AnalysisDimension.
+const (
+	AnalysisDimensionAccount   AnalysisDimension = "account"
+	AnalysisDimensionDate      AnalysisDimension = "date"
+	AnalysisDimensionDirection AnalysisDimension = "direction"
+	AnalysisDimensionExchange  AnalysisDimension = "exchange"
+	AnalysisDimensionOutcome   AnalysisDimension = "outcome"
+	AnalysisDimensionPlaybook  AnalysisDimension = "playbook"
+	AnalysisDimensionTheme     AnalysisDimension = "theme"
+)
+
+// Valid indicates whether the value is a known member of the AnalysisDimension enum.
+func (e AnalysisDimension) Valid() bool {
+	switch e {
+	case AnalysisDimensionAccount:
+		return true
+	case AnalysisDimensionDate:
+		return true
+	case AnalysisDimensionDirection:
+		return true
+	case AnalysisDimensionExchange:
+		return true
+	case AnalysisDimensionOutcome:
+		return true
+	case AnalysisDimensionPlaybook:
+		return true
+	case AnalysisDimensionTheme:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AnalysisPreset.
+const (
+	AnalysisPresetAll       AnalysisPreset = "all"
+	AnalysisPresetCustom    AnalysisPreset = "custom"
+	AnalysisPresetLastMonth AnalysisPreset = "last_month"
+	AnalysisPresetMonth     AnalysisPreset = "month"
+	AnalysisPresetToday     AnalysisPreset = "today"
+	AnalysisPresetWeek      AnalysisPreset = "week"
+)
+
+// Valid indicates whether the value is a known member of the AnalysisPreset enum.
+func (e AnalysisPreset) Valid() bool {
+	switch e {
+	case AnalysisPresetAll:
+		return true
+	case AnalysisPresetCustom:
+		return true
+	case AnalysisPresetLastMonth:
+		return true
+	case AnalysisPresetMonth:
+		return true
+	case AnalysisPresetToday:
+		return true
+	case AnalysisPresetWeek:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CredentialSource.
 const (
 	Env CredentialSource = "env"
@@ -1053,6 +1137,230 @@ type AgentStyle struct {
 type AgentStyleChange struct {
 	Aggressiveness *StyleLevel `json:"aggressiveness,omitempty"`
 	Autonomy       *StyleLevel `json:"autonomy,omitempty"`
+}
+
+// Analysis An analysis of a period (R31). Trade figures are cactusTrade's own closed trades in US
+// dollars after the fees eToro reported; equity is per currency and never added across
+// currencies. Figures describe past results only.
+type Analysis struct {
+	Accounts []AnalysisAccount `json:"accounts"`
+
+	// ActivityCapped some activity counts are lower bounds
+	ActivityCapped bool `json:"activityCapped"`
+
+	// AllAccounts no account was chosen: every account you can see
+	AllAccounts    bool                  `json:"allAccounts"`
+	Bucket         AnalysisBucket        `json:"bucket"`
+	Curves         []AnalysisCurve       `json:"curves"`
+	Days           int                   `json:"days"`
+	Decisions      []AnalysisCount       `json:"decisions"`
+	DecisionsTotal int                   `json:"decisionsTotal"`
+	Equity         []AnalysisEquity      `json:"equity"`
+	EquityTotals   []AnalysisEquityTotal `json:"equityTotals"`
+	FirstDay       string                `json:"firstDay"`
+
+	// ForeignTrades closed trades of positions cactusTrade did not open (not counted)
+	ForeignTrades int `json:"foreignTrades"`
+
+	// From the start of the first risk day
+	From        time.Time          `json:"from"`
+	GeneratedAt time.Time          `json:"generatedAt"`
+	Groupings   []AnalysisGrouping `json:"groupings"`
+	LastDay     string             `json:"lastDay"`
+	Llm         AnalysisLlm        `json:"llm"`
+	Narrative   []AnalysisSection  `json:"narrative"`
+	Notes       []string           `json:"notes"`
+
+	// OursShareBp cactusTrade's share of all closed trades in basis points (absent when there were none)
+	OursShareBp *int64 `json:"oursShareBp,omitempty"`
+
+	// Preset today: today's risk day; week: Monday to Friday of this ISO week; month / last_month: a calendar month; custom: from–to; all: the last 400 risk days
+	Preset AnalysisPreset `json:"preset"`
+	Risk   AnalysisRisk   `json:"risk"`
+	Scope  string         `json:"scope"`
+	Title  string         `json:"title"`
+
+	// To the end of the last risk day (exclusive)
+	To time.Time `json:"to"`
+
+	// Totals The figures of one group of cactusTrade's closed trades (US dollars)
+	Totals        AnalysisGroup   `json:"totals"`
+	TradeAccounts int             `json:"tradeAccounts"`
+	Verdicts      []AnalysisCount `json:"verdicts"`
+}
+
+// AnalysisAccount defines model for AnalysisAccount.
+type AnalysisAccount struct {
+	Id   string      `json:"id"`
+	Mode TradingMode `json:"mode"`
+	Name string      `json:"name"`
+
+	// Platform the platform's name (eToro, Trading 212 …)
+	Platform string `json:"platform"`
+	ViewOnly bool   `json:"viewOnly"`
+}
+
+// AnalysisBucket defines model for AnalysisBucket.
+type AnalysisBucket string
+
+// AnalysisCount defines model for AnalysisCount.
+type AnalysisCount struct {
+	Label string `json:"label"`
+	N     int    `json:"n"`
+}
+
+// AnalysisCurve The recorded equity of the accounts of one currency (each account joins at its first snapshot)
+type AnalysisCurve struct {
+	Accounts      int    `json:"accounts"`
+	Currency      string `json:"currency"`
+	MaxDrawdownBp int64  `json:"maxDrawdownBp"`
+
+	// MaxDrawdownMinor An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	MaxDrawdownMinor MinorUnits      `json:"maxDrawdownMinor"`
+	Points           []AnalysisPoint `json:"points"`
+}
+
+// AnalysisDimension defines model for AnalysisDimension.
+type AnalysisDimension string
+
+// AnalysisEquity One account's first and last snapshot in the period (minor units of its currency)
+type AnalysisEquity struct {
+	Account string `json:"account"`
+
+	// ChangeMinor An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	ChangeMinor MinorUnits `json:"changeMinor"`
+
+	// ClosingMinor An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	ClosingMinor MinorUnits `json:"closingMinor"`
+	Currency     string     `json:"currency"`
+
+	// Known a snapshot was recorded in the period
+	Known         bool  `json:"known"`
+	MaxDrawdownBp int64 `json:"maxDrawdownBp"`
+
+	// MaxDrawdownMinor An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	MaxDrawdownMinor MinorUnits `json:"maxDrawdownMinor"`
+
+	// OpeningMinor An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	OpeningMinor MinorUnits `json:"openingMinor"`
+	ViewOnly     bool       `json:"viewOnly"`
+}
+
+// AnalysisEquityTotal The accounts of one currency added up (never across currencies)
+type AnalysisEquityTotal struct {
+	Accounts int `json:"accounts"`
+
+	// ChangeMinor An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	ChangeMinor MinorUnits `json:"changeMinor"`
+
+	// ClosingMinor An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	ClosingMinor MinorUnits `json:"closingMinor"`
+	Currency     string     `json:"currency"`
+
+	// OpeningMinor An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	OpeningMinor MinorUnits `json:"openingMinor"`
+}
+
+// AnalysisGroup The figures of one group of cactusTrade's closed trades (US dollars)
+type AnalysisGroup struct {
+	// AvgNetCents realised P&L per trade (absent when there are no trades)
+	AvgNetCents *Cents         `json:"avgNetCents,omitempty"`
+	Best        *AnalysisTrade `json:"best,omitempty"`
+	Breakeven   int            `json:"breakeven"`
+
+	// FeesCents US dollars in cents (the eToro account currency is USD)
+	FeesCents Cents `json:"feesCents"`
+
+	// FeesUnknownTrades trades whose fees eToro did not report (in neither fees nor gross)
+	FeesUnknownTrades int `json:"feesUnknownTrades"`
+
+	// GrossCents US dollars in cents (the eToro account currency is USD)
+	GrossCents Cents  `json:"grossCents"`
+	Key        string `json:"key"`
+	Label      string `json:"label"`
+	Losses     int    `json:"losses"`
+
+	// NetCents US dollars in cents (the eToro account currency is USD)
+	NetCents Cents `json:"netCents"`
+	Trades   int   `json:"trades"`
+
+	// WinRateBp wins / trades in basis points (absent when there are no trades)
+	WinRateBp *int64         `json:"winRateBp,omitempty"`
+	Wins      int            `json:"wins"`
+	Worst     *AnalysisTrade `json:"worst,omitempty"`
+}
+
+// AnalysisGrouping defines model for AnalysisGrouping.
+type AnalysisGrouping struct {
+	Dimension AnalysisDimension `json:"dimension"`
+	Groups    []AnalysisGroup   `json:"groups"`
+	Title     string            `json:"title"`
+}
+
+// AnalysisLlm defines model for AnalysisLlm.
+type AnalysisLlm struct {
+	Calls int64 `json:"calls"`
+
+	// CostUnknownCalls calls without a price (not in knownCostUsd)
+	CostUnknownCalls int64 `json:"costUnknownCalls"`
+	Failed           int64 `json:"failed"`
+	InputTokens      int64 `json:"inputTokens"`
+
+	// KnownCostUsd US dollars to the micro-dollar (absent = unknown, OD13)
+	KnownCostUsd UsdCost `json:"knownCostUsd"`
+	OutputTokens int64   `json:"outputTokens"`
+}
+
+// AnalysisPoint defines model for AnalysisPoint.
+type AnalysisPoint struct {
+	At time.Time `json:"at"`
+
+	// Equity An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	Equity MinorUnits `json:"equity"`
+}
+
+// AnalysisPreset today: today's risk day; week: Monday to Friday of this ISO week; month / last_month: a calendar month; custom: from–to; all: the last 400 risk days
+type AnalysisPreset string
+
+// AnalysisRisk defines model for AnalysisRisk.
+type AnalysisRisk struct {
+	// DailyStops the daily loss limit stopped new entries
+	DailyStops   int `json:"dailyStops"`
+	ForceCloses  int `json:"forceCloses"`
+	KillResets   int `json:"killResets"`
+	KillSwitches int `json:"killSwitches"`
+	LimitChanges int `json:"limitChanges"`
+
+	// RiskRefusals candidates the risk engine refused
+	RiskRefusals int `json:"riskRefusals"`
+}
+
+// AnalysisSection defines model for AnalysisSection.
+type AnalysisSection struct {
+	Heading    string   `json:"heading"`
+	Paragraphs []string `json:"paragraphs"`
+}
+
+// AnalysisTrade defines model for AnalysisTrade.
+type AnalysisTrade struct {
+	Account  string    `json:"account"`
+	ClosedAt time.Time `json:"closedAt"`
+
+	// NetCents US dollars in cents (the eToro account currency is USD)
+	NetCents   Cents `json:"netCents"`
+	PositionId int64 `json:"positionId"`
+
+	// Symbol empty when the share is not cached
+	Symbol string `json:"symbol"`
 }
 
 // ApiKey defines model for ApiKey.
@@ -3269,6 +3577,36 @@ type StopAgentParams struct {
 	AccountId *AccountIdQuery `form:"accountId,omitempty" json:"accountId,omitempty"`
 }
 
+// GetAnalysisParams defines parameters for GetAnalysis.
+type GetAnalysisParams struct {
+	// Preset absent = custom when from or to is given, else this month
+	Preset *AnalysisPreset `form:"preset,omitempty" json:"preset,omitempty"`
+
+	// From custom range: the first risk day, YYYY-MM-DD
+	From *string `form:"from,omitempty" json:"from,omitempty"`
+
+	// To custom range: the last risk day (inclusive), YYYY-MM-DD, not after today
+	To *string `form:"to,omitempty" json:"to,omitempty"`
+
+	// AccountId the accounts (repeat the parameter; absent = every account you can see). An account you cannot see is 404.
+	AccountId *[]string `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// GetAnalysisPdfParams defines parameters for GetAnalysisPdf.
+type GetAnalysisPdfParams struct {
+	// Preset absent = custom when from or to is given, else this month
+	Preset *AnalysisPreset `form:"preset,omitempty" json:"preset,omitempty"`
+
+	// From custom range: the first risk day, YYYY-MM-DD
+	From *string `form:"from,omitempty" json:"from,omitempty"`
+
+	// To custom range: the last risk day (inclusive), YYYY-MM-DD, not after today
+	To *string `form:"to,omitempty" json:"to,omitempty"`
+
+	// AccountId the accounts (repeat the parameter; absent = every account you can see). An account you cannot see is 404.
+	AccountId *[]string `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
 // ListAuditParams defines parameters for ListAudit.
 type ListAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -3604,6 +3942,12 @@ type ServerInterface interface {
 	// ListAgents The agent of every eToro account the caller can see, with the caller's controls (viewer)
 	// (GET /api/v1/agents)
 	ListAgents(w http.ResponseWriter, r *http.Request)
+	// GetAnalysis Analysis of the trades of a period, grouped and explained (R31)
+	// (GET /api/v1/analysis)
+	GetAnalysis(w http.ResponseWriter, r *http.Request, params GetAnalysisParams)
+	// GetAnalysisPdf The analysis as a one-page PDF (R31)
+	// (GET /api/v1/analysis.pdf)
+	GetAnalysisPdf(w http.ResponseWriter, r *http.Request, params GetAnalysisPdfParams)
 	// ListApiKeys List your API keys (admins see all)
 	// (GET /api/v1/api-keys)
 	ListApiKeys(w http.ResponseWriter, r *http.Request)
@@ -4613,6 +4957,150 @@ func (siw *ServerInterfaceWrapper) ListAgents(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListAgents(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAnalysis operation middleware
+func (siw *ServerInterfaceWrapper) GetAnalysis(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAnalysisParams
+
+	// ------------- Optional query parameter "preset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "preset", r.URL.Query(), &params.Preset, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "preset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAnalysis(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAnalysisPdf operation middleware
+func (siw *ServerInterfaceWrapper) GetAnalysisPdf(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAnalysisPdfParams
+
+	// ------------- Optional query parameter "preset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "preset", r.URL.Query(), &params.Preset, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "preset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "accountId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "accountId", r.URL.Query(), &params.AccountId, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "accountId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAnalysisPdf(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6825,6 +7313,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/statements/schedules/{id}", wrapper.UpdateStatementSchedule)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/statements/schedules/{id}/send-now", wrapper.SendStatementNow)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/statements/preview.pdf", wrapper.PreviewStatement)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/analysis", wrapper.GetAnalysis)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/analysis.pdf", wrapper.GetAnalysisPdf)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.ListAudit)
 
 	return m

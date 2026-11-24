@@ -104,6 +104,31 @@ export type StatementSendResult = components["schemas"]["StatementSendResult"];
 export type StatementAccountRef = components["schemas"]["StatementAccountRef"];
 export type StatementPeriod = components["schemas"]["StatementPeriod"];
 export type StatementScope = components["schemas"]["StatementScope"];
+export type Analysis = components["schemas"]["Analysis"];
+export type AnalysisGroup = components["schemas"]["AnalysisGroup"];
+export type AnalysisGrouping = components["schemas"]["AnalysisGrouping"];
+export type AnalysisCurve = components["schemas"]["AnalysisCurve"];
+export type AnalysisPreset = components["schemas"]["AnalysisPreset"];
+
+// AnalysisQuery chooses an analysis (R31): a preset or a custom range of risk days, and the
+// accounts (none = every account you can see).
+export interface AnalysisQuery { preset?: AnalysisPreset; from?: string; to?: string; accountIds?: string[] }
+
+// analysisQuery builds the query string; each account is its own accountId parameter.
+function analysisQuery(q: AnalysisQuery): string {
+  const p = new URLSearchParams();
+  if (q.preset) p.set("preset", q.preset);
+  if (q.from) p.set("from", q.from);
+  if (q.to) p.set("to", q.to);
+  for (const id of q.accountIds ?? []) p.append("accountId", id);
+  return p.toString();
+}
+
+// analysisPdfUrl is the address of the one-page analysis PDF: the browser downloads it with
+// the session cookie.
+export function analysisPdfUrl(q: AnalysisQuery): string {
+  return `/api/v1/analysis.pdf?${analysisQuery(q)}`;
+}
 
 // forAccount is "?accountId=…" for a named account, "" for the current one.
 function forAccount(accountId?: string): string {
@@ -322,6 +347,8 @@ export const api = {
     request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/shares`, { username, access }),
   unshareAccount: (id: string, userId: string) =>
     request<void>("DELETE", `/api/v1/accounts/${encodeURIComponent(id)}/shares/${encodeURIComponent(userId)}`),
+  // The analysis page (R31): figures describe past results only.
+  analysis: (q: AnalysisQuery) => request<Analysis>("GET", `/api/v1/analysis?${analysisQuery(q)}`),
   statementSchedules: () => request<StatementsPage>("GET", "/api/v1/statements/schedules"),
   createStatementSchedule: (x: StatementScheduleInput) => request<StatementSchedule>("POST", "/api/v1/statements/schedules", x),
   updateStatementSchedule: (id: string, x: StatementScheduleInput) =>

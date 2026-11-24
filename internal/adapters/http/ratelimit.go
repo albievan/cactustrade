@@ -87,7 +87,9 @@ func classify(method, path, pattern string) rateClass {
 		pattern == "GET /api/v1/watchlist/export", pattern == "GET /api/v1/watchlist/theme-proposals",
 		// R30: a statement preview reads a period of records and renders a PDF; "send now"
 		// renders several and e-mails them.
-		pattern == "GET /api/v1/statements/preview.pdf", pattern == "POST /api/v1/statements/schedules/{id}/send-now":
+		pattern == "GET /api/v1/statements/preview.pdf", pattern == "POST /api/v1/statements/schedules/{id}/send-now",
+		// R31: the analysis PDF reads a period of records and renders a PDF.
+		pattern == "GET /api/v1/analysis.pdf":
 		return classExport
 	case method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions:
 		return classRead

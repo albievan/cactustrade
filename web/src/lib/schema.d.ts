@@ -1889,6 +1889,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Analysis of the trades of a period, grouped and explained (R31)
+         * @description cactusTrade's closed trades of the period on the chosen accounts, grouped by date
+         *     (bucket: day up to 31 days, week up to 186, month beyond), exchange, trading account,
+         *     theme, direction, playbook and outcome; equity and drawdown per currency (never added
+         *     across currencies); risk events; agent activity; and a narrative written from these
+         *     figures (no LLM). Viewer, with view access to every account. Figures describe past
+         *     results only.
+         */
+        get: operations["getAnalysis"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analysis.pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The analysis as a one-page PDF (R31)
+         * @description The same analysis as `GET /api/v1/analysis`, laid out on one page whose height is
+         *     chosen to fit the content (A4 when it fits). Sent as an attachment, never cached;
+         *     counts as an export for the rate limits.
+         */
+        get: operations["getAnalysisPdf"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -3688,6 +3735,182 @@ export interface components {
             /** @description e-mails queued */
             recipients: number;
             files: string[];
+        };
+        /**
+         * @description today: today's risk day; week: Monday to Friday of this ISO week; month / last_month: a calendar month; custom: from–to; all: the last 400 risk days
+         * @enum {string}
+         */
+        AnalysisPreset: "today" | "week" | "month" | "last_month" | "custom" | "all";
+        /** @enum {string} */
+        AnalysisBucket: "day" | "week" | "month";
+        /** @enum {string} */
+        AnalysisDimension: "date" | "exchange" | "account" | "theme" | "direction" | "playbook" | "outcome";
+        AnalysisAccount: {
+            id: string;
+            name: string;
+            /** @description the platform's name (eToro, Trading 212 …) */
+            platform: string;
+            mode: components["schemas"]["TradingMode"];
+            viewOnly: boolean;
+        };
+        AnalysisTrade: {
+            account: string;
+            /** @description empty when the share is not cached */
+            symbol: string;
+            /** Format: int64 */
+            positionId: number;
+            /** Format: date-time */
+            closedAt: string;
+            netCents: components["schemas"]["Cents"];
+        };
+        /** @description The figures of one group of cactusTrade's closed trades (US dollars) */
+        AnalysisGroup: {
+            key: string;
+            label: string;
+            trades: number;
+            wins: number;
+            losses: number;
+            breakeven: number;
+            /**
+             * Format: int64
+             * @description wins / trades in basis points (absent when there are no trades)
+             */
+            winRateBp?: number;
+            grossCents: components["schemas"]["Cents"];
+            feesCents: components["schemas"]["Cents"];
+            netCents: components["schemas"]["Cents"];
+            /** @description trades whose fees eToro did not report (in neither fees nor gross) */
+            feesUnknownTrades: number;
+            /** @description realised P&L per trade (absent when there are no trades) */
+            avgNetCents?: components["schemas"]["Cents"];
+            best?: components["schemas"]["AnalysisTrade"];
+            worst?: components["schemas"]["AnalysisTrade"];
+        };
+        AnalysisGrouping: {
+            dimension: components["schemas"]["AnalysisDimension"];
+            title: string;
+            groups: components["schemas"]["AnalysisGroup"][];
+        };
+        /** @description One account's first and last snapshot in the period (minor units of its currency) */
+        AnalysisEquity: {
+            account: string;
+            currency: string;
+            /** @description a snapshot was recorded in the period */
+            known: boolean;
+            openingMinor: components["schemas"]["MinorUnits"];
+            closingMinor: components["schemas"]["MinorUnits"];
+            changeMinor: components["schemas"]["MinorUnits"];
+            maxDrawdownMinor: components["schemas"]["MinorUnits"];
+            /** Format: int64 */
+            maxDrawdownBp: number;
+            viewOnly: boolean;
+        };
+        /** @description The accounts of one currency added up (never across currencies) */
+        AnalysisEquityTotal: {
+            currency: string;
+            accounts: number;
+            openingMinor: components["schemas"]["MinorUnits"];
+            closingMinor: components["schemas"]["MinorUnits"];
+            changeMinor: components["schemas"]["MinorUnits"];
+        };
+        AnalysisPoint: {
+            /** Format: date-time */
+            at: string;
+            equity: components["schemas"]["MinorUnits"];
+        };
+        /** @description The recorded equity of the accounts of one currency (each account joins at its first snapshot) */
+        AnalysisCurve: {
+            currency: string;
+            accounts: number;
+            points: components["schemas"]["AnalysisPoint"][];
+            maxDrawdownMinor: components["schemas"]["MinorUnits"];
+            /** Format: int64 */
+            maxDrawdownBp: number;
+        };
+        AnalysisRisk: {
+            killSwitches: number;
+            killResets: number;
+            /** @description the daily loss limit stopped new entries */
+            dailyStops: number;
+            limitChanges: number;
+            forceCloses: number;
+            /** @description candidates the risk engine refused */
+            riskRefusals: number;
+        };
+        AnalysisCount: {
+            label: string;
+            n: number;
+        };
+        AnalysisLlm: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            knownCostUsd: components["schemas"]["UsdCost"];
+            /**
+             * Format: int64
+             * @description calls without a price (not in knownCostUsd)
+             */
+            costUnknownCalls: number;
+        };
+        AnalysisSection: {
+            heading: string;
+            paragraphs: string[];
+        };
+        /**
+         * @description An analysis of a period (R31). Trade figures are cactusTrade's own closed trades in US
+         *     dollars after the fees eToro reported; equity is per currency and never added across
+         *     currencies. Figures describe past results only.
+         */
+        Analysis: {
+            preset: components["schemas"]["AnalysisPreset"];
+            /**
+             * Format: date-time
+             * @description the start of the first risk day
+             */
+            from: string;
+            /**
+             * Format: date-time
+             * @description the end of the last risk day (exclusive)
+             */
+            to: string;
+            firstDay: string;
+            lastDay: string;
+            days: number;
+            bucket: components["schemas"]["AnalysisBucket"];
+            title: string;
+            /** Format: date-time */
+            generatedAt: string;
+            /** @description no account was chosen: every account you can see */
+            allAccounts: boolean;
+            scope: string;
+            accounts: components["schemas"]["AnalysisAccount"][];
+            totals: components["schemas"]["AnalysisGroup"];
+            /** @description closed trades of positions cactusTrade did not open (not counted) */
+            foreignTrades: number;
+            /**
+             * Format: int64
+             * @description cactusTrade's share of all closed trades in basis points (absent when there were none)
+             */
+            oursShareBp?: number;
+            tradeAccounts: number;
+            groupings: components["schemas"]["AnalysisGrouping"][];
+            equity: components["schemas"]["AnalysisEquity"][];
+            equityTotals: components["schemas"]["AnalysisEquityTotal"][];
+            curves: components["schemas"]["AnalysisCurve"][];
+            risk: components["schemas"]["AnalysisRisk"];
+            decisions: components["schemas"]["AnalysisCount"][];
+            decisionsTotal: number;
+            verdicts: components["schemas"]["AnalysisCount"][];
+            llm: components["schemas"]["AnalysisLlm"];
+            /** @description some activity counts are lower bounds */
+            activityCapped: boolean;
+            narrative: components["schemas"]["AnalysisSection"][];
+            notes: string[];
         };
     };
     responses: {
@@ -6628,6 +6851,79 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getAnalysis: {
+        parameters: {
+            query?: {
+                /** @description absent = custom when from or to is given, else this month */
+                preset?: components["schemas"]["AnalysisPreset"];
+                /** @description custom range: the first risk day, YYYY-MM-DD */
+                from?: string;
+                /** @description custom range: the last risk day (inclusive), YYYY-MM-DD, not after today */
+                to?: string;
+                /** @description the accounts (repeat the parameter; absent = every account you can see). An account you cannot see is 404. */
+                accountId?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The analysis */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Analysis"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            413: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+        };
+    };
+    getAnalysisPdf: {
+        parameters: {
+            query?: {
+                /** @description absent = custom when from or to is given, else this month */
+                preset?: components["schemas"]["AnalysisPreset"];
+                /** @description custom range: the first risk day, YYYY-MM-DD */
+                from?: string;
+                /** @description custom range: the last risk day (inclusive), YYYY-MM-DD, not after today */
+                to?: string;
+                /** @description the accounts (repeat the parameter; absent = every account you can see). An account you cannot see is 404. */
+                accountId?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The PDF (sent as an attachment, never cached) */
+            200: {
+                headers: {
+                    /** @description attachment with the file name */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            413: components["responses"]["Problem"];
             422: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };

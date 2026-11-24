@@ -49,6 +49,7 @@ tags:
   - name: history
   - name: live
   - name: statements
+  - name: analysis
 security:
   - sessionCookie: []
   - bearerApiKey: []
@@ -2117,6 +2118,76 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/analysis:
+    get:
+      tags: [analysis]
+      operationId: getAnalysis
+      summary: Analysis of the trades of a period, grouped and explained (R31)
+      description: |
+        cactusTrade's closed trades of the period on the chosen accounts, grouped by date
+        (bucket: day up to 31 days, week up to 186, month beyond), exchange, trading account,
+        theme, direction, playbook and outcome; equity and drawdown per currency (never added
+        across currencies); risk events; agent activity; and a narrative written from these
+        figures (no LLM). Viewer, with view access to every account. Figures describe past
+        results only.
+      parameters:
+        - { name: preset, in: query, description: "absent = custom when from or to is given, else this month", schema: { $ref: "#/components/schemas/AnalysisPreset" } }
+        - { name: from, in: query, description: "custom range: the first risk day, YYYY-MM-DD", schema: { type: string, maxLength: 10 } }
+        - { name: to, in: query, description: "custom range: the last risk day (inclusive), YYYY-MM-DD, not after today", schema: { type: string, maxLength: 10 } }
+        - name: accountId
+          in: query
+          description: "the accounts (repeat the parameter; absent = every account you can see). An account you cannot see is 404."
+          style: form
+          explode: true
+          schema: { type: array, maxItems: 50, items: { type: string, maxLength: 64 } }
+      responses:
+        "200":
+          description: The analysis
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Analysis" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/analysis.pdf:
+    get:
+      tags: [analysis]
+      operationId: getAnalysisPdf
+      summary: The analysis as a one-page PDF (R31)
+      description: |
+        The same analysis as `GET /api/v1/analysis`, laid out on one page whose height is
+        chosen to fit the content (A4 when it fits). Sent as an attachment, never cached;
+        counts as an export for the rate limits.
+      parameters:
+        - { name: preset, in: query, description: "absent = custom when from or to is given, else this month", schema: { $ref: "#/components/schemas/AnalysisPreset" } }
+        - { name: from, in: query, description: "custom range: the first risk day, YYYY-MM-DD", schema: { type: string, maxLength: 10 } }
+        - { name: to, in: query, description: "custom range: the last risk day (inclusive), YYYY-MM-DD, not after today", schema: { type: string, maxLength: 10 } }
+        - name: accountId
+          in: query
+          description: "the accounts (repeat the parameter; absent = every account you can see). An account you cannot see is 404."
+          style: form
+          explode: true
+          schema: { type: array, maxItems: 50, items: { type: string, maxLength: 64 } }
+      responses:
+        "200":
+          description: The PDF (sent as an attachment, never cached)
+          headers:
+            Content-Disposition:
+              description: attachment with the file name
+              schema: { type: string }
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/audit:
     get:
       tags: [audit]
@@ -3964,3 +4035,167 @@ components:
         title: { type: string }
         recipients: { type: integer, description: "e-mails queued" }
         files: { type: array, items: { type: string } }
+    AnalysisPreset:
+      type: string
+      enum: [today, week, month, last_month, custom, all]
+      description: "today: today's risk day; week: Monday to Friday of this ISO week; month / last_month: a calendar month; custom: from–to; all: the last 400 risk days"
+    AnalysisBucket:
+      type: string
+      enum: [day, week, month]
+    AnalysisDimension:
+      type: string
+      enum: [date, exchange, account, theme, direction, playbook, outcome]
+    AnalysisAccount:
+      type: object
+      required: [id, name, platform, mode, viewOnly]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        platform: { type: string, description: "the platform's name (eToro, Trading 212 …)" }
+        mode: { $ref: "#/components/schemas/TradingMode" }
+        viewOnly: { type: boolean }
+    AnalysisTrade:
+      type: object
+      required: [account, symbol, positionId, closedAt, netCents]
+      properties:
+        account: { type: string }
+        symbol: { type: string, description: "empty when the share is not cached" }
+        positionId: { type: integer, format: int64 }
+        closedAt: { type: string, format: date-time }
+        netCents: { $ref: "#/components/schemas/Cents" }
+    AnalysisGroup:
+      type: object
+      description: The figures of one group of cactusTrade's closed trades (US dollars)
+      required: [key, label, trades, wins, losses, breakeven, grossCents, feesCents, netCents, feesUnknownTrades]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        trades: { type: integer }
+        wins: { type: integer }
+        losses: { type: integer }
+        breakeven: { type: integer }
+        winRateBp: { type: integer, format: int64, description: "wins / trades in basis points (absent when there are no trades)" }
+        grossCents: { $ref: "#/components/schemas/Cents" }
+        feesCents: { $ref: "#/components/schemas/Cents" }
+        netCents: { $ref: "#/components/schemas/Cents" }
+        feesUnknownTrades: { type: integer, description: "trades whose fees eToro did not report (in neither fees nor gross)" }
+        avgNetCents:
+          allOf: [{ $ref: "#/components/schemas/Cents" }]
+          description: "realised P&L per trade (absent when there are no trades)"
+        best: { $ref: "#/components/schemas/AnalysisTrade" }
+        worst: { $ref: "#/components/schemas/AnalysisTrade" }
+    AnalysisGrouping:
+      type: object
+      required: [dimension, title, groups]
+      properties:
+        dimension: { $ref: "#/components/schemas/AnalysisDimension" }
+        title: { type: string }
+        groups: { type: array, items: { $ref: "#/components/schemas/AnalysisGroup" } }
+    AnalysisEquity:
+      type: object
+      description: One account's first and last snapshot in the period (minor units of its currency)
+      required: [account, currency, known, openingMinor, closingMinor, changeMinor, maxDrawdownMinor, maxDrawdownBp, viewOnly]
+      properties:
+        account: { type: string }
+        currency: { type: string }
+        known: { type: boolean, description: "a snapshot was recorded in the period" }
+        openingMinor: { $ref: "#/components/schemas/MinorUnits" }
+        closingMinor: { $ref: "#/components/schemas/MinorUnits" }
+        changeMinor: { $ref: "#/components/schemas/MinorUnits" }
+        maxDrawdownMinor: { $ref: "#/components/schemas/MinorUnits" }
+        maxDrawdownBp: { type: integer, format: int64 }
+        viewOnly: { type: boolean }
+    AnalysisEquityTotal:
+      type: object
+      description: The accounts of one currency added up (never across currencies)
+      required: [currency, accounts, openingMinor, closingMinor, changeMinor]
+      properties:
+        currency: { type: string }
+        accounts: { type: integer }
+        openingMinor: { $ref: "#/components/schemas/MinorUnits" }
+        closingMinor: { $ref: "#/components/schemas/MinorUnits" }
+        changeMinor: { $ref: "#/components/schemas/MinorUnits" }
+    AnalysisPoint:
+      type: object
+      required: [at, equity]
+      properties:
+        at: { type: string, format: date-time }
+        equity: { $ref: "#/components/schemas/MinorUnits" }
+    AnalysisCurve:
+      type: object
+      description: The recorded equity of the accounts of one currency (each account joins at its first snapshot)
+      required: [currency, accounts, points, maxDrawdownMinor, maxDrawdownBp]
+      properties:
+        currency: { type: string }
+        accounts: { type: integer }
+        points: { type: array, items: { $ref: "#/components/schemas/AnalysisPoint" } }
+        maxDrawdownMinor: { $ref: "#/components/schemas/MinorUnits" }
+        maxDrawdownBp: { type: integer, format: int64 }
+    AnalysisRisk:
+      type: object
+      required: [killSwitches, killResets, dailyStops, limitChanges, forceCloses, riskRefusals]
+      properties:
+        killSwitches: { type: integer }
+        killResets: { type: integer }
+        dailyStops: { type: integer, description: "the daily loss limit stopped new entries" }
+        limitChanges: { type: integer }
+        forceCloses: { type: integer }
+        riskRefusals: { type: integer, description: "candidates the risk engine refused" }
+    AnalysisCount:
+      type: object
+      required: [label, n]
+      properties:
+        label: { type: string }
+        n: { type: integer }
+    AnalysisLlm:
+      type: object
+      required: [calls, failed, inputTokens, outputTokens, knownCostUsd, costUnknownCalls]
+      properties:
+        calls: { type: integer, format: int64 }
+        failed: { type: integer, format: int64 }
+        inputTokens: { type: integer, format: int64 }
+        outputTokens: { type: integer, format: int64 }
+        knownCostUsd: { $ref: "#/components/schemas/UsdCost" }
+        costUnknownCalls: { type: integer, format: int64, description: "calls without a price (not in knownCostUsd)" }
+    AnalysisSection:
+      type: object
+      required: [heading, paragraphs]
+      properties:
+        heading: { type: string }
+        paragraphs: { type: array, items: { type: string } }
+    Analysis:
+      type: object
+      description: |
+        An analysis of a period (R31). Trade figures are cactusTrade's own closed trades in US
+        dollars after the fees eToro reported; equity is per currency and never added across
+        currencies. Figures describe past results only.
+      required: [preset, from, to, firstDay, lastDay, days, bucket, title, generatedAt, allAccounts, scope, accounts, totals, foreignTrades, tradeAccounts, groupings, equity, equityTotals, curves, risk, decisions, decisionsTotal, verdicts, llm, activityCapped, narrative, notes]
+      properties:
+        preset: { $ref: "#/components/schemas/AnalysisPreset" }
+        from: { type: string, format: date-time, description: "the start of the first risk day" }
+        to: { type: string, format: date-time, description: "the end of the last risk day (exclusive)" }
+        firstDay: { type: string }
+        lastDay: { type: string }
+        days: { type: integer }
+        bucket: { $ref: "#/components/schemas/AnalysisBucket" }
+        title: { type: string }
+        generatedAt: { type: string, format: date-time }
+        allAccounts: { type: boolean, description: "no account was chosen: every account you can see" }
+        scope: { type: string }
+        accounts: { type: array, items: { $ref: "#/components/schemas/AnalysisAccount" } }
+        totals: { $ref: "#/components/schemas/AnalysisGroup" }
+        foreignTrades: { type: integer, description: "closed trades of positions cactusTrade did not open (not counted)" }
+        oursShareBp: { type: integer, format: int64, description: "cactusTrade's share of all closed trades in basis points (absent when there were none)" }
+        tradeAccounts: { type: integer }
+        groupings: { type: array, items: { $ref: "#/components/schemas/AnalysisGrouping" } }
+        equity: { type: array, items: { $ref: "#/components/schemas/AnalysisEquity" } }
+        equityTotals: { type: array, items: { $ref: "#/components/schemas/AnalysisEquityTotal" } }
+        curves: { type: array, items: { $ref: "#/components/schemas/AnalysisCurve" } }
+        risk: { $ref: "#/components/schemas/AnalysisRisk" }
+        decisions: { type: array, items: { $ref: "#/components/schemas/AnalysisCount" } }
+        decisionsTotal: { type: integer }
+        verdicts: { type: array, items: { $ref: "#/components/schemas/AnalysisCount" } }
+        llm: { $ref: "#/components/schemas/AnalysisLlm" }
+        activityCapped: { type: boolean, description: "some activity counts are lower bounds" }
+        narrative: { type: array, items: { $ref: "#/components/schemas/AnalysisSection" } }
+        notes: { type: array, items: { type: string } }

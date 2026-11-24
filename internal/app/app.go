@@ -81,6 +81,9 @@ type Deps struct {
 	// Statements renders trading statements (R30: PDF). nil = no statements (preview and
 	// sending answer "unavailable"; the schedule loop does nothing).
 	Statements ports.StatementRenderer
+	// Analysis renders the analysis page as a one-page PDF (R31). nil = no PDF export (the
+	// analysis itself still works; the export answers "unavailable").
+	Analysis ports.AnalysisRenderer
 	// Bus carries live events to the dashboard stream (PLAN 6.6b): every stored event, every
 	// stored order transition, agent state writes and the supervisor's portfolio reads. It is
 	// a view only: nothing decides on it, and Publish must never block (a full subscriber

@@ -281,6 +281,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Researcher:   reviewer,
 		Mailer:       mail.New(time.Now, host),
 		Statements:   pdf.New(),
+		Analysis:     pdf.New(), // R31: the analysis page as a one-page PDF
 		Bus:          bus,
 		MailFallback: fallback.get,
 		Reload: func(ctx context.Context) error {
