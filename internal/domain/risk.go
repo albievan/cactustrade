@@ -308,7 +308,8 @@ func AssessEntry(in RiskInput) RiskDecision {
 	if stopDist < 0 {
 		stopDist = -stopDist
 	}
-	if maxBySto := Cents(int64(allowance) * int64(in.Entry) / stopDist); maxBySto < size {
+	// mulDiv saturates instead of overflowing (review m1): huge figures never wrap negative.
+	if maxBySto := Cents(mulDiv(int64(allowance), int64(in.Entry), stopDist)); maxBySto < size {
 		size = maxBySto
 	}
 	switch {

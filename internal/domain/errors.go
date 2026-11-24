@@ -62,8 +62,9 @@ var (
 // done at the broker. errors.Is(err, ErrNotAccepted) is true, and so is errors.Is for the
 // broker's own error it wraps (e.g. ErrNotFound for an unknown position).
 type NotAcceptedError struct {
-	// RateLimited: the broker answered 429 before processing the request. Only then may an
-	// open order be sent again, with the same request id, after RetryAfter (OD2).
+	// RateLimited: the broker answered 429. A close or cancel may be sent again with the same
+	// request id after RetryAfter; an open never is (review M3): whether eToro answers a 429
+	// before processing (U7) is unverified, so an open is looked up after RetryAfter instead.
 	RateLimited bool
 	RetryAfter  time.Duration
 	Reason      string // the broker's message (never contains a key)

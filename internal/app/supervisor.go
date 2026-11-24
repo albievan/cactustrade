@@ -359,6 +359,9 @@ func (s *Service) trip(ctx context.Context, a domain.Account, why string) error 
 // is announced again).
 func (s *Service) tripLocked(ctx context.Context, a domain.Account, p Principal, why string) (already bool, err error) {
 	now := s.d.Clock.Now().UTC()
+	// Latched in memory first: it holds even if neither write below reaches the database
+	// (review m3), until ResetKill.
+	s.rt.latchKill(a.ID)
 	already, err = s.persistKill(ctx, a.ID, why, now)
 	if serr := s.d.Store.Settings().Set(ctx, agentStateKey(a.ID), string(domain.AgentKilled), now); serr != nil {
 		err = errors.Join(err, serr)

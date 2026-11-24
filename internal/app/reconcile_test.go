@@ -279,6 +279,8 @@ func TestReconcileCloseAndCancelOrders(t *testing.T) {
 	x.b.Positions = slices.DeleteFunc(x.b.Positions, func(p domain.Position) bool {
 		return p.ID == a1.PositionID || p.ID == a2.PositionID
 	})
+	// Old enough for a missing position to prove its close (U11).
+	x.clock.Advance(fillVisibleAfter)
 	if _, err := x.svc.Reconcile(x.ctx, x.a.ID); err != nil {
 		t.Fatal(err)
 	}

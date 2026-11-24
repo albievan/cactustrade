@@ -70,7 +70,7 @@ func TestOrderTransitions(t *testing.T) {
 }
 
 func TestOrderSendLimit(t *testing.T) {
-	for kind, max := range map[OrderKind]int{OrderOpen: 3, OrderClose: 5, OrderCancel: 3} {
+	for kind, max := range map[OrderKind]int{OrderOpen: 1, OrderClose: 5, OrderCancel: 3} {
 		o := Order{RequestID: "r", Kind: kind, State: OrderCreated}
 		var err error
 		for i := range max {

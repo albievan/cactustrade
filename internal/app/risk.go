@@ -114,17 +114,14 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	if p.Via != ViaSession {
 		return domain.RiskLimits{}, fmt.Errorf("risk limits can only be changed in the web UI: %w", domain.ErrForbidden)
 	}
-	// Under the agent's control lock: a concurrent StartAgent either sees these limits or
-	// makes this change fail (PLAN 4.11).
-	locks := s.rt.agent(v.ID)
-	locks.ctl.Lock()
-	defer locks.ctl.Unlock()
-	if st := s.agentState(ctx, v.ID); st != domain.AgentStopped {
-		return domain.RiskLimits{}, fmt.Errorf("stop the agent before changing the limits (it is %s): %w", st, domain.ErrConflict)
+	if err := s.limitsChangeable(ctx, v.ID); err != nil {
+		return domain.RiskLimits{}, err
 	}
 	if err := l.Validate(); err != nil {
 		return domain.RiskLimits{}, err
 	}
+	// eToro's equity is read before the control lock is taken (review m5): a Kill never
+	// waits for this call.
 	if l.TradingBudget > 0 {
 		if err := s.needBroker(); err != nil {
 			return domain.RiskLimits{}, err
@@ -136,6 +133,14 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 		if eq := pf.Equity(); l.TradingBudget > eq {
 			return domain.RiskLimits{}, domain.Invalid("tradingBudgetCents", fmt.Sprintf("must not exceed the account equity ($%s)", eq))
 		}
+	}
+	// Under the agent's control lock, checked again: a concurrent StartAgent or Kill either
+	// sees these limits or makes this change fail (PLAN 4.11).
+	locks := s.rt.agent(v.ID)
+	locks.ctl.Lock()
+	defer locks.ctl.Unlock()
+	if err := s.limitsChangeable(ctx, v.ID); err != nil {
+		return domain.RiskLimits{}, err
 	}
 	old := s.riskLimits(ctx, v.ID)
 	b, err := json.Marshal(toLimitsJSON(l))
@@ -149,4 +154,24 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	s.audit(ctx, p, "risk.limits_changed", v.ID, "old="+string(ob)+" new="+string(b))
 	s.emitFor(ctx, v.ID, p.Username, "risk.limits_changed", domain.SeverityWarning, "Risk limits of "+v.Name+" changed", "trading budget $"+l.TradingBudget.String())
 	return l, nil
+}
+
+// limitsChangeable refuses a change of limits unless the stored agent state is stopped and no
+// kill is latched. The state is read directly (review m2): an unreadable state is a refusal,
+// never "stopped"; only a state never stored counts as stopped.
+func (s *Service) limitsChangeable(ctx context.Context, accountID string) error {
+	v, err := s.d.Store.Settings().Get(ctx, agentStateKey(accountID))
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		v = string(domain.AgentStopped)
+	case err != nil:
+		return fmt.Errorf("reading the agent state: %w: %w", err, domain.ErrUnavailable)
+	}
+	if st := domain.AgentState(v); st != domain.AgentStopped {
+		return fmt.Errorf("stop the agent before changing the limits (it is %s): %w", st, domain.ErrConflict)
+	}
+	if s.rt.killLatched(accountID) {
+		return fmt.Errorf("the kill switch is on: %w", domain.ErrConflict)
+	}
+	return nil
 }

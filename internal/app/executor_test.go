@@ -173,8 +173,9 @@ func TestExecutorPlaceEntry(t *testing.T) {
 		{name: "long filled", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimFill}, wantState: domain.OrderFilled, opens: 1, positions: 1, event: "order.filled"},
 		{name: "short filled", dir: domain.Short, script: []fakes.SimOutcome{fakes.SimFill}, wantState: domain.OrderFilled, opens: 1, positions: 1, event: "order.filled"},
 		{name: "pending then filled", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimPendingThenFill}, pending: 3, wantState: domain.OrderFilled, opens: 1, positions: 1, event: "order.sent"},
-		{name: "429 then filled: two opens, one id", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimRateLimited, fakes.SimFill}, wantState: domain.OrderFilled, opens: 2, positions: 1, minWait: fakes.SimRetryAfter},
-		{name: "429 three times: rejected", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimRateLimited, fakes.SimRateLimited, fakes.SimRateLimited}, wantState: domain.OrderRejected, wantErr: domain.ErrNotAccepted, opens: 3, event: "order.rejected"},
+		// review M3: an open is never resent, not even after a 429
+		{name: "429 not processed: one open, abandoned after 2 min", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimRateLimited, fakes.SimFill}, wantState: domain.OrderAbandoned, opens: 1, minWait: lookupGiveUp, event: "order.abandoned"},
+		{name: "429 processed: one open, adopted by lookup", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimRateLimitedProcessed}, wantState: domain.OrderFilled, opens: 1, positions: 1, minWait: fakes.SimRetryAfter, event: "order.filled"},
 		{name: "lost answer: one open, resolved by lookup", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimLostAnswer}, wantState: domain.OrderFilled, opens: 1, positions: 1, event: "order.unknown"},
 		{name: "5xx and 404 for 2 min: abandoned, never resent", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimServerError}, wantState: domain.OrderAbandoned, opens: 1, minWait: lookupGiveUp, event: "order.abandoned"},
 		{name: "rejected: reservation freed", dir: domain.Long, script: []fakes.SimOutcome{fakes.SimReject}, wantState: domain.OrderRejected, opens: 1, event: "order.rejected"},
@@ -522,7 +523,7 @@ func TestExecutor429Edges(t *testing.T) {
 			t.Fatalf("an unknown order must keep its reservation and block entries: %+v", r)
 		}
 	})
-	t.Run("lease lost while waiting to resend: not resent", func(t *testing.T) {
+	t.Run("lease lost while waiting after a 429: still one open", func(t *testing.T) {
 		x := newExecEnv(t)
 		x.b.OpenScript = []fakes.SimOutcome{fakes.SimRateLimited}
 		x.svc.d.Sleep = func(ctx context.Context, d time.Duration) error {
@@ -531,7 +532,7 @@ func TestExecutor429Edges(t *testing.T) {
 			return x.store.AgentLeases().Acquire(ctx, x.a.ID, "other-process", now, now.Add(domain.LeaseTTL))
 		}
 		o, err := x.svc.placeEntry(x.ctx, x.a, x.entry(domain.Long), domain.DefaultRiskLimits)
-		if !errors.Is(err, domain.ErrConflict) || x.b.Opens != 1 || o.State != domain.OrderSent {
+		if err != nil || x.b.Opens != 1 || o.State != domain.OrderAbandoned {
 			t.Fatalf("= %+v %v opens=%d", o, err, x.b.Opens)
 		}
 	})
@@ -652,6 +653,8 @@ func TestExecutorClosePosition(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			x := newExecEnv(t)
 			ap := x.openPosition(t, instNYSE, domain.Long)
+			// Old enough for its absence from the portfolio to prove it closed (U11).
+			x.clock.Advance(fillVisibleAfter)
 			x.b.CloseScript = tt.script
 			o, err := x.svc.closePosition(x.ctx, x.a, ap, "test", closePolls)
 			if (tt.wantErr == nil && err != nil) || (tt.wantErr != nil && !errors.Is(err, tt.wantErr)) {
@@ -687,10 +690,20 @@ func TestExecutorCloseEdges(t *testing.T) {
 	t.Run("position already gone at eToro", func(t *testing.T) {
 		x := newExecEnv(t)
 		ap := x.openPosition(t, instNYSE, domain.Long)
+		x.clock.Advance(fillVisibleAfter)
 		x.b.Positions = nil
 		o, err := x.svc.closePosition(x.ctx, x.a, ap, "test", closePolls)
 		if err != nil || o.State != domain.OrderRejected || len(x.agentPositions(t)) != 0 {
 			t.Fatalf("= %+v %v", o, err)
+		}
+	})
+	t.Run("a young position missing from the portfolio is not taken for closed", func(t *testing.T) {
+		x := newExecEnv(t)
+		ap := x.openPosition(t, instNYSE, domain.Long)
+		x.b.Positions = nil
+		o, err := x.svc.closePosition(x.ctx, x.a, ap, "test", closePolls)
+		if !errors.Is(err, domain.ErrNotAccepted) || o.State != domain.OrderRejected || len(x.agentPositions(t)) != 1 {
+			t.Fatalf("= %+v %v, agent positions %+v", o, err, x.agentPositions(t))
 		}
 	})
 	t.Run("a close in flight is not sent twice", func(t *testing.T) {
