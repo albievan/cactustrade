@@ -77,7 +77,7 @@ func (x *execEnv) account(t *testing.T, name string, mode domain.TradingMode) do
 }
 
 func (x *execEnv) entry(d domain.Direction) entryRequest {
-	r := entryRequest{Direction: d, Instrument: instNYSE, Amount: 100_00, Entry: 100_000_000, StopLoss: 97_000_000, TakeProfit: 106_000_000, PortfolioAt: x.clock.Now()}
+	r := entryRequest{RequestID: x.svc.d.Random.ID(), Direction: d, Instrument: instNYSE, Amount: 100_00, Entry: 100_000_000, StopLoss: 97_000_000, TakeProfit: 106_000_000, PortfolioAt: x.clock.Now()}
 	if d == domain.Short {
 		r.StopLoss, r.TakeProfit = 103_000_000, 94_000_000
 	}

@@ -135,3 +135,17 @@ describe("AgentPanel", () => {
     expect(calls.some((c) => c.method === "POST" && c.url === "/api/v1/agent/start")).toBe(true);
   });
 });
+
+describe("AgentPanel kill switch", () => {
+  it("stays usable while another action (reconcile) is running", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/agent/reconcile")) return new Promise<Response>(() => undefined); // never answers
+      return new Response(JSON.stringify(panel({ state: "running" })), { status: 200 });
+    });
+    render(<AgentPanel />);
+    fireEvent.click(await screen.findByLabelText("Reconcile with eToro"));
+    await waitFor(() => expect(screen.getByLabelText("Start the agent")).toBeDisabled());
+    expect(screen.getByLabelText("Kill switch")).toBeEnabled();
+  });
+});

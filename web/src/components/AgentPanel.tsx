@@ -30,7 +30,9 @@ export function AgentPanel() {
   }, []);
   useEffect(() => {
     void load();
-    const t = window.setInterval(() => void load(), 15_000);
+    // Each refresh costs one eToro portfolio read (shared quota with the supervisor), so a
+    // hidden tab does not poll.
+    const t = window.setInterval(() => { if (!document.hidden) void load(); }, 15_000);
     return () => window.clearInterval(t);
   }, [load]);
 
@@ -84,7 +86,7 @@ export function AgentPanel() {
               </button>
             </div>
             <button className="btn btn-danger btn-sm" title="Kill switch: stop entries and close cactusTrade's positions" aria-label="Kill switch"
-              disabled={off || !c.kill} onClick={() => setDialog("kill")}>
+              disabled={busy === "kill" || gated || !c.kill} onClick={() => setDialog("kill")}>
               <i className="bi bi-x-octagon-fill" />
             </button>
             {killed && c.reset && (

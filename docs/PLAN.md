@@ -794,6 +794,19 @@ Verification (2026-11-24): `make check` green — gofumpt, golangci-lint 0 issue
 `llm_calls`, `decisions`, `decision_log_cascade` and the new usage aggregation), govulncheck
 (no vulnerabilities), contract drift in sync, `pnpm -C web check` (14 files, 44 tests).
 
+
+### Pre-deploy review (2026-11-24): fixed and open items
+
+Fixed before deploy: the kill switch stays enabled while another panel action runs
+(MAJOR); `placeEntry` refuses an entry without the decision's request id; a hidden tab
+does not poll the agent status (each poll is one eToro portfolio read). Open MINORs, for
+phase 6: cache the status equity per account (~10 s) so many tabs cannot crowd the
+supervisor's quota; refuse StartAgent (or show it) when the agent loop is not running after
+a failed ResumeAgents; read equity before the control lock in ResetKill (as m5 did for
+SetRiskLimits); return `canEdit` from GET /risk-limits instead of computing it in React;
+replace the remaining `window.confirm` calls (System, ApiKeys, Themes, Users, Accounts)
+with dialogs.
+
 ## Phase 6 — live dashboard, history, exports — `todo`
 
 - 6.1 SSE stream: equity, cash, budget, PnL, positions, orders/fills feed, regimes, agent

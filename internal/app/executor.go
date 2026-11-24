@@ -289,9 +289,11 @@ func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryReque
 	if rc := s.Reconciled(a.ID); !rc.OK {
 		return domain.Order{}, fmt.Errorf("executor.placeEntry: account not reconciled (%s): %w", rc.Reason, domain.ErrUnavailable)
 	}
+	// The request id is the decision's, chosen and stored (pending decision) by the caller
+	// before this call; an entry without one is refused, so nothing can be sent unlogged.
 	id := r.RequestID
 	if id == "" {
-		id = s.d.Random.ID()
+		return domain.Order{}, fmt.Errorf("executor.placeEntry: no request id (the decision must be stored first): %w", domain.ErrInvalid)
 	}
 	o, err := domain.NewOrder(domain.Order{
 		RequestID: id, AccountID: a.ID, Mode: a.Mode, Kind: domain.OrderOpen,
