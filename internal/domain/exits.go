@@ -15,6 +15,9 @@ const (
 	ExitStopWrongSide ExitReason = "stop_wrong_side" // a stop that cannot limit the loss
 	ExitNoSession     ExitReason = "no_session"      // unknown market or calendar error
 	ExitFlatten       ExitReason = "flatten"         // the session ends soon or is not on
+	// ExitKilled: the kill switch is on; every position cactusTrade opened is closed. Set by
+	// the supervisor, not by ExitsDue.
+	ExitKilled ExitReason = "kill_switch"
 )
 
 // MarketSession is a calendar answer for one instrument's market at the moment of the check.
@@ -72,4 +75,29 @@ func exitReason(p Position, s MarketSession, now time.Time, l RiskLimits) (ExitR
 		return ExitFlatten, fmt.Sprintf("the session ends at %s (flatten %s before)", s.Close.UTC().Format(time.RFC3339), l.FlattenBeforeClose)
 	}
 	return "", ""
+}
+
+// SessionExitsDue is ExitsDue for when eToro's portfolio cannot be read: only the locally
+// recorded positions are known, without their stops or settlement, so only the session rule
+// applies (no known session, not trading, not open yet, or within FlattenBeforeClose of the
+// close). The stop and shape checks wait for the next successful portfolio read; a transient
+// read failure therefore never closes a position that is not due by the clock.
+func SessionExitsDue(positions []AgentPosition, sessions map[InstrumentID]MarketSession, now time.Time, l RiskLimits) []Exit {
+	if l.FlattenBeforeClose < minFlatten {
+		l.FlattenBeforeClose = DefaultRiskLimits.FlattenBeforeClose
+	}
+	var out []Exit
+	for _, p := range positions {
+		if !p.Open() {
+			continue
+		}
+		s := sessions[p.Instrument]
+		switch {
+		case !s.Known:
+			out = append(out, Exit{PositionID: p.PositionID, Instrument: p.Instrument, Reason: ExitNoSession, Detail: fmt.Sprintf("no market session known for instrument %d", p.Instrument)})
+		case !s.Trading || now.Before(s.Open) || FlattenDue(now, s.Close, s.Trading, l):
+			out = append(out, Exit{PositionID: p.PositionID, Instrument: p.Instrument, Reason: ExitFlatten, Detail: fmt.Sprintf("the session ends at %s (flatten %s before)", s.Close.UTC().Format(time.RFC3339), l.FlattenBeforeClose)})
+		}
+	}
+	return out
 }

@@ -69,6 +69,9 @@ type Deps struct {
 	// the app; ok=false when there is none.
 	Mailer       ports.Mailer
 	MailFallback func() (server domain.SMTPSettings, password string, ok bool)
+	// Sleep waits for d or until ctx ends (the executor's polls and back-offs, the
+	// supervisor's loop). nil = a real timer; tests pass one that advances their fake clock.
+	Sleep func(ctx context.Context, d time.Duration) error
 }
 
 // Config holds use-case settings.
@@ -79,6 +82,9 @@ type Config struct {
 	// PublicURL is the address users open the app at (https://host:port), for links in
 	// e-mails; "" switches password reset by e-mail off.
 	PublicURL string
+	// LeaseHolder names this process for the single-writer lease (D22); "" = a random id
+	// chosen on first use. Two processes must never share one.
+	LeaseHolder string
 }
 
 // Service implements the use cases.
@@ -89,6 +95,8 @@ type Service struct {
 	dummyHash string // verified against when a username is unknown (equal timing)
 	// evalOverride replaces the strategy in scanner tests.
 	evalOverride func(domain.InstrumentID, []domain.Candle) strategy.Decision
+	// rt is the in-memory execution state: reconciliation flags, supervisor bookkeeping.
+	rt *runtimeState
 }
 
 // New builds the service.
@@ -106,7 +114,25 @@ func New(d Deps, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("app.New: %w", err)
 	}
-	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy}, nil
+	if d.Sleep == nil {
+		d.Sleep = sleepCtx
+	}
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState()}, nil
+}
+
+// sleepCtx waits for d with a real timer, or until ctx ends.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 func (s *Service) authorize(p Principal, perm domain.Permission) error {

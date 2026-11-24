@@ -138,3 +138,39 @@ func TestExitsDue(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionExitsDue(t *testing.T) {
+	cl := t0.Add(2 * time.Hour)
+	open := MarketSession{Known: true, Trading: true, Open: t0.Add(-5 * time.Hour), Close: cl}
+	ap := func(id int64, inst InstrumentID) AgentPosition {
+		return AgentPosition{AccountID: "a", PositionID: id, Instrument: inst, Direction: Long}
+	}
+	closed := ap(9, 1)
+	closed.ClosedAt = t0
+	tests := []struct {
+		name string
+		sess MarketSession
+		now  time.Time
+		l    RiskLimits
+		want ExitReason
+	}{
+		{"in session", open, t0, DefaultRiskLimits, ""},
+		{"close-11 min", open, cl.Add(-11 * time.Minute), DefaultRiskLimits, ""},
+		{"close-10 min", open, cl.Add(-10 * time.Minute), DefaultRiskLimits, ExitFlatten},
+		{"before the open", open, open.Open.Add(-time.Second), DefaultRiskLimits, ExitFlatten},
+		{"holiday", MarketSession{Known: true}, t0, DefaultRiskLimits, ExitFlatten},
+		{"unknown", MarketSession{}, t0, DefaultRiskLimits, ExitNoSession},
+		{"invalid flatten falls back to 10 min", open, cl.Add(-10 * time.Minute), RiskLimits{}, ExitFlatten},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SessionExitsDue([]AgentPosition{ap(1, 1), closed}, map[InstrumentID]MarketSession{1: tt.sess}, tt.now, tt.l)
+			switch {
+			case tt.want == "" && len(got) != 0:
+				t.Fatalf("exits = %+v, want none", got)
+			case tt.want != "" && (len(got) != 1 || got[0].Reason != tt.want || got[0].PositionID != 1 || got[0].Detail == ""):
+				t.Fatalf("exits = %+v, want %s", got, tt.want)
+			}
+		})
+	}
+}
