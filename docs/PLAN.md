@@ -1476,6 +1476,9 @@ U1–U11 (demo, step 4.17) must be settled first.
 - **RU9:** extended-hours fills.
 - **RU10:** whether real `orders:lookup` takes `referenceId` the same way as demo.
 
+
+**Owner, 2026-11-25:** "i still need to see how the platform performes before i allow real money trading". Real trading stays off; 7.18 waits for an observation period on demo (the Analysis page, R31, and the statements, R30, are the record). 4.17 evidence so far: kill drill run by the owner 2026-11-25 08:51 UTC with **no** positions open (the 2-position drill, a short, and a restart mid-position are still open: they need the agent trading in session).
+
 ### Real-mode refusal sites today (each stays refusing until 7.18; tests that prove it)
 
 | # | Site | Refuses | Test today (kept) | Lifted in |
