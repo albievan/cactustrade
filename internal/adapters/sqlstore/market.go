@@ -16,19 +16,19 @@ import (
 type instruments struct{ db *sql.DB }
 
 const instrumentCols = "id, symbol, name, type, exchange_id, market, currency, eligible_real_long, " +
-	"eligibility_reason, min_position_cents, eligibility_checked_at"
+	"eligibility_reason, min_position_cents, eligible_short_cfd, short_eligibility_reason, min_short_cents, eligibility_checked_at"
 
 func scanInstrument(row interface{ Scan(...any) error }) (domain.Instrument, domain.Eligibility, error) {
 	var in domain.Instrument
 	var el domain.Eligibility
-	var id, minCents, checked int64
+	var id, minCents, minShort, checked int64
 	var market string
 	if err := row.Scan(&id, &in.Symbol, &in.Name, &in.Type, &in.ExchangeID, &market, &in.Currency,
-		&el.RealLong, &el.Reason, &minCents, &checked); err != nil {
+		&el.RealLong, &el.Reason, &minCents, &el.ShortCFD, &el.ShortReason, &minShort, &checked); err != nil {
 		return domain.Instrument{}, domain.Eligibility{}, notFound(err)
 	}
 	in.ID, in.Market = domain.InstrumentID(id), domain.Market(market)
-	el.Instrument, el.Symbol, el.MinPositionAmount = in.ID, in.Symbol, domain.Cents(minCents)
+	el.Instrument, el.Symbol, el.MinPositionAmount, el.MinShortAmount = in.ID, in.Symbol, domain.Cents(minCents), domain.Cents(minShort)
 	if checked != 0 {
 		el.CheckedAt = fromUS(checked)
 	}
@@ -45,13 +45,14 @@ func (r instruments) Upsert(ctx context.Context, in domain.Instrument, el domain
 	}
 	vals := []any{
 		in.Symbol, in.Name, in.Type, in.ExchangeID, string(in.Market), in.Currency, el.RealLong,
-		el.Reason, int64(el.MinPositionAmount), checked, us(at),
+		el.Reason, int64(el.MinPositionAmount), el.ShortCFD, clip(el.ShortReason, 200), int64(el.MinShortAmount), checked, us(at),
 	}
 	err := upsert(ctx, r.db,
 		"UPDATE instruments SET symbol = ?, name = ?, type = ?, exchange_id = ?, market = ?, currency = ?, "+
-			"eligible_real_long = ?, eligibility_reason = ?, min_position_cents = ?, eligibility_checked_at = ?, "+
+			"eligible_real_long = ?, eligibility_reason = ?, min_position_cents = ?, eligible_short_cfd = ?, "+
+			"short_eligibility_reason = ?, min_short_cents = ?, eligibility_checked_at = ?, "+
 			"updated_at = ? WHERE id = ?", append(vals, int64(in.ID)),
-		"INSERT INTO instruments ("+instrumentCols+", updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO instruments ("+instrumentCols+", updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		append([]any{int64(in.ID)}, vals...))
 	if err != nil {
 		return fmt.Errorf("instruments.Upsert: %w", err)
@@ -106,7 +107,8 @@ func (r watchlist) Remove(ctx context.Context, accountID string, id domain.Instr
 
 func (r watchlist) List(ctx context.Context, accountID string) ([]domain.WatchItem, error) {
 	rows, err := r.db.QueryContext(ctx, "SELECT i.id, i.symbol, i.name, i.type, i.exchange_id, i.market, i.currency, "+
-		"i.eligible_real_long, i.eligibility_reason, i.min_position_cents, i.eligibility_checked_at, w.added_by, w.added_at "+
+		"i.eligible_real_long, i.eligibility_reason, i.min_position_cents, i.eligible_short_cfd, i.short_eligibility_reason, "+
+		"i.min_short_cents, i.eligibility_checked_at, w.added_by, w.added_at "+
 		"FROM watchlist w JOIN instruments i ON i.id = w.instrument_id WHERE w.account_id = ? ORDER BY i.symbol, i.id", accountID)
 	if err != nil {
 		return nil, fmt.Errorf("watchlist.List: %w", err)

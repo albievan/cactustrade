@@ -375,9 +375,10 @@ func Run(t *testing.T, s ports.Store) {
 	t.Run("instruments_watchlist", func(t *testing.T) {
 		ir, wl := s.Instruments(), s.Watchlist()
 		aapl := domain.Instrument{ID: 1001, Symbol: "AAPL", Name: "Apple", Type: "Stocks", ExchangeID: 4, Market: domain.MarketNYSE, Currency: "USD"}
-		aplEl := domain.Eligibility{Instrument: 1001, Symbol: "AAPL", RealLong: true, MinPositionAmount: 1000, CheckedAt: t0}
+		// Both sides of the eligibility are stored (R33: the short side was lost, so no short ever passed).
+		aplEl := domain.Eligibility{Instrument: 1001, Symbol: "AAPL", RealLong: true, MinPositionAmount: 1000, ShortCFD: true, MinShortAmount: 1500, CheckedAt: t0}
 		barc := domain.Instrument{ID: 2002, Symbol: "BARC.L", Name: "Barclays", Type: "Stocks", Market: domain.MarketLSE}
-		barcEl := domain.Eligibility{Instrument: 2002, Symbol: "BARC.L", Reason: "not offered as a real share"}
+		barcEl := domain.Eligibility{Instrument: 2002, Symbol: "BARC.L", Reason: "not offered as a real share", ShortReason: "not offered as a CFD short at leverage 1"}
 		if _, _, err := ir.Get(ctx, 1001); !errors.Is(err, domain.ErrNotFound) {
 			t.Fatal("Get missing instrument")
 		}
