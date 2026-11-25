@@ -322,9 +322,10 @@ func TestAgentRolesAndRealAccounts(t *testing.T) {
 func TestOrderLabelsInTheContract(t *testing.T) {
 	o := toOrder(app.OrderView{Order: domain.Order{
 		RequestID: "r1", Mode: domain.ModeDemo, Kind: domain.OrderCancel, Direction: domain.Long, Instrument: 1002,
-		TargetOrderID: 396359836, State: domain.OrderFilled,
+		TargetOrderID: 396359836, State: domain.OrderFilled, Reason: "cancel accepted: pending for over 1m0s",
 	}, Symbol: "GOOG"})
-	if o.KindLabel != "Cancel request for GOOG (buy order 396359836)" || o.StateLabel != "accepted" || o.State != "filled" {
+	if o.KindLabel != "Cancel request for GOOG (buy order 396359836)" || o.StateLabel != "accepted by eToro" || o.State != "filled" ||
+		!strings.HasPrefix(o.Reason, "eToro accepted the request to cancel order 396359836.") {
 		t.Fatalf("order = %+v", o)
 	}
 }

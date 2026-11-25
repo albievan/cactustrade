@@ -2572,7 +2572,9 @@ type Order struct {
 	KindLabel  string      `json:"kindLabel"`
 	Mode       TradingMode `json:"mode"`
 	PositionId *int64      `json:"positionId,omitempty"`
-	Reason     string      `json:"reason"`
+
+	// Reason why the order is in its state, worded by the server; a cancel says what was asked of eToro, why cactusTrade asked, and that an accepted cancel does not mean the order was cancelled
+	Reason string `json:"reason"`
 
 	// RequestId our x-request-id, stored before the order is sent
 	RequestId string     `json:"requestId"`
@@ -2582,7 +2584,7 @@ type Order struct {
 	// State created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned
 	State string `json:"state"`
 
-	// StateLabel the state worded by the server: an open reads filled / partially filled; a cancel eToro took reads accepted, a close done (partly done); a refused cancel or close reads refused; otherwise the state's name
+	// StateLabel the state worded by the server: an open reads filled / partially filled; a cancel eToro took reads accepted by eToro, a close done (partly done); a refused cancel or close reads refused; otherwise the state's name
 	StateLabel string `json:"stateLabel"`
 
 	// StopLoss An exact decimal (prices and units, up to 6 places)

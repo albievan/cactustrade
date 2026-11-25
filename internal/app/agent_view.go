@@ -410,7 +410,7 @@ func (v OrderView) StateLabel() string {
 		switch v.State {
 		case domain.OrderFilled:
 			if v.Kind == domain.OrderCancel {
-				return "accepted"
+				return "accepted by eToro"
 			}
 			return "done"
 		case domain.OrderPartial:
@@ -420,6 +420,60 @@ func (v OrderView) StateLabel() string {
 		}
 	}
 	return strings.ReplaceAll(string(v.State), "_", " ")
+}
+
+// ReasonLabel words why the order is in its state for people. A cancel's stored reason (e.g.
+// "cancel accepted: pending for over 1m0s", or before it was answered just the cause) is said
+// in full: what was asked of eToro, why cactusTrade asked, and where the outcome shows. Other
+// reasons are shown as stored.
+func (v OrderView) ReasonLabel() string {
+	if v.Kind != domain.OrderCancel {
+		return v.Reason
+	}
+	cause := strings.TrimPrefix(v.Reason, "cancel accepted: ")
+	if rest, ok := strings.CutPrefix(cause, "pending for over "); ok {
+		if d, err := time.ParseDuration(rest); err == nil {
+			rest = humanDuration(d)
+		}
+		cause = "the order was still not filled after " + rest + " (cactusTrade cancels an entry order eToro has not filled by then, so its cash is not held up)"
+	}
+	target := "the order"
+	if v.TargetOrderID > 0 {
+		target = "order " + strconv.FormatInt(v.TargetOrderID, 10)
+	}
+	switch v.State {
+	case domain.OrderFilled:
+		why := ""
+		if cause != "" {
+			why = " Why it was asked: " + cause + "."
+		}
+		return "eToro accepted the request to cancel " + target + "." + why +
+			" This does not mean it was cancelled: if it had already filled, it stays filled (see that order's own line)."
+	case domain.OrderRejected:
+		if cause == "" {
+			return "eToro refused the request to cancel " + target + "."
+		}
+		return "eToro refused the request to cancel " + target + ": " + cause
+	}
+	if cause == "" {
+		return ""
+	}
+	return "Asked to cancel " + target + " because " + cause + "."
+}
+
+// humanDuration words a duration as "1 minute", "90 seconds" or "2 minutes".
+func humanDuration(d time.Duration) string {
+	switch {
+	case d%time.Minute == 0 && d >= time.Minute:
+		n := int(d / time.Minute)
+		if n == 1 {
+			return "1 minute"
+		}
+		return strconv.Itoa(n) + " minutes"
+	case d%time.Second == 0:
+		return strconv.Itoa(int(d/time.Second)) + " seconds"
+	}
+	return d.String()
 }
 
 // Orders lists an account's orders, newest first (view access; accountID "" = the current

@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { usd, type Order } from "../lib/api";
 import type { Live, LiveFigures, LiveRegime, LiveSnapshot } from "../lib/live";
 import type { RegimeText } from "../lib/api";
 import { FixButton } from "./FixButton";
 import { InfoCard } from "./InfoCard";
+import { DirectionBadge } from "./DirectionBadge";
 
 // The live dashboard's cards (PLAN 6.11). Every figure comes from the server's snapshot
 // (GET /api/v1/live); these components only format it. The only arithmetic here is the
@@ -206,26 +207,59 @@ export function LivePositions({ snapshot }: { snapshot: LiveSnapshot | null }) {
   );
 }
 
-// OrderFeed is the orders and fills feed (the events are in the activity log, R26).
+// OrderFeed is the orders and fills feed (the events are in the activity log, R26): each line
+// shows its direction (long or short), the feed can show long or short orders only, and
+// identical requests in a row (e.g. a cancel repeated every minute) are folded into one line.
 export function OrderFeed({ orders }: { orders: Order[] }) {
+  const [only, setOnly] = useState<"" | "long" | "short">("");
+  const count = (d: string) => orders.filter((o) => o.direction === d).length;
+  const lines = foldRepeats(only ? orders.filter((o) => o.direction === only) : orders);
+  const pick = (v: "" | "long" | "short", label: string, n: number) => (
+    <button type="button" className={"btn " + (only === v ? "btn-secondary" : "btn-outline-secondary")} aria-pressed={only === v}
+      onClick={() => setOnly(v)}>{label} <span className="badge text-bg-light ms-1">{n}</span></button>
+  );
   return (
     <div className="card h-100"><div className="card-body">
-      <h2 className="h5">Orders and fills</h2>
+      <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <h2 className="h5 mb-0 flex-grow-1">Orders and fills</h2>
+        {orders.length > 0 && (
+          <div className="btn-group btn-group-sm" role="group" aria-label="Show orders by direction">
+            {pick("", "All", orders.length)}{pick("long", "Long", count("long"))}{pick("short", "Short", count("short"))}
+          </div>
+        )}
+      </div>
       {orders.length === 0 && <p className="text-secondary mb-0">No orders yet.</p>}
-      {orders.length > 0 && (
+      {orders.length > 0 && lines.length === 0 && <p className="text-secondary mb-0">No {only} orders.</p>}
+      {lines.length > 0 && (
         <ul className="list-unstyled small mb-0" aria-label="Orders feed">
-          {orders.map((o) => (
+          {lines.map(({ order: o, times, since }) => (
             <li key={o.requestId} className="d-flex flex-wrap align-items-center gap-2 py-1 border-bottom">
-              <span className="text-secondary text-nowrap">{clock(o.updatedAt)}</span>
+              <span className="text-secondary text-nowrap">{times > 1 ? `${clock(since)}–${clock(o.updatedAt)}` : clock(o.updatedAt)}</span>
+              <DirectionBadge direction={o.direction} />
               <span className="fw-semibold">{o.kindLabel}</span>
               {o.kind === "open" && <span>{usd(o.amountCents)}</span>}
               <span className={"badge " + (orderBadge[o.state] ?? "text-bg-secondary")}>{o.stateLabel}</span>
+              {times > 1 && <span className="badge text-bg-light" title={`${times} identical requests in a row`}>×{times}</span>}
             </li>
           ))}
         </ul>
       )}
     </div></div>
   );
+}
+
+// foldRepeats folds identical requests that follow each other (same wording and state) into one
+// line with how many there were and the time of the oldest one.
+function foldRepeats(orders: Order[]): { order: Order; times: number; since: string }[] {
+  const out: { order: Order; times: number; since: string }[] = [];
+  for (const o of orders) {
+    const last = out[out.length - 1];
+    if (last && last.order.kind !== "open" && last.order.kindLabel === o.kindLabel && last.order.stateLabel === o.stateLabel) {
+      last.times++;
+      last.since = o.updatedAt;
+    } else out.push({ order: o, times: 1, since: o.updatedAt });
+  }
+  return out;
 }
 
 // The market moods' icons and bar colours (presentation only; the words come from the server).

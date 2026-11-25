@@ -161,9 +161,9 @@ describe("Dashboard", () => {
     expect(within(feed).queryByText("sent")).not.toBeInTheDocument();
     act(() => es.send("order", { accountId: "a1", order: order({ requestId: "r2", symbol: "TSLA", kind: "close", kindLabel: "Close request for TSLA (position 7)", direction: "long" }) }));
     expect(within(feed).getByText("Close request for TSLA (position 7)")).toBeInTheDocument();
-    act(() => es.send("order", { accountId: "a1", order: order({ requestId: "r3", symbol: "GOOG", kind: "cancel", kindLabel: "Cancel request for GOOG (buy order 396359836)", state: "filled", stateLabel: "accepted" }) }));
+    act(() => es.send("order", { accountId: "a1", order: order({ requestId: "r3", symbol: "GOOG", kind: "cancel", kindLabel: "Cancel request for GOOG (buy order 396359836)", state: "filled", stateLabel: "accepted by eToro" }) }));
     expect(within(feed).getByText("Cancel request for GOOG (buy order 396359836)")).toBeInTheDocument();
-    expect(within(feed).getByText("accepted")).toBeInTheDocument();
+    expect(within(feed).getByText("accepted by eToro")).toBeInTheDocument();
     act(() => es.send("event", { accountId: "a1", event: { id: "e1", at: "2026-11-24T15:00:10Z", kind: "order", severity: "success", title: "Bought AAPL", actor: "agent" } }));
     expect(screen.getByText("Bought AAPL")).toBeInTheDocument();
   });

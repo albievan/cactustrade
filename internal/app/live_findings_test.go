@@ -288,7 +288,7 @@ func TestExecutorClosedExecutions(t *testing.T) {
 }
 
 // TestOrderLabels: the server words an order's kind and state for people (no wording in
-// React): a cancel or close eToro took is "accepted" or "done", never "filled".
+// React): a cancel or close eToro took is "accepted by eToro" or "done", never "filled".
 func TestOrderLabels(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -303,7 +303,7 @@ func TestOrderLabels(t *testing.T) {
 			"cancel accepted",
 			domain.Order{Kind: domain.OrderCancel, Direction: domain.Long, TargetOrderID: liveOrderID, State: domain.OrderFilled},
 			"GOOG",
-			"Cancel request for GOOG (buy order 396359836)", "accepted",
+			"Cancel request for GOOG (buy order 396359836)", "accepted by eToro",
 		},
 		{
 			"cancel of a short, refused",
@@ -351,5 +351,50 @@ func TestExecutorHoldsAnAcceptedOrderItCannotFind(t *testing.T) {
 	}
 	if r := domain.Reservations(x.openOrders(t)); r.Amount != o.Amount {
 		t.Fatalf("reservation = %+v", r)
+	}
+}
+
+// TestOrderReasonLabel: a cancel's reason says what was asked, why, and that "accepted" is not
+// "cancelled" (the owner, 2026-11-25: "cancel accepted: pending for over 1m0s" was unclear).
+func TestOrderReasonLabel(t *testing.T) {
+	cancel := func(state domain.OrderState, reason string) OrderView {
+		return OrderView{Order: domain.Order{Kind: domain.OrderCancel, Direction: domain.Long, TargetOrderID: liveOrderID, State: state, Reason: reason}, Symbol: "GOOG"}
+	}
+	tests := []struct {
+		name string
+		v    OrderView
+		want string
+	}{
+		{
+			"accepted, stored before the rewording", cancel(domain.OrderFilled, "cancel accepted: pending for over 1m0s"),
+			"eToro accepted the request to cancel order 396359836. Why it was asked: the order was still not filled after 1 minute " +
+				"(cactusTrade cancels an entry order eToro has not filled by then, so its cash is not held up). " +
+				"This does not mean it was cancelled: if it had already filled, it stays filled (see that order's own line).",
+		},
+		{
+			"accepted, the kill switch", cancel(domain.OrderFilled, "cancel accepted: the kill switch is on"),
+			"eToro accepted the request to cancel order 396359836. Why it was asked: the kill switch is on. " +
+				"This does not mean it was cancelled: if it had already filled, it stays filled (see that order's own line).",
+		},
+		{"refused", cancel(domain.OrderRejected, "rate limited 3 times"), "eToro refused the request to cancel order 396359836: rate limited 3 times"},
+		{"refused, no reason", cancel(domain.OrderRejected, ""), "eToro refused the request to cancel order 396359836."},
+		{"sent", cancel(domain.OrderSent, "pending for over 90s"), "Asked to cancel order 396359836 because the order was still not filled after 90 seconds " +
+			"(cactusTrade cancels an entry order eToro has not filled by then, so its cash is not held up)."},
+		{"sent, no reason", cancel(domain.OrderSent, ""), ""},
+		{"no target id", OrderView{Order: domain.Order{Kind: domain.OrderCancel, State: domain.OrderFilled}}, "eToro accepted the request to cancel the order. " +
+			"This does not mean it was cancelled: if it had already filled, it stays filled (see that order's own line)."},
+		{"open: as stored", OrderView{Order: domain.Order{Kind: domain.OrderOpen, Reason: "stale prices"}}, "stale prices"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.v.ReasonLabel(); got != tt.want {
+				t.Errorf("ReasonLabel =\n%q\nwant\n%q", got, tt.want)
+			}
+		})
+	}
+	for d, want := range map[time.Duration]string{time.Minute: "1 minute", 2 * time.Minute: "2 minutes", 90 * time.Second: "90 seconds", 1500 * time.Millisecond: "1.5s"} {
+		if got := humanDuration(d); got != want {
+			t.Errorf("humanDuration(%s) = %q, want %q", d, got, want)
+		}
 	}
 }

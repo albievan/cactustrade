@@ -3234,8 +3234,9 @@ export interface components {
             etoroOrderId?: number;
             /** @description created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned */
             state: string;
-            /** @description the state worded by the server: an open reads filled / partially filled; a cancel eToro took reads accepted, a close done (partly done); a refused cancel or close reads refused; otherwise the state's name */
+            /** @description the state worded by the server: an open reads filled / partially filled; a cancel eToro took reads accepted by eToro, a close done (partly done); a refused cancel or close reads refused; otherwise the state's name */
             stateLabel: string;
+            /** @description why the order is in its state, worded by the server; a cancel says what was asked of eToro, why cactusTrade asked, and that an accepted cancel does not mean the order was cancelled */
             reason: string;
             sends: number;
             /** Format: date-time */

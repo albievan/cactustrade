@@ -3595,8 +3595,8 @@ components:
         positionId: { type: integer, format: int64 }
         etoroOrderId: { type: integer, format: int64 }
         state: { type: string, description: "created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned" }
-        stateLabel: { type: string, description: "the state worded by the server: an open reads filled / partially filled; a cancel eToro took reads accepted, a close done (partly done); a refused cancel or close reads refused; otherwise the state's name" }
-        reason: { type: string }
+        stateLabel: { type: string, description: "the state worded by the server: an open reads filled / partially filled; a cancel eToro took reads accepted by eToro, a close done (partly done); a refused cancel or close reads refused; otherwise the state's name" }
+        reason: { type: string, description: "why the order is in its state, worded by the server; a cancel says what was asked of eToro, why cactusTrade asked, and that an accepted cancel does not mean the order was cancelled" }
         sends: { type: integer }
         createdAt: { type: string, format: date-time }
         sentAt: { type: string, format: date-time }
