@@ -99,3 +99,11 @@ func TestParseMicros(t *testing.T) {
 		}
 	}
 }
+
+func TestMarketLabel(t *testing.T) {
+	for m, want := range map[Market]string{MarketLSE: "London (LSE)", MarketNYSE: "New York (NYSE/NASDAQ)", MarketASX: "Sydney (ASX)", "": "", "XETRA": ""} {
+		if got := m.Label(); got != want {
+			t.Errorf("Market(%q).Label() = %q, want %q", m, got, want)
+		}
+	}
+}

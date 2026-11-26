@@ -437,5 +437,18 @@ func (s *Service) Reviews(ctx context.Context, p Principal, limit int) ([]domain
 	if err != nil {
 		return nil, false, fmt.Errorf("app.Reviews: %w", err)
 	}
+	// Each review's exchange (R34: the board has a tab per exchange). An instrument missing
+	// from the cache leaves the market empty ("other").
+	markets := map[domain.InstrumentID]domain.Market{}
+	for i := range rs {
+		m, ok := markets[rs[i].Instrument]
+		if !ok {
+			if in, _, err := s.d.Store.Instruments().Get(ctx, rs[i].Instrument); err == nil {
+				m = in.Market
+			}
+			markets[rs[i].Instrument] = m
+		}
+		rs[i].Market = m
+	}
 	return rs, s.ScannerEnabled(ctx, v.ID), nil
 }

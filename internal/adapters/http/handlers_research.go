@@ -116,7 +116,10 @@ func (s *Server) ListReviews(w http.ResponseWriter, r *http.Request, params List
 	}
 	out := ReviewBoard{ScannerEnabled: on, Reviews: make([]Review, 0, len(rs)), CanAccept: ptr(s.svc.CanAddToWatchlist(r.Context(), state(r).principal))}
 	for _, v := range rs {
-		x := Review{InstrumentId: int64(v.Instrument), Symbol: v.Symbol, Theme: v.Theme, At: v.At, Outcome: ReviewOutcome(v.Outcome), Summary: v.Summary, Checks: []ReviewCheck{}}
+		x := Review{
+			InstrumentId: int64(v.Instrument), Symbol: v.Symbol, Theme: v.Theme, At: v.At, Outcome: ReviewOutcome(v.Outcome), Summary: v.Summary, Checks: []ReviewCheck{},
+			Market: string(v.Market), Exchange: v.Market.Label(),
+		}
 		if v.Direction != "" {
 			d := ReviewDirection(v.Direction)
 			x.Direction = &d

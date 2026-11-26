@@ -2938,6 +2938,10 @@ export interface components {
             };
             checks: components["schemas"]["ReviewCheck"][];
             summary: string;
+            /** @description the exchange's calendar market (LSE, NYSE, ASX); empty when the instrument is not cached */
+            market: string;
+            /** @description the exchange named for people, e.g. New York (NYSE/NASDAQ); empty when unknown */
+            exchange: string;
         };
         ReviewBoard: {
             scannerEnabled: boolean;

@@ -123,6 +123,10 @@ func TestScanner(t *testing.T) {
 	if by["AAPL"].Outcome != domain.ReviewAdded || by["AAPL"].Theme != "Space" || by["AAPL"].Direction != domain.Long {
 		t.Errorf("AAPL = %+v", by["AAPL"])
 	}
+	// R34: each review carries its exchange, from the cached instrument (the board's tabs).
+	if by["AAPL"].Market != domain.MarketNYSE || by["AAPL"].Market.Label() != "New York (NYSE/NASDAQ)" {
+		t.Errorf("AAPL market = %q", by["AAPL"].Market)
+	}
 	if by["RKLB"].Outcome != domain.ReviewSkipped || by["RKLB"].Checks[len(by["RKLB"].Checks)-1].Pass {
 		t.Errorf("RKLB (short not allowed) = %+v", by["RKLB"])
 	}

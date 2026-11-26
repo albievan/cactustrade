@@ -2941,15 +2941,21 @@ type ResetKillRequest struct {
 
 // Review defines model for Review.
 type Review struct {
-	At           time.Time           `json:"at"`
-	Checks       []ReviewCheck       `json:"checks"`
-	Direction    *ReviewDirection    `json:"direction,omitempty"`
-	InstrumentId int64               `json:"instrumentId"`
-	Outcome      ReviewOutcome       `json:"outcome"`
-	Probs        *map[string]float32 `json:"probs,omitempty"`
-	Summary      string              `json:"summary"`
-	Symbol       string              `json:"symbol"`
-	Theme        string              `json:"theme"`
+	At        time.Time        `json:"at"`
+	Checks    []ReviewCheck    `json:"checks"`
+	Direction *ReviewDirection `json:"direction,omitempty"`
+
+	// Exchange the exchange named for people, e.g. New York (NYSE/NASDAQ); empty when unknown
+	Exchange     string `json:"exchange"`
+	InstrumentId int64  `json:"instrumentId"`
+
+	// Market the exchange's calendar market (LSE, NYSE, ASX); empty when the instrument is not cached
+	Market  string              `json:"market"`
+	Outcome ReviewOutcome       `json:"outcome"`
+	Probs   *map[string]float32 `json:"probs,omitempty"`
+	Summary string              `json:"summary"`
+	Symbol  string              `json:"symbol"`
+	Theme   string              `json:"theme"`
 }
 
 // ReviewDirection defines model for Review.Direction.

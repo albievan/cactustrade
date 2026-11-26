@@ -94,4 +94,7 @@ type Review struct {
 	Probs      map[Regime]float64
 	Checks     []ReviewCheck
 	Summary    string
+	// Market is the exchange the share trades on, from the cached instrument when the board
+	// is read (not stored with the review; "" when the instrument is not cached).
+	Market Market
 }

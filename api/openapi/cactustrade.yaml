@@ -3299,7 +3299,7 @@ components:
         detail: { type: string }
     Review:
       type: object
-      required: [instrumentId, symbol, theme, at, outcome, checks, summary]
+      required: [instrumentId, symbol, theme, at, outcome, checks, summary, market, exchange]
       properties:
         instrumentId: { type: integer, format: int64 }
         symbol: { type: string }
@@ -3314,6 +3314,8 @@ components:
           type: array
           items: { $ref: "#/components/schemas/ReviewCheck" }
         summary: { type: string }
+        market: { type: string, description: "the exchange's calendar market (LSE, NYSE, ASX); empty when the instrument is not cached" }
+        exchange: { type: string, description: "the exchange named for people, e.g. New York (NYSE/NASDAQ); empty when unknown" }
     ReviewBoard:
       type: object
       required: [scannerEnabled, reviews]

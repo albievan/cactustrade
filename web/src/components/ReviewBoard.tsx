@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, errorText, type Review, type ReviewBoard as Board } from "../lib/api";
 
@@ -11,19 +11,54 @@ const OUTCOME: Record<Review["outcome"], { label: string; cls: string }> = {
   error: { label: "no data", cls: "text-bg-danger" },
 };
 
+// The exchange tabs, in a fixed order; a review whose instrument is not cached goes to "Other".
+const EXCHANGE_ORDER = ["LSE", "NYSE", "ASX", ""];
+const TAB_KEY = "cactustrade.review.exchange";
+
+function savedTab(): string {
+  try {
+    return window.localStorage.getItem(TAB_KEY) ?? "all";
+  } catch {
+    return "all";
+  }
+}
+
 // "Under review": every stock the scanner looked at for this account, when, the market
 // regime, and each rule it was checked against with the result. At low autonomy (R28) the
 // scanner only proposes shares: the owner accepts one by adding it here (the server says
-// whether the caller may, canAccept).
+// whether the caller may, canAccept). A tab per exchange shows only that exchange's reviews.
 export function ReviewBoard() {
   const [board, setBoard] = useState<Board | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [accepted, setAccepted] = useState<number[]>([]);
   const [acceptError, setAcceptError] = useState("");
+  const [tab, setTab] = useState(savedTab);
   const load = useCallback(() => {
-    api.reviews(100).then(setBoard).catch((e) => setError(errorText(e)));
+    api.reviews(200).then(setBoard).catch((e) => setError(errorText(e)));
   }, []);
+  // One tab per exchange present, with its count and how many have a signal.
+  const tabs = useMemo(() => {
+    const rs = board?.reviews ?? [];
+    return EXCHANGE_ORDER.filter((m) => rs.some((r) => r.market === m)).map((m) => {
+      const mine = rs.filter((r) => r.market === m);
+      return {
+        key: m || "other", market: m, label: mine[0]?.exchange || "Other",
+        count: mine.length, signals: mine.filter((r) => r.outcome !== "no_signal" && r.outcome !== "error").length,
+      };
+    });
+  }, [board]);
+  const current = tabs.some((t) => t.key === tab) ? tab : "all";
+  const shown = (board?.reviews ?? []).filter((r) => current === "all" || (r.market || "other") === current);
+  function pick(key: string) {
+    setTab(key);
+    setOpen(null);
+    try {
+      window.localStorage.setItem(TAB_KEY, key);
+    } catch {
+      // the tab is just not remembered
+    }
+  }
   useEffect(() => {
     load();
     const t = window.setInterval(load, 60_000);
@@ -52,17 +87,35 @@ export function ReviewBoard() {
           <p className="text-secondary mb-0">Nothing reviewed yet. Add a theme (e.g. Space, Semiconductors) under <Link to="/themes">Themes</Link>; the scanner runs every 15 minutes while a market is open, or press "Scan now" there.</p>
         )}
         {board && board.reviews.length > 0 && (
-          <div className="table-responsive">
+          <ul className="nav nav-tabs mb-2" role="tablist" aria-label="Exchanges">
+            <li className="nav-item" role="presentation">
+              <button type="button" role="tab" aria-selected={current === "all"} className={"nav-link" + (current === "all" ? " active" : "")}
+                onClick={() => pick("all")}>All <span className="badge text-bg-light ms-1">{board.reviews.length}</span></button>
+            </li>
+            {tabs.map((t) => (
+              <li key={t.key} className="nav-item" role="presentation">
+                <button type="button" role="tab" aria-selected={current === t.key} className={"nav-link" + (current === t.key ? " active" : "")}
+                  title={`${t.count} reviewed on ${t.label}, ${t.signals} with a signal`} onClick={() => pick(t.key)}>
+                  {t.label} <span className="badge text-bg-light ms-1">{t.count}</span>
+                  {t.signals > 0 && <span className="badge text-bg-primary ms-1" title="with a signal">{t.signals}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {board && board.reviews.length > 0 && (
+          <div className="table-responsive" role="tabpanel" aria-label={current === "all" ? "All exchanges" : tabs.find((t) => t.key === current)?.label}>
             <table className="table table-sm align-middle mb-0">
-              <thead><tr><th>Stock</th><th>Theme</th><th>Reviewed</th><th>Regime</th><th>Outcome</th><th>Rules</th></tr></thead>
+              <thead><tr><th>Stock</th><th>Exchange</th><th>Theme</th><th>Reviewed</th><th>Regime</th><th>Outcome</th><th>Rules</th></tr></thead>
               <tbody>
-                {board.reviews.map((r) => {
+                {shown.map((r) => {
                   const p = r.probs ?? {};
                   const pass = r.checks.filter((c) => c.pass).length;
                   return (
                     <Fragment key={r.instrumentId}>
                       <tr onClick={() => setOpen(open === r.instrumentId ? null : r.instrumentId)} style={{ cursor: "pointer" }}>
                         <td className="fw-semibold">{r.symbol}{r.direction && <span className={"badge ms-1 " + (r.direction === "short" ? "text-bg-danger" : "text-bg-success")}>{r.direction}</span>}</td>
+                        <td className="small text-nowrap">{r.exchange || "Other"}</td>
                         <td className="small">{r.theme}</td>
                         <td className="small">{new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
                         <td title={`trending ${pct(p.trending)} · choppy ${pct(p.choppy)} · high volatility ${pct(p.high_volatility)}`}>
@@ -90,7 +143,7 @@ export function ReviewBoard() {
                       </tr>
                       {open === r.instrumentId && (
                         <tr>
-                          <td colSpan={6} className="bg-body-tertiary small">
+                          <td colSpan={7} className="bg-body-tertiary small">
                             <div className="mb-1">{r.summary}</div>
                             <ul className="list-unstyled mb-0">
                               {r.checks.map((c, i) => (

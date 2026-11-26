@@ -87,6 +87,19 @@ const (
 // Markets lists every supported market, for the calendar checks and the dashboard.
 var Markets = []Market{MarketLSE, MarketNYSE, MarketASX}
 
+// Label names the market for people, e.g. "New York (NYSE/NASDAQ)"; "" when unknown.
+func (m Market) Label() string {
+	switch m {
+	case MarketLSE:
+		return "London (LSE)"
+	case MarketNYSE:
+		return "New York (NYSE/NASDAQ)"
+	case MarketASX:
+		return "Sydney (ASX)"
+	}
+	return ""
+}
+
 // Instrument is a tradable share.
 type Instrument struct {
 	ID         InstrumentID

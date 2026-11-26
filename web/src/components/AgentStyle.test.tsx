@@ -151,11 +151,11 @@ describe("RegimeList (Market mood)", () => {
 describe("ReviewBoard proposals (low autonomy)", () => {
   const board = (canAccept: boolean): Board => ({
     scannerEnabled: true, canAccept,
-    reviews: [{ instrumentId: 7, symbol: "RKLB", theme: "Space", at: "2026-11-24T15:00:00Z", outcome: "proposed", checks: [], summary: "trend_breakout: up" }],
+    reviews: [{ instrumentId: 7, symbol: "RKLB", theme: "Space", at: "2026-11-24T15:00:00Z", outcome: "proposed", checks: [], summary: "trend_breakout: up", market: "NYSE", exchange: "New York (NYSE/NASDAQ)" }],
   });
 
   it("adds a proposed share to the watchlist when the owner accepts it", async () => {
-    const calls = serve({ "GET /api/v1/reviews?limit=100": () => board(true), "POST /api/v1/watchlist": () => ({}) });
+    const calls = serve({ "GET /api/v1/reviews?limit=200": () => board(true), "POST /api/v1/watchlist": () => ({}) });
     render(<MemoryRouter><ReviewBoard /></MemoryRouter>);
     expect(await screen.findByText("proposed for the watchlist")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add RKLB to the watchlist" }));
@@ -164,7 +164,7 @@ describe("ReviewBoard proposals (low autonomy)", () => {
   });
 
   it("offers no button without trade access", async () => {
-    serve({ "GET /api/v1/reviews?limit=100": () => board(false) });
+    serve({ "GET /api/v1/reviews?limit=200": () => board(false) });
     render(<MemoryRouter><ReviewBoard /></MemoryRouter>);
     expect(await screen.findByText("proposed for the watchlist")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /to the watchlist/ })).not.toBeInTheDocument();
