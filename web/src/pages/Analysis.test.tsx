@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
-import type { Analysis as AnalysisData, AnalysisGroup } from "../lib/api";
+import type { Analysis as AnalysisData, AnalysisGroup, AnalysisTradeRow } from "../lib/api";
 import { Analysis, PAST_ONLY } from "./Analysis";
 
 const acct = (id: string, name: string, platform = "etoro") => ({
@@ -13,6 +13,20 @@ function group(key: string, label: string, over: Partial<AnalysisGroup> = {}): A
 }
 
 const trade = (net: number, symbol: string) => ({ account: "Demo main", symbol, positionId: 1, closedAt: "2026-11-02T15:00:00Z", netCents: net });
+
+const row = (pos: number, symbol: string, exchange: string, net: number, outcome: "Win" | "Loss" | "Breakeven", over: Partial<AnalysisTradeRow> = {}): AnalysisTradeRow => ({
+  accountId: "a1", account: "Demo main", positionId: pos, symbol, exchange, theme: "AI", playbook: "trend_breakout", direction: "long",
+  openedAt: "2026-11-02T14:00:00Z", closedAt: "2026-11-02T15:00:00Z", openRate: "100", closeRate: "101", investmentCents: 10000,
+  netCents: net, feesCents: 50, feesKnown: true, outcome, ours: true, ...over,
+});
+
+const trades: AnalysisTradeRow[] = [
+  row(21, "CBA.ASX", "ASX", 6000, "Win", { closedAt: "2026-11-20T03:00:00Z", theme: "No theme", feesCents: 200 }),
+  row(4, "TSLA", "NYSE", 9900, "Win", { ours: false, closedAt: "2026-11-10T16:00:00Z", theme: "No theme", playbook: "Not recorded" }),
+  row(3, "AAPL", "NYSE", 0, "Breakeven", { direction: "short", closedAt: "2026-11-10T15:00:00Z", playbook: "Not recorded" }),
+  row(2, "BARC.L", "LSE", -4000, "Loss", { closedAt: "2026-11-02T16:00:00Z", feesCents: 0, feesKnown: false, playbook: "Not recorded" }),
+  row(1, "AAPL", "NYSE", 2500, "Win"),
+];
 
 function analysis(over: Partial<AnalysisData> = {}): AnalysisData {
   const lse = group("LSE", "LSE", { trades: 1, losses: 1, winRateBp: 0, netCents: -4000, grossCents: -4000, feesUnknownTrades: 1, avgNetCents: -4000, best: trade(-4000, "BARC.L"), worst: trade(-4000, "BARC.L") });
@@ -58,6 +72,7 @@ function analysis(over: Partial<AnalysisData> = {}): AnalysisData {
       { heading: "Activity", paragraphs: ["The agent logged 2 decisions.", "Past results say nothing about future results."] },
     ],
     notes: ["Fees eToro did not report are shown as unknown and are never counted as zero."],
+    trades, tradesCapped: false,
     ...over,
   };
 }
@@ -174,6 +189,57 @@ describe("Analysis", () => {
     expect(screen.queryByText(/^0\.00 %$/)).not.toBeInTheDocument();
     expect(screen.getByText("not recorded")).toBeInTheDocument(); // drawdown
     expect(screen.getAllByText("No trades.").length).toBeGreaterThan(0);
+  });
+
+  it("drills into a tile: its breakdown and the trades behind it", async () => {
+    serve(analysis());
+    const tile = await screen.findByTitle(/details behind “Closed trades/);
+    expect(tile).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(tile);
+    expect(tile).toHaveAttribute("aria-expanded", "true");
+    const panel = screen.getByRole("region", { name: "Details: Closed trades" });
+    const table = within(panel).getByRole("table", { name: "cactusTrade's closed trades" });
+    // cactusTrade's 4 trades, newest first; the foreign TSLA trade is not among them
+    const shares = within(table).getAllByRole("row").slice(2).map((r) => (r as HTMLTableRowElement).cells[2].textContent);
+    expect(shares).toEqual(["CBA.ASX", "AAPL", "BARC.L", "AAPL"]);
+    expect(within(table).getByText("unknown")).toBeInTheDocument(); // BARC.L's fees
+    fireEvent.change(within(panel).getByLabelText("Filter trades by Exchange"), { target: { value: "NYSE" } });
+    expect(within(panel).getByText("Showing 2 of 4")).toBeInTheDocument();
+    // closing it
+    fireEvent.click(within(panel).getByRole("button", { name: "Close the details" }));
+    expect(screen.queryByRole("region", { name: /Details/ })).not.toBeInTheDocument();
+  });
+
+  it("drills into the win rate by any grouping, and into P&L best first", async () => {
+    serve(analysis());
+    fireEvent.click(await screen.findByTitle(/details behind “Win rate/));
+    let panel = screen.getByRole("region", { name: "Details: Win rate" });
+    const byExchange = within(panel).getByRole("table", { name: "By exchange" });
+    expect(within(byExchange).getByText("50.00 %")).toBeInTheDocument(); // NYSE
+    fireEvent.click(within(panel).getByRole("button", { name: "By playbook" }));
+    expect(within(panel).getByRole("table", { name: "By playbook" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Result: Win" })).toBeInTheDocument(); // trades grouped by result
+    // another tile replaces the panel
+    fireEvent.click(screen.getByTitle(/details behind “Realised P&L/));
+    panel = screen.getByRole("region", { name: "Details: Realised P&L (after fees)" });
+    const table = within(panel).getByRole("table", { name: "cactusTrade's closed trades" });
+    const nets = within(table).getAllByRole("row").slice(2).map((r) => (r as HTMLTableRowElement).cells[12].textContent);
+    expect(nets).toEqual(["$60.00", "$25.00", "$0.00", "-$40.00"]);
+  });
+
+  it("drills into who opened the trades, the drawdown and the LLM use", async () => {
+    serve(analysis({ llm: { calls: 181, failed: 2, inputTokens: 1000, outputTokens: 100, knownCostUsd: "0", costUnknownCalls: 181 } }));
+    fireEvent.click(await screen.findByTitle(/details behind “Opened by cactusTrade/));
+    let panel = screen.getByRole("region", { name: "Details: Opened by cactusTrade" });
+    expect(within(panel).getByRole("button", { name: "Opened by: not cactusTrade (not counted)" })).toBeInTheDocument();
+    expect(within(panel).getByRole("cell", { name: "TSLA" })).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle(/details behind “Largest drawdown/));
+    panel = screen.getByRole("region", { name: "Details: Largest drawdown" });
+    expect(within(panel).getByText(/Recorded equity/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle(/details behind “LLM reviewer cost/));
+    panel = screen.getByRole("region", { name: "Details: LLM reviewer cost" });
+    expect(within(panel).getByRole("link", { name: "LLM reviewer" })).toHaveAttribute("href", "/llm");
+    expect(within(panel).getByRole("link", { name: "Decision log" })).toHaveAttribute("href", "/decisions");
   });
 
   it("shows a refused request", async () => {

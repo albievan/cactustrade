@@ -161,6 +161,45 @@ func (e AnalysisPreset) Valid() bool {
 	}
 }
 
+// Defines values for AnalysisTradeRowDirection.
+const (
+	AnalysisTradeRowDirectionLong  AnalysisTradeRowDirection = "long"
+	AnalysisTradeRowDirectionShort AnalysisTradeRowDirection = "short"
+)
+
+// Valid indicates whether the value is a known member of the AnalysisTradeRowDirection enum.
+func (e AnalysisTradeRowDirection) Valid() bool {
+	switch e {
+	case AnalysisTradeRowDirectionLong:
+		return true
+	case AnalysisTradeRowDirectionShort:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AnalysisTradeRowOutcome.
+const (
+	Breakeven AnalysisTradeRowOutcome = "Breakeven"
+	Loss      AnalysisTradeRowOutcome = "Loss"
+	Win       AnalysisTradeRowOutcome = "Win"
+)
+
+// Valid indicates whether the value is a known member of the AnalysisTradeRowOutcome enum.
+func (e AnalysisTradeRowOutcome) Valid() bool {
+	switch e {
+	case Breakeven:
+		return true
+	case Loss:
+		return true
+	case Win:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CredentialSource.
 const (
 	Env CredentialSource = "env"
@@ -529,16 +568,16 @@ func (e ResearchProposalExchange) Valid() bool {
 
 // Defines values for ReviewDirection.
 const (
-	Long  ReviewDirection = "long"
-	Short ReviewDirection = "short"
+	ReviewDirectionLong  ReviewDirection = "long"
+	ReviewDirectionShort ReviewDirection = "short"
 )
 
 // Valid indicates whether the value is a known member of the ReviewDirection enum.
 func (e ReviewDirection) Valid() bool {
 	switch e {
-	case Long:
+	case ReviewDirectionLong:
 		return true
-	case Short:
+	case ReviewDirectionShort:
 		return true
 	default:
 		return false
@@ -1184,9 +1223,15 @@ type Analysis struct {
 	To time.Time `json:"to"`
 
 	// Totals The figures of one group of cactusTrade's closed trades (US dollars)
-	Totals        AnalysisGroup   `json:"totals"`
-	TradeAccounts int             `json:"tradeAccounts"`
-	Verdicts      []AnalysisCount `json:"verdicts"`
+	Totals        AnalysisGroup `json:"totals"`
+	TradeAccounts int           `json:"tradeAccounts"`
+
+	// Trades the period's closed trades behind the figures, newest first (at most 2,000): cactusTrade's own and, flagged ours false and never counted, the others (R35)
+	Trades []AnalysisTradeRow `json:"trades"`
+
+	// TradesCapped more trades closed in the period than are listed
+	TradesCapped bool            `json:"tradesCapped"`
+	Verdicts     []AnalysisCount `json:"verdicts"`
 }
 
 // AnalysisAccount defines model for AnalysisAccount.
@@ -1362,6 +1407,54 @@ type AnalysisTrade struct {
 	// Symbol empty when the share is not cached
 	Symbol string `json:"symbol"`
 }
+
+// AnalysisTradeRow One closed trade of the period, as the analysis drills into it (US dollars)
+type AnalysisTradeRow struct {
+	Account   string `json:"account"`
+	AccountId string `json:"accountId"`
+
+	// CloseRate An exact decimal (prices and units, up to 6 places)
+	CloseRate *Decimal                  `json:"closeRate,omitempty"`
+	ClosedAt  time.Time                 `json:"closedAt"`
+	Direction AnalysisTradeRowDirection `json:"direction"`
+
+	// Exchange LSE, NYSE, ASX or Other
+	Exchange string `json:"exchange"`
+
+	// FeesCents US dollars in cents (the eToro account currency is USD)
+	FeesCents Cents `json:"feesCents"`
+
+	// FeesKnown false when eToro did not report the fees (feesCents is then 0, not counted)
+	FeesKnown bool `json:"feesKnown"`
+
+	// InvestmentCents US dollars in cents (the eToro account currency is USD)
+	InvestmentCents Cents `json:"investmentCents"`
+
+	// NetCents US dollars in cents (the eToro account currency is USD)
+	NetCents Cents `json:"netCents"`
+
+	// OpenRate An exact decimal (prices and units, up to 6 places)
+	OpenRate *Decimal `json:"openRate,omitempty"`
+
+	// OpenedAt absent time (zero) when eToro did not report it
+	OpenedAt time.Time `json:"openedAt"`
+
+	// Ours cactusTrade opened the position (only these are counted in the figures)
+	Ours       bool                    `json:"ours"`
+	Outcome    AnalysisTradeRowOutcome `json:"outcome"`
+	Playbook   string                  `json:"playbook"`
+	PositionId int64                   `json:"positionId"`
+
+	// Symbol empty when the share is not cached
+	Symbol string `json:"symbol"`
+	Theme  string `json:"theme"`
+}
+
+// AnalysisTradeRowDirection defines model for AnalysisTradeRow.Direction.
+type AnalysisTradeRowDirection string
+
+// AnalysisTradeRowOutcome defines model for AnalysisTradeRow.Outcome.
+type AnalysisTradeRowOutcome string
 
 // ApiKey defines model for ApiKey.
 type ApiKey struct {

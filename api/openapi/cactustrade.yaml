@@ -4065,6 +4065,29 @@ components:
         positionId: { type: integer, format: int64 }
         closedAt: { type: string, format: date-time }
         netCents: { $ref: "#/components/schemas/Cents" }
+    AnalysisTradeRow:
+      type: object
+      description: One closed trade of the period, as the analysis drills into it (US dollars)
+      required: [accountId, account, positionId, symbol, exchange, theme, playbook, direction, openedAt, closedAt, investmentCents, netCents, feesCents, feesKnown, outcome, ours]
+      properties:
+        accountId: { type: string }
+        account: { type: string }
+        positionId: { type: integer, format: int64 }
+        symbol: { type: string, description: "empty when the share is not cached" }
+        exchange: { type: string, description: "LSE, NYSE, ASX or Other" }
+        theme: { type: string }
+        playbook: { type: string }
+        direction: { type: string, enum: [long, short] }
+        openedAt: { type: string, format: date-time, description: "absent time (zero) when eToro did not report it" }
+        closedAt: { type: string, format: date-time }
+        openRate: { $ref: "#/components/schemas/Decimal" }
+        closeRate: { $ref: "#/components/schemas/Decimal" }
+        investmentCents: { $ref: "#/components/schemas/Cents" }
+        netCents: { $ref: "#/components/schemas/Cents" }
+        feesCents: { $ref: "#/components/schemas/Cents" }
+        feesKnown: { type: boolean, description: "false when eToro did not report the fees (feesCents is then 0, not counted)" }
+        outcome: { type: string, enum: [Win, Loss, Breakeven] }
+        ours: { type: boolean, description: "cactusTrade opened the position (only these are counted in the figures)" }
     AnalysisGroup:
       type: object
       description: The figures of one group of cactusTrade's closed trades (US dollars)
@@ -4171,7 +4194,7 @@ components:
         An analysis of a period (R31). Trade figures are cactusTrade's own closed trades in US
         dollars after the fees eToro reported; equity is per currency and never added across
         currencies. Figures describe past results only.
-      required: [preset, from, to, firstDay, lastDay, days, bucket, title, generatedAt, allAccounts, scope, accounts, totals, foreignTrades, tradeAccounts, groupings, equity, equityTotals, curves, risk, decisions, decisionsTotal, verdicts, llm, activityCapped, narrative, notes]
+      required: [preset, from, to, firstDay, lastDay, days, bucket, title, generatedAt, allAccounts, scope, accounts, totals, foreignTrades, tradeAccounts, groupings, equity, equityTotals, curves, risk, decisions, decisionsTotal, verdicts, llm, activityCapped, narrative, notes, trades, tradesCapped]
       properties:
         preset: { $ref: "#/components/schemas/AnalysisPreset" }
         from: { type: string, format: date-time, description: "the start of the first risk day" }
@@ -4201,3 +4224,8 @@ components:
         activityCapped: { type: boolean, description: "some activity counts are lower bounds" }
         narrative: { type: array, items: { $ref: "#/components/schemas/AnalysisSection" } }
         notes: { type: array, items: { type: string } }
+        trades:
+          type: array
+          description: "the period's closed trades behind the figures, newest first (at most 2,000): cactusTrade's own and, flagged ours false and never counted, the others (R35)"
+          items: { $ref: "#/components/schemas/AnalysisTradeRow" }
+        tradesCapped: { type: boolean, description: "more trades closed in the period than are listed" }

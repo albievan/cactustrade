@@ -171,6 +171,37 @@ type Analysis struct {
 
 	Narrative []AnalysisSection
 	Notes     []string
+
+	// Trades are the period's closed trades behind the figures, newest first, at most
+	// AnalysisMaxTradeRows (TradesCapped then): cactusTrade's own (counted) and the others
+	// (Ours false, never counted). The page drills into them (R35).
+	Trades       []AnalysisTradeRow
+	TradesCapped bool
+}
+
+// AnalysisMaxTradeRows is the most trades an analysis lists for drilling into (R35).
+const AnalysisMaxTradeRows = 2000
+
+// AnalysisTradeRow is one closed trade as the analysis's drill-down shows it.
+type AnalysisTradeRow struct {
+	AccountID  string
+	Account    string // the account's name
+	PositionID int64
+	Symbol     string // "" when the share is not cached
+	Exchange   string // LSE, NYSE, ASX or Other
+	Theme      string // NoThemeLabel when none
+	Playbook   string // NoPlaybookLabel when not recorded
+	Direction  Direction
+	OpenedAt   time.Time
+	ClosedAt   time.Time
+	OpenRate   Micros
+	CloseRate  Micros
+	Investment Cents
+	Net        Cents
+	Fees       Cents
+	FeesKnown  bool
+	Outcome    string // "Win", "Loss" or "Breakeven"
+	Ours       bool
 }
 
 // Grouping returns the groups of dimension d (nil when unknown).
@@ -217,7 +248,7 @@ func BuildAnalysis(in AnalysisInput) Analysis {
 		}
 	}
 
-	var ours []analysisTrade
+	var ours, others []analysisTrade
 	decisions := map[DecisionOutcome]int{}
 	verdicts := map[VerdictKind]int{}
 	for _, a := range accts {
@@ -244,11 +275,6 @@ func BuildAnalysis(in AnalysisInput) Analysis {
 			if !w.Contains(t.ClosedAt) {
 				continue
 			}
-			if !t.Ours {
-				an.ForeignTrades++
-				continue
-			}
-			n++
 			at := analysisTrade{StatementTrade: t, account: a.Account.Name, theme: NoThemeLabel, playbook: NoPlaybookLabel}
 			if name, ok := themeOf[t.Instrument]; ok {
 				at.theme = name
@@ -256,6 +282,12 @@ func BuildAnalysis(in AnalysisInput) Analysis {
 			if pb, ok := playbookOf[t.OpenRequestID]; ok && t.OpenRequestID != "" {
 				at.playbook = pb
 			}
+			if !t.Ours {
+				an.ForeignTrades++
+				others = append(others, at)
+				continue
+			}
+			n++
 			ours = append(ours, at)
 		}
 		if n > 0 {
@@ -308,9 +340,35 @@ func BuildAnalysis(in AnalysisInput) Analysis {
 			an.Verdicts = append(an.Verdicts, StatementCount{Label: v.label, N: n})
 		}
 	}
+	an.Trades, an.TradesCapped = tradeRows(append(slices.Clone(ours), others...))
 	an.Narrative = analysisNarrative(an)
 	an.Notes = analysisNotes(an)
 	return an
+}
+
+// tradeRows lists ts newest first (then account, position), at most AnalysisMaxTradeRows.
+func tradeRows(ts []analysisTrade) ([]AnalysisTradeRow, bool) {
+	slices.SortStableFunc(ts, func(a, b analysisTrade) int {
+		return cmp.Or(b.ClosedAt.Compare(a.ClosedAt), strings.Compare(a.AccountID, b.AccountID), cmp.Compare(a.PositionID, b.PositionID))
+	})
+	capped := len(ts) > AnalysisMaxTradeRows
+	if capped {
+		ts = ts[:AnalysisMaxTradeRows]
+	}
+	out := make([]AnalysisTradeRow, 0, len(ts))
+	for _, t := range ts {
+		d := Short
+		if t.Long {
+			d = Long
+		}
+		out = append(out, AnalysisTradeRow{
+			AccountID: t.AccountID, Account: t.account, PositionID: t.PositionID, Symbol: t.Symbol, Exchange: exchangeLabel(t.Market),
+			Theme: t.theme, Playbook: t.playbook, Direction: d, OpenedAt: t.OpenedAt, ClosedAt: t.ClosedAt,
+			OpenRate: t.OpenRate, CloseRate: t.CloseRate, Investment: t.Investment, Net: t.NetProfit,
+			Fees: t.Fees, FeesKnown: t.FeesKnown, Outcome: outcomeLabel(t.NetProfit), Ours: t.Ours,
+		})
+	}
+	return out, capped
 }
 
 // themeNames maps each share to its theme's name: the first theme holding it by name
@@ -780,4 +838,15 @@ func analysisNotes(an Analysis) []string {
 		notes = append(notes, "Some activity counts are lower bounds: more records existed than one analysis reads.")
 	}
 	return append(notes, PastResultsNote+" cactusTrade is software, not financial advice; trading can lose money.")
+}
+
+// outcomeLabel words a trade's result: "Win", "Loss" or "Breakeven".
+func outcomeLabel(net Cents) string {
+	switch {
+	case net > 0:
+		return "Win"
+	case net < 0:
+		return "Loss"
+	}
+	return "Breakeven"
 }

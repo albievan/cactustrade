@@ -110,6 +110,23 @@ func toAnalysis(an domain.Analysis) Analysis {
 	for _, s := range an.Narrative {
 		out.Narrative = append(out.Narrative, AnalysisSection{Heading: s.Heading, Paragraphs: nonNil(s.Paragraphs)})
 	}
+	out.TradesCapped = an.TradesCapped
+	out.Trades = make([]AnalysisTradeRow, 0, len(an.Trades))
+	for _, t := range an.Trades {
+		x := AnalysisTradeRow{
+			AccountId: t.AccountID, Account: t.Account, PositionId: t.PositionID, Symbol: t.Symbol, Exchange: t.Exchange, Theme: t.Theme,
+			Playbook: t.Playbook, Direction: AnalysisTradeRowDirection(t.Direction), OpenedAt: t.OpenedAt, ClosedAt: t.ClosedAt,
+			InvestmentCents: Cents(t.Investment), NetCents: Cents(t.Net), FeesCents: Cents(t.Fees), FeesKnown: t.FeesKnown,
+			Outcome: AnalysisTradeRowOutcome(t.Outcome), Ours: t.Ours,
+		}
+		if t.OpenRate > 0 {
+			x.OpenRate = ptr(dec(t.OpenRate))
+		}
+		if t.CloseRate > 0 {
+			x.CloseRate = ptr(dec(t.CloseRate))
+		}
+		out.Trades = append(out.Trades, x)
+	}
 	return out
 }
 

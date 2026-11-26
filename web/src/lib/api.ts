@@ -106,6 +106,7 @@ export type StatementPeriod = components["schemas"]["StatementPeriod"];
 export type StatementScope = components["schemas"]["StatementScope"];
 export type Analysis = components["schemas"]["Analysis"];
 export type AnalysisGroup = components["schemas"]["AnalysisGroup"];
+export type AnalysisTradeRow = components["schemas"]["AnalysisTradeRow"];
 export type AnalysisGrouping = components["schemas"]["AnalysisGrouping"];
 export type AnalysisCurve = components["schemas"]["AnalysisCurve"];
 export type AnalysisPreset = components["schemas"]["AnalysisPreset"];

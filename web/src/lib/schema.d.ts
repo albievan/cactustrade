@@ -3768,6 +3768,39 @@ export interface components {
             closedAt: string;
             netCents: components["schemas"]["Cents"];
         };
+        /** @description One closed trade of the period, as the analysis drills into it (US dollars) */
+        AnalysisTradeRow: {
+            accountId: string;
+            account: string;
+            /** Format: int64 */
+            positionId: number;
+            /** @description empty when the share is not cached */
+            symbol: string;
+            /** @description LSE, NYSE, ASX or Other */
+            exchange: string;
+            theme: string;
+            playbook: string;
+            /** @enum {string} */
+            direction: "long" | "short";
+            /**
+             * Format: date-time
+             * @description absent time (zero) when eToro did not report it
+             */
+            openedAt: string;
+            /** Format: date-time */
+            closedAt: string;
+            openRate?: components["schemas"]["Decimal"];
+            closeRate?: components["schemas"]["Decimal"];
+            investmentCents: components["schemas"]["Cents"];
+            netCents: components["schemas"]["Cents"];
+            feesCents: components["schemas"]["Cents"];
+            /** @description false when eToro did not report the fees (feesCents is then 0, not counted) */
+            feesKnown: boolean;
+            /** @enum {string} */
+            outcome: "Win" | "Loss" | "Breakeven";
+            /** @description cactusTrade opened the position (only these are counted in the figures) */
+            ours: boolean;
+        };
         /** @description The figures of one group of cactusTrade's closed trades (US dollars) */
         AnalysisGroup: {
             key: string;
@@ -3916,6 +3949,10 @@ export interface components {
             activityCapped: boolean;
             narrative: components["schemas"]["AnalysisSection"][];
             notes: string[];
+            /** @description the period's closed trades behind the figures, newest first (at most 2,000): cactusTrade's own and, flagged ours false and never counted, the others (R35) */
+            trades: components["schemas"]["AnalysisTradeRow"][];
+            /** @description more trades closed in the period than are listed */
+            tradesCapped: boolean;
         };
     };
     responses: {

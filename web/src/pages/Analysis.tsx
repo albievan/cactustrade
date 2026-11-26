@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { EquityCharts } from "../components/EquityChart";
+import { AnalysisDrill, TILE_TITLES, type Tile } from "../components/AnalysisDrill";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
 import {
@@ -122,13 +123,23 @@ export function Analysis() {
 function Report({ a }: { a: AnalysisData }) {
   const t = a.totals;
   const none = t.trades === 0;
+  const [drill, setDrill] = useState<Tile | null>(null);
   return (
     <>
       <p className="text-secondary small mb-2">
         <strong>{a.title}</strong> · {a.days} risk {a.days === 1 ? "day" : "days"} · {a.scope}
       </p>
       {none && <div className="alert alert-light border" role="status">No closed trades in this period.</div>}
-      <Kpis a={a} />
+      <Kpis a={a} active={drill} onDrill={(k) => setDrill((d) => (d === k ? null : k))} />
+      {drill && (
+        <AnalysisDrill a={a} tile={drill} onClose={() => setDrill(null)} equity={
+          <>
+            {a.curves.length > 0 && <EquityCharts series={curves(a)} days={a.days} drawdown />}
+            <EquityTable a={a} />
+            {a.curves.length === 0 && a.equity.length === 0 && <p className="small text-secondary mb-0">No equity snapshots in this period.</p>}
+          </>
+        } />
+      )}
       <div className="card mb-4"><div className="card-body">
         <h2 className="h5">What happened</h2>
         {a.narrative.map((s) => (
@@ -193,37 +204,45 @@ function bp(v: number | undefined): string {
   return v === undefined ? "—" : `${(v / 100).toFixed(2)} %`;
 }
 
-function Kpis({ a }: { a: AnalysisData }) {
+function Kpis({ a, active, onDrill }: { a: AnalysisData; active: Tile | null; onDrill: (t: Tile) => void }) {
   const t = a.totals;
   const none = t.trades === 0;
   const dd = a.curves.length === 0 ? "not recorded" : bp(Math.max(...a.curves.map((c) => c.maxDrawdownBp)));
   const cost = a.llm.costUnknownCalls > 0 ? `$${a.llm.knownCostUsd} + ${a.llm.costUnknownCalls} unknown` : `$${a.llm.knownCostUsd}`;
   return (
     <div className="row g-3 mb-4">
-      <Kpi label="Closed trades" icon="bi-list-check" value={String(t.trades)}
+      <Kpi tile="trades" active={active} onDrill={onDrill} label="Closed trades" icon="bi-list-check" value={String(t.trades)}
         sub={a.foreignTrades > 0 ? `${a.foreignTrades} more not opened by cactusTrade (not counted)` : undefined} />
-      <Kpi label="Win rate" icon="bi-percent" value={bp(t.winRateBp)} sub={none ? "no closed trades" : `${t.wins} wins / ${t.losses} losses / ${t.breakeven} breakeven`} />
-      <Kpi label="Realised P&L (after fees)" icon="bi-cash-stack" value={none ? "—" : usd(t.netCents)} sub={none ? undefined : `before reported fees ${usd(t.grossCents)}`} tone={t.netCents} />
-      <Kpi label="Average per trade" icon="bi-calculator" value={usd(t.avgNetCents)} tone={t.avgNetCents} />
-      <Kpi label="Fees reported by eToro" icon="bi-receipt" value={usd(t.feesCents)}
+      <Kpi tile="winrate" active={active} onDrill={onDrill} label="Win rate" icon="bi-percent" value={bp(t.winRateBp)} sub={none ? "no closed trades" : `${t.wins} wins / ${t.losses} losses / ${t.breakeven} breakeven`} />
+      <Kpi tile="pnl" active={active} onDrill={onDrill} label="Realised P&L (after fees)" icon="bi-cash-stack" value={none ? "—" : usd(t.netCents)} sub={none ? undefined : `before reported fees ${usd(t.grossCents)}`} tone={t.netCents} />
+      <Kpi tile="average" active={active} onDrill={onDrill} label="Average per trade" icon="bi-calculator" value={usd(t.avgNetCents)} tone={t.avgNetCents} />
+      <Kpi tile="fees" active={active} onDrill={onDrill} label="Fees reported by eToro" icon="bi-receipt" value={usd(t.feesCents)}
         sub={t.feesUnknownTrades > 0 ? `unknown for ${t.feesUnknownTrades} ${t.feesUnknownTrades === 1 ? "trade" : "trades"}` : undefined} />
-      <Kpi label="Largest drawdown" icon="bi-graph-down" value={dd}
+      <Kpi tile="drawdown" active={active} onDrill={onDrill} label="Largest drawdown" icon="bi-graph-down" value={dd}
         sub={a.curves.map((c) => `${c.currency} ${money(c.maxDrawdownMinor, c.currency)}`).join(" · ") || "no equity snapshots"} />
-      <Kpi label="Opened by cactusTrade" icon="bi-robot" value={bp(a.oursShareBp)} sub="share of all closed trades" />
-      <Kpi label="LLM reviewer cost" icon="bi-cpu" value={cost} sub={`${a.llm.calls} calls`} />
+      <Kpi tile="ours" active={active} onDrill={onDrill} label="Opened by cactusTrade" icon="bi-robot" value={bp(a.oursShareBp)} sub="share of all closed trades" />
+      <Kpi tile="llm" active={active} onDrill={onDrill} label="LLM reviewer cost" icon="bi-cpu" value={cost} sub={`${a.llm.calls} calls`} />
     </div>
   );
 }
 
-function Kpi({ label, icon, value, sub, tone }: { label: string; icon: string; value: string; sub?: string; tone?: number }) {
+// Kpi is one tile; clicking it (or Enter / Space) opens its details below the tiles (R35).
+function Kpi({ tile, active, onDrill, label, icon, value, sub, tone }: {
+  tile: Tile; active: Tile | null; onDrill: (t: Tile) => void; label: string; icon: string; value: string; sub?: string; tone?: number;
+}) {
   const cls = tone === undefined || tone === 0 ? "" : tone > 0 ? " pnl-up" : " pnl-down";
+  const on = active === tile;
   return (
     <div className="col-6 col-lg-3">
-      <div className="card stat h-100"><div className="card-body">
-        <div className="text-secondary small"><i className={"bi me-1 " + icon} />{label}</div>
-        <div className={"value" + cls}>{value}</div>
-        {sub && <div className="small text-secondary">{sub}</div>}
-      </div></div>
+      <button type="button" className={"card stat h-100 w-100 text-start kpi-drill" + (on ? " border-primary" : "")} aria-expanded={on}
+        title={on ? "Hide the details" : `Show the details behind “${TILE_TITLES[tile]}”`} onClick={() => onDrill(tile)}>
+        <div className="card-body w-100">
+          <div className="text-secondary small d-flex"><span className="flex-grow-1"><i className={"bi me-1 " + icon} />{label}</span>
+            <i className={"bi " + (on ? "bi-chevron-up" : "bi-zoom-in")} aria-hidden="true" /></div>
+          <div className={"value" + cls}>{value}</div>
+          {sub && <div className="small text-secondary">{sub}</div>}
+        </div>
+      </button>
     </div>
   );
 }

@@ -208,3 +208,7 @@ body[data-mode=real] .app-head .brand-version { color: rgba(255, 255, 255, .8); 
 .split-bar .up, .legend-dot.up { background: var(--cb-pos); }
 .split-bar .down, .legend-dot.down { background: var(--cb-neg); }
 .split-bar .even, .legend-dot.even { background: var(--cb-even); }
+
+/* Analysis tiles open their details (R35). */
+.kpi-drill { cursor: pointer; padding: 0; color: inherit; background-color: var(--bs-card-bg); }
+.kpi-drill:hover, .kpi-drill:focus-visible { border-color: var(--bs-primary); box-shadow: 0 0 0 .15rem rgba(var(--bs-primary-rgb), .2); }

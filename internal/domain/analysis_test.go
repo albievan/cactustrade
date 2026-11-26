@@ -524,3 +524,40 @@ func TestAnalysisEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestAnalysisTradeRows: the trades behind the figures, newest first, with what each is
+// grouped by; the trades cactusTrade did not open are listed but flagged (R35).
+func TestAnalysisTradeRows(t *testing.T) {
+	an := BuildAnalysis(analysisFixture())
+	var got []string
+	for _, r := range an.Trades {
+		got = append(got, fmt.Sprintf("%d %s %s %s %s %s %s %s %v %v %d", r.PositionID, r.Account, r.Symbol, r.Exchange, r.Theme, r.Playbook,
+			r.Direction, r.Outcome, r.Ours, r.FeesKnown, r.Net))
+	}
+	want := []string{
+		"21 Second CBA.ASX ASX " + NoThemeLabel + " trend_breakout long Win true true 6000",
+		"4 Demo main TSLA NYSE " + NoThemeLabel + " " + NoPlaybookLabel + " long Win false true 9900",
+		"3 Demo main AAPL NYSE AI " + NoPlaybookLabel + " short Breakeven true true 0",
+		"2 Demo main BARC.L LSE Banks mean_reversion long Loss true false -4000",
+		"1 Demo main AAPL NYSE AI trend_breakout long Win true true 2500",
+	}
+	if !reflect.DeepEqual(got, want) || an.TradesCapped {
+		t.Fatalf("trades (capped %v):\n%s\nwant\n%s", an.TradesCapped, strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	// The counted figures stay cactusTrade's own: the listed foreign trade is not in them.
+	if an.Totals.Stats.Count != 4 || an.ForeignTrades != 1 {
+		t.Fatalf("totals %d, foreign %d", an.Totals.Stats.Count, an.ForeignTrades)
+	}
+	// At most AnalysisMaxTradeRows, the newest kept.
+	w, _ := AnalysisWindowFor(AnalysisPresetMonth, "", "", utc(2026, 11, 24, 15, 0))
+	var many []StatementTrade
+	for i := range AnalysisMaxTradeRows + 5 {
+		many = append(many, StatementTrade{Trade: Trade{AccountID: "a", Ours: true, ClosedTrade: ClosedTrade{
+			PositionID: int64(i + 1), ClosedAt: utc(2026, 11, 2, 10, 0).Add(time.Duration(i) * time.Minute), FeesKnown: true,
+		}}})
+	}
+	big := BuildAnalysis(AnalysisInput{Window: w, Accounts: []AnalysisAccountInput{{Account: Account{ID: "a", Name: "A"}, Trades: many}}})
+	if len(big.Trades) != AnalysisMaxTradeRows || !big.TradesCapped || big.Trades[0].PositionID != AnalysisMaxTradeRows+5 || big.Totals.Stats.Count != AnalysisMaxTradeRows+5 {
+		t.Fatalf("capped: %d rows, capped %v, first %d, counted %d", len(big.Trades), big.TradesCapped, big.Trades[0].PositionID, big.Totals.Stats.Count)
+	}
+}
