@@ -55,7 +55,7 @@ func backtestCmd(ctx context.Context, args []string, getenv func(string) string,
 	if _, err := marketLocation(*market); err != nil {
 		return err
 	}
-	r, err := openResearch(ctx, getenv, *account, true, nil)
+	r, err := openResearch(ctx, getenv, *account, true, false, nil)
 	if err != nil {
 		return fmt.Errorf("backtest: %w", err)
 	}

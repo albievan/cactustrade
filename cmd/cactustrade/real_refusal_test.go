@@ -110,8 +110,9 @@ var modeSites = map[string][]string{
 	},
 	// cmd: the environment account is demo; the research commands (backtest, etoro-probe)
 	// read only with a demo account's keys and refuse any other before a request.
-	"cmd/cactustrade/main.go":     {`case x.Mode != domain.ModeReal:`},
-	"cmd/cactustrade/research.go": {`if !ok || a.Mode != domain.ModeDemo {`, `case a.Mode != domain.ModeDemo:`},
+	"cmd/cactustrade/main.go": {`case x.Mode != domain.ModeReal:`},
+	// D39: etoro-probe --real-read may read a real account (its reader has no mutating method)
+	"cmd/cactustrade/research.go": {`if !ok || a.Mode != domain.ModeDemo {`, `case a.Mode != domain.ModeDemo && !(realRead && a.Mode == domain.ModeReal):`},
 }
 
 // modeRef matches a line that decides on a trading mode: the constants, the app's helpers

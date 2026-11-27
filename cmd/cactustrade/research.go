@@ -31,7 +31,10 @@ func (r *research) Close() error { return r.store.Close() }
 // for reading with one demo account's own keys: accountID, or (when empty) the account the
 // price stream would use. record, when set, receives every read answer as received
 // (etoro.Config.RecordAnswer). Logs go to stderr so stdout stays the command's output.
-func openResearch(ctx context.Context, getenv func(string) string, accountID string, migrate bool, record func(etoro.Op, []byte)) (*research, error) {
+//
+// realRead lets a real-money account's keys be used, for etoro-probe only (RU1–RU10, D39):
+// the probe's reader has no method that places, closes or cancels anything.
+func openResearch(ctx context.Context, getenv func(string) string, accountID string, migrate, realRead bool, record func(etoro.Op, []byte)) (*research, error) {
 	cfg, err := loadConfig(nil, getenv)
 	if err != nil {
 		return nil, err
@@ -51,7 +54,7 @@ func openResearch(ctx context.Context, getenv func(string) string, accountID str
 	if err != nil {
 		return fail(err)
 	}
-	acct, err := researchAccount(ctx, store, secrets, accountID)
+	acct, err := researchAccount(ctx, store, secrets, accountID, realRead)
 	if err != nil {
 		return fail(err)
 	}
@@ -66,9 +69,10 @@ func openResearch(ctx context.Context, getenv func(string) string, accountID str
 }
 
 // researchAccount is the account a research command reads with. Research only ever reads,
-// and only with a demo eToro account's keys: a real-money account, a view-only platform
-// account or an account without both keys is refused before any request (fail closed).
-func researchAccount(ctx context.Context, store *sqlstore.Store, secrets ports.SecretStore, id string) (domain.Account, error) {
+// and only with a demo eToro account's keys: a real-money account (unless realRead: the
+// probe, named explicitly), a view-only platform account or an account without both keys
+// is refused before any request (fail closed).
+func researchAccount(ctx context.Context, store *sqlstore.Store, secrets ports.SecretStore, id string, realRead bool) (domain.Account, error) {
 	if id == "" {
 		a, ok := streamAccount(ctx, store, secrets)
 		if !ok || a.Mode != domain.ModeDemo {
@@ -83,7 +87,7 @@ func researchAccount(ctx context.Context, store *sqlstore.Store, secrets ports.S
 	switch {
 	case !a.Tradable():
 		return domain.Account{}, fmt.Errorf("account %q is not an eToro account: %w", id, domain.ErrUnavailable)
-	case a.Mode != domain.ModeDemo:
+	case a.Mode != domain.ModeDemo && !(realRead && a.Mode == domain.ModeReal):
 		return domain.Account{}, fmt.Errorf("account %q is not a demo account: research reads only with demo keys: %w", id, domain.ErrRealModeGated)
 	}
 	ak, uk := domain.AccountKeyNames(a)

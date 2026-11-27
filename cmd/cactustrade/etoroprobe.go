@@ -51,7 +51,8 @@ const probeAmount domain.Cents = 100_00
 func etoroProbeCmd(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
 	fs := flag.NewFlagSet("etoro-probe", flag.ContinueOnError)
 	fs.SetOutput(out)
-	acct := fs.String("account", "", "demo eToro account id (required)")
+	acct := fs.String("account", "", "eToro account id (required; a demo account unless --real-read)")
+	realRead := fs.Bool("real-read", false, "allow a real-money account: read-only answers for RU1-RU10 (D39); nothing is ever placed")
 	symbol := fs.String("symbol", "", "eToro symbol, e.g. BARC.L or AAPL (required)")
 	showRaw := fs.Bool("raw", false, "also print each answer's JSON (sanitised)")
 	record := fs.String("record", "", "write each answer, sanitised, as a JSON file into this folder")
@@ -62,7 +63,7 @@ func etoroProbeCmd(ctx context.Context, args []string, getenv func(string) strin
 		return errors.New("etoro-probe: --account and --symbol are required")
 	}
 	raw := &rawAnswers{}
-	r, err := openResearch(ctx, getenv, *acct, false, raw.record)
+	r, err := openResearch(ctx, getenv, *acct, false, *realRead, raw.record)
 	if err != nil {
 		return fmt.Errorf("etoro-probe: %w", err)
 	}

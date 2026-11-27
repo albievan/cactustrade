@@ -170,6 +170,9 @@ func TestResearchCommandsRefuseBeforeAnyRequest(t *testing.T) {
 		{[]string{"etoro-probe"}, "--account and --symbol are required"},
 		{[]string{"etoro-probe", "--account", "demo-nokeys"}, "--account and --symbol are required"},
 		{[]string{"etoro-probe", "--account", "real-1", "--symbol", "BARC.L"}, "not a demo account"},
+		// D39: the probe reads a real account only when told to, and still only with its keys
+		{[]string{"etoro-probe", "--account", "real-1", "--symbol", "BARC.L", "--real-read"}, "does not have both eToro keys"},
+		{[]string{"backtest", "--instrument", "1", "--account", "real-1", "--real-read"}, "flag provided but not defined"},
 		{[]string{"etoro-probe", "--account", "demo-nokeys", "--symbol", "BARC.L", "--raw"}, "does not have both eToro keys"},
 		{[]string{"etoro-probe", "--bogus"}, "flag provided but not defined"},
 	} {
