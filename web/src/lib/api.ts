@@ -26,6 +26,8 @@ export type RiskLimitsView = components["schemas"]["RiskLimitsView"];
 export type RiskPreset = components["schemas"]["RiskPreset"];
 export type RiskPresetId = components["schemas"]["RiskPresetId"];
 export type RiskPresetList = components["schemas"]["RiskPresetList"];
+export type TradeMinimumsView = components["schemas"]["TradeMinimumsView"];
+export type MinimumsReview = components["schemas"]["MinimumsReview"];
 export type AgentStyle = components["schemas"]["AgentStyle"];
 export type AgentStyleChange = components["schemas"]["AgentStyleChange"];
 export type StyleLevel = components["schemas"]["StyleLevel"];
@@ -240,6 +242,11 @@ export const api = {
   setRiskLimits: (l: RiskLimits) => request<RiskLimitsView>("PUT", "/api/v1/risk/limits", l),
   // R28: presets, aggressiveness and autonomy. The server applies every rule.
   riskPresets: () => request<RiskPresetList>("GET", "/api/v1/risk/presets"),
+  // R38: the platform's trade minimums against the limits; only the owner's approval changes them.
+  tradeMinimums: () => request<TradeMinimumsView>("GET", "/api/v1/risk/minimums"),
+  checkTradeMinimums: () => request<TradeMinimumsView>("POST", "/api/v1/risk/minimums/check"),
+  decideTradeMinimums: (id: string, approve: boolean) =>
+    request<TradeMinimumsView>("POST", `/api/v1/risk/minimums/${encodeURIComponent(id)}/decision`, { approve }),
   applyRiskPreset: (preset: RiskPresetId) => request<RiskLimitsView>("PUT", "/api/v1/risk/limits", { preset }),
   agentStyle: () => request<AgentStyle>("GET", "/api/v1/agent/style"),
   setAgentStyle: (c: AgentStyleChange) => request<AgentStyle>("PUT", "/api/v1/agent/style", c),

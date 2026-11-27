@@ -1150,6 +1150,74 @@ paths:
               schema: { $ref: "#/components/schemas/RiskPresetList" }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/risk/minimums:
+    get:
+      tags: [risk]
+      operationId: getTradeMinimums
+      summary: The trade minimums of the current account's platform, checked against its limits (viewer)
+      description: |
+        The latest check (R38): eToro's smallest long and short (from the eligibility of the
+        watched shares), what the limits allow now, and the changes proposed so that a trade of
+        the minimum size fits. Nothing changes until the owner approves (`canDecide`, by the
+        rules of a change of limits; `decideHint` says why not). No `review` before the first
+        check.
+      responses:
+        "200":
+          description: Minimums
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradeMinimumsView" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/risk/minimums/check:
+    post:
+      tags: [risk]
+      operationId: checkTradeMinimums
+      summary: Check the platform's trade minimums against the limits now (owner)
+      description: Reads eToro's equity, works out the minimums and the proposal, and stores the check (replacing an undecided one). It changes no limit; new eToro keys run it too.
+      responses:
+        "200":
+          description: Checked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradeMinimumsView" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/risk/minimums/{reviewId}/decision:
+    parameters:
+      - { name: reviewId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [risk]
+      operationId: decideTradeMinimums
+      summary: Approve or decline the proposed limits (owner, web UI, agent stopped)
+      description: |
+        Approving changes the limits to the proposal through the same rules as PUT
+        /risk/limits (owner, web session, agent stopped, no kill switch, budget at most the
+        equity; audited). Refused (409) when the limits changed since the check or the check
+        is already decided. Declining changes nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approve]
+              properties:
+                approve: { type: boolean }
+      responses:
+        "200":
+          description: Decided
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradeMinimumsView" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/agent:
     get:
       tags: [agent]
@@ -2775,6 +2843,37 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Event" }
         unread: { type: integer }
+    TradeMinimumsView:
+      type: object
+      required: [canDecide]
+      properties:
+        review: { $ref: "#/components/schemas/MinimumsReview" }
+        canDecide: { type: boolean, description: "the caller may approve the pending proposal now" }
+        decideHint: { type: string, description: "why the caller may not approve now" }
+    MinimumsReview:
+      type: object
+      required: [id, at, platform, longCents, shortCents, longLowestCents, shortLowestCents, instruments, longKnown, shortKnown, equityCents, current, proposed, longRoomCents, shortRoomCents, changes, problems, status]
+      properties:
+        id: { type: string }
+        at: { type: string, format: date-time }
+        platform: { type: string }
+        longCents: { $ref: "#/components/schemas/Cents" }
+        shortCents: { $ref: "#/components/schemas/Cents" }
+        longLowestCents: { $ref: "#/components/schemas/Cents" }
+        shortLowestCents: { $ref: "#/components/schemas/Cents" }
+        instruments: { type: integer, description: "how many shares were looked at" }
+        longKnown: { type: integer }
+        shortKnown: { type: integer }
+        equityCents: { $ref: "#/components/schemas/Cents" }
+        current: { $ref: "#/components/schemas/RiskLimits" }
+        proposed: { $ref: "#/components/schemas/RiskLimits" }
+        longRoomCents: { $ref: "#/components/schemas/Cents" }
+        shortRoomCents: { $ref: "#/components/schemas/Cents" }
+        changes: { type: array, items: { type: string } }
+        problems: { type: array, items: { type: string } }
+        status: { type: string, enum: [fits, pending, approved, declined, blocked] }
+        decidedBy: { type: string }
+        decidedAt: { type: string, format: date-time }
     RiskLimits:
       type: object
       required: [tradingBudgetCents, dailyLossBp, drawdownBp, maxPositionBp, maxOpenPositions, noEntryBeforeCloseMinutes, flattenBeforeCloseMinutes, maxPortfolioAgeSeconds, maxQuoteAgeSeconds, maxShortBp]

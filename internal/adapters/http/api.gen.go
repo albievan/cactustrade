@@ -440,6 +440,33 @@ func (e MeVia) Valid() bool {
 	}
 }
 
+// Defines values for MinimumsReviewStatus.
+const (
+	Approved MinimumsReviewStatus = "approved"
+	Blocked  MinimumsReviewStatus = "blocked"
+	Declined MinimumsReviewStatus = "declined"
+	Fits     MinimumsReviewStatus = "fits"
+	Pending  MinimumsReviewStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the MinimumsReviewStatus enum.
+func (e MinimumsReviewStatus) Valid() bool {
+	switch e {
+	case Approved:
+		return true
+	case Blocked:
+		return true
+	case Declined:
+		return true
+	case Fits:
+		return true
+	case Pending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Missing.
 const (
 	MissingAccount       Missing = "account"
@@ -2616,6 +2643,49 @@ type Me struct {
 // MeVia defines model for Me.Via.
 type MeVia string
 
+// MinimumsReview defines model for MinimumsReview.
+type MinimumsReview struct {
+	At        time.Time  `json:"at"`
+	Changes   []string   `json:"changes"`
+	Current   RiskLimits `json:"current"`
+	DecidedAt *time.Time `json:"decidedAt,omitempty"`
+	DecidedBy *string    `json:"decidedBy,omitempty"`
+
+	// EquityCents US dollars in cents (the eToro account currency is USD)
+	EquityCents Cents  `json:"equityCents"`
+	Id          string `json:"id"`
+
+	// Instruments how many shares were looked at
+	Instruments int `json:"instruments"`
+
+	// LongCents US dollars in cents (the eToro account currency is USD)
+	LongCents Cents `json:"longCents"`
+	LongKnown int   `json:"longKnown"`
+
+	// LongLowestCents US dollars in cents (the eToro account currency is USD)
+	LongLowestCents Cents `json:"longLowestCents"`
+
+	// LongRoomCents US dollars in cents (the eToro account currency is USD)
+	LongRoomCents Cents      `json:"longRoomCents"`
+	Platform      string     `json:"platform"`
+	Problems      []string   `json:"problems"`
+	Proposed      RiskLimits `json:"proposed"`
+
+	// ShortCents US dollars in cents (the eToro account currency is USD)
+	ShortCents Cents `json:"shortCents"`
+	ShortKnown int   `json:"shortKnown"`
+
+	// ShortLowestCents US dollars in cents (the eToro account currency is USD)
+	ShortLowestCents Cents `json:"shortLowestCents"`
+
+	// ShortRoomCents US dollars in cents (the eToro account currency is USD)
+	ShortRoomCents Cents                `json:"shortRoomCents"`
+	Status         MinimumsReviewStatus `json:"status"`
+}
+
+// MinimumsReviewStatus defines model for MinimumsReview.Status.
+type MinimumsReviewStatus string
+
 // MinorUnits An amount in minor units of the currency given next to it: hundredths for most (USD
 // cents, GBP pence…), whole units for JPY and KRW.
 type MinorUnits = int64
@@ -3457,6 +3527,16 @@ type ThemeShare struct {
 	Symbol       string `json:"symbol"`
 }
 
+// TradeMinimumsView defines model for TradeMinimumsView.
+type TradeMinimumsView struct {
+	// CanDecide the caller may approve the pending proposal now
+	CanDecide bool `json:"canDecide"`
+
+	// DecideHint why the caller may not approve now
+	DecideHint *string         `json:"decideHint,omitempty"`
+	Review     *MinimumsReview `json:"review,omitempty"`
+}
+
 // TradingMode defines model for TradingMode.
 type TradingMode string
 
@@ -3835,6 +3915,11 @@ type ListReviewsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// DecideTradeMinimumsJSONBody defines parameters for DecideTradeMinimums.
+type DecideTradeMinimumsJSONBody struct {
+	Approve bool `json:"approve"`
+}
+
 // PreviewStatementParams defines parameters for PreviewStatement.
 type PreviewStatementParams struct {
 	Period StatementPeriod `form:"period" json:"period"`
@@ -3929,6 +4014,9 @@ type ConfirmPasswordResetJSONRequestBody = PasswordResetConfirm
 
 // SetRiskLimitsJSONRequestBody defines body for SetRiskLimits for application/json ContentType.
 type SetRiskLimitsJSONRequestBody = RiskLimitsChange
+
+// DecideTradeMinimumsJSONRequestBody defines body for DecideTradeMinimums for application/json ContentType.
+type DecideTradeMinimumsJSONRequestBody DecideTradeMinimumsJSONBody
 
 // SetScannerJSONRequestBody defines body for SetScanner for application/json ContentType.
 type SetScannerJSONRequestBody = ScannerSwitch
@@ -4217,6 +4305,15 @@ type ServerInterface interface {
 	// SetRiskLimits Change the risk limits (owner, web UI, only while the agent is stopped)
 	// (PUT /api/v1/risk/limits)
 	SetRiskLimits(w http.ResponseWriter, r *http.Request)
+	// GetTradeMinimums The trade minimums of the current account's platform, checked against its limits (viewer)
+	// (GET /api/v1/risk/minimums)
+	GetTradeMinimums(w http.ResponseWriter, r *http.Request)
+	// CheckTradeMinimums Check the platform's trade minimums against the limits now (owner)
+	// (POST /api/v1/risk/minimums/check)
+	CheckTradeMinimums(w http.ResponseWriter, r *http.Request)
+	// DecideTradeMinimums Approve or decline the proposed limits (owner, web UI, agent stopped)
+	// (POST /api/v1/risk/minimums/{reviewId}/decision)
+	DecideTradeMinimums(w http.ResponseWriter, r *http.Request, reviewId string)
 	// GetRiskPresets The risk presets for the current account (viewer)
 	// (GET /api/v1/risk/presets)
 	GetRiskPresets(w http.ResponseWriter, r *http.Request)
@@ -6543,6 +6640,60 @@ func (siw *ServerInterfaceWrapper) SetRiskLimits(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetTradeMinimums operation middleware
+func (siw *ServerInterfaceWrapper) GetTradeMinimums(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTradeMinimums(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CheckTradeMinimums operation middleware
+func (siw *ServerInterfaceWrapper) CheckTradeMinimums(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CheckTradeMinimums(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DecideTradeMinimums operation middleware
+func (siw *ServerInterfaceWrapper) DecideTradeMinimums(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "reviewId" -------------
+	var reviewId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "reviewId", r.PathValue("reviewId"), &reviewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "reviewId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DecideTradeMinimums(w, r, reviewId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetRiskPresets operation middleware
 func (siw *ServerInterfaceWrapper) GetRiskPresets(w http.ResponseWriter, r *http.Request) {
 
@@ -7370,6 +7521,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.GetRiskLimits)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.SetRiskLimits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/presets", wrapper.GetRiskPresets)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/minimums", wrapper.GetTradeMinimums)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/risk/minimums/check", wrapper.CheckTradeMinimums)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/risk/minimums/{reviewId}/decision", wrapper.DecideTradeMinimums)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent", wrapper.GetAgent)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/agent/style", wrapper.GetAgentStyle)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/agent/style", wrapper.SetAgentStyle)

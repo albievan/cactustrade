@@ -8,6 +8,7 @@ import { AgentCardView, type AgentAction } from "../components/AgentCards";
 import { ForceCloseDialog, forceCloseNote } from "../components/ForceCloseDialog";
 import { RiskPresets } from "../components/RiskPresets";
 import { AgentStylePanel } from "../components/AgentStylePanel";
+import { TradeMinimums } from "../components/TradeMinimums";
 
 // The owner's limits. The risk engine enforces them on every entry; they can be changed only
 // while the agent is stopped, and every change is audited. Whether the caller may change them
@@ -38,14 +39,16 @@ export function RiskLimits() {
   const [forceClose, setForceClose] = useState<{ accountId?: string; all?: boolean } | null>(null);
   const accountId = status?.account?.id;
   const agentState = status?.agentState; // a change of state may change canEdit: fetch again
-  useEffect(() => {
-    if (!accountId) return;
+  const loadLimits = useCallback(() => {
     api.riskLimits().then((v) => {
       const x = limitsOf(v);
       setL(x); setEdit({ canEdit: v.canEdit, reason: v.editBlockedReason }); setEdited(false); setPreset(v.preset);
       setBudget((x.tradingBudgetCents / 100).toFixed(2));
     }).catch(setError);
-  }, [accountId, agentState]);
+  }, []);
+  useEffect(() => {
+    if (accountId) loadLimits();
+  }, [accountId, agentState, loadLimits]);
   const loadCards = useCallback(async () => {
     try {
       setCards(await api.agents());
@@ -186,6 +189,7 @@ export function RiskLimits() {
           )}
         </div>
       )}
+      <TradeMinimums reloadKey={`${accountId}-${agentState}`} onApproved={() => { loadLimits(); setSaved(true); }} />
       <RiskPresets canEdit={editable} edited={edited} current={preset} reloadKey={`${accountId}-${agentState}`} onApplied={(v) => {
         const next = limitsOf(v);
         setL(next); setPreset(v.preset); setBudget((next.tradingBudgetCents / 100).toFixed(2)); setEdited(false); setSaved(true); setError(null);

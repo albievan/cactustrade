@@ -81,6 +81,11 @@ var modeSites = map[string][]string{
 		`return domain.DefaultLimitsFor(accountMode(a))`,                // real accounts default to the real limits (OD25)
 		`if err := l.ValidateFor(accountMode(v.Account)); err != nil {`, // real limits checked against the real ceilings (OD25)
 	},
+	// R38: a minimums proposal is checked against the account's mode only to narrow it (real
+	// ceilings); approving it goes through SetRiskLimits.
+	"internal/app/minimums.go": {
+		`fit := domain.FitMinimums(l, m, equity, accountMode(v.Account))`,
+	},
 	// R28: the style follows the account's mode only to narrow (presets capped, no real auto-start).
 	"internal/app/style.go": {
 		`return s.autonomyOf(ctx, a.ID).Policy(accountMode(a))`, // policyOf: real accounts never start themselves

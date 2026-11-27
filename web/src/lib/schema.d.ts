@@ -1076,6 +1076,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/risk/minimums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The trade minimums of the current account's platform, checked against its limits (viewer)
+         * @description The latest check (R38): eToro's smallest long and short (from the eligibility of the
+         *     watched shares), what the limits allow now, and the changes proposed so that a trade of
+         *     the minimum size fits. Nothing changes until the owner approves (`canDecide`, by the
+         *     rules of a change of limits; `decideHint` says why not). No `review` before the first
+         *     check.
+         */
+        get: operations["getTradeMinimums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/risk/minimums/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the platform's trade minimums against the limits now (owner)
+         * @description Reads eToro's equity, works out the minimums and the proposal, and stores the check (replacing an undecided one). It changes no limit; new eToro keys run it too.
+         */
+        post: operations["checkTradeMinimums"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/risk/minimums/{reviewId}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reviewId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve or decline the proposed limits (owner, web UI, agent stopped)
+         * @description Approving changes the limits to the proposal through the same rules as PUT
+         *     /risk/limits (owner, web session, agent stopped, no kill switch, budget at most the
+         *     equity; audited). Refused (409) when the limits changed since the check or the check
+         *     is already decided. Declining changes nothing.
+         */
+        post: operations["decideTradeMinimums"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent": {
         parameters: {
             query?: never;
@@ -2451,6 +2520,39 @@ export interface components {
         EventFeed: {
             events: components["schemas"]["Event"][];
             unread: number;
+        };
+        TradeMinimumsView: {
+            review?: components["schemas"]["MinimumsReview"];
+            /** @description the caller may approve the pending proposal now */
+            canDecide: boolean;
+            /** @description why the caller may not approve now */
+            decideHint?: string;
+        };
+        MinimumsReview: {
+            id: string;
+            /** Format: date-time */
+            at: string;
+            platform: string;
+            longCents: components["schemas"]["Cents"];
+            shortCents: components["schemas"]["Cents"];
+            longLowestCents: components["schemas"]["Cents"];
+            shortLowestCents: components["schemas"]["Cents"];
+            /** @description how many shares were looked at */
+            instruments: number;
+            longKnown: number;
+            shortKnown: number;
+            equityCents: components["schemas"]["Cents"];
+            current: components["schemas"]["RiskLimits"];
+            proposed: components["schemas"]["RiskLimits"];
+            longRoomCents: components["schemas"]["Cents"];
+            shortRoomCents: components["schemas"]["Cents"];
+            changes: string[];
+            problems: string[];
+            /** @enum {string} */
+            status: "fits" | "pending" | "approved" | "declined" | "blocked";
+            decidedBy?: string;
+            /** Format: date-time */
+            decidedAt?: string;
         };
         RiskLimits: {
             tradingBudgetCents: components["schemas"]["Cents"];
@@ -5572,6 +5674,86 @@ export interface operations {
             };
             401: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    getTradeMinimums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Minimums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeMinimumsView"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    checkTradeMinimums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Checked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeMinimumsView"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    decideTradeMinimums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reviewId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    approve: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Decided */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeMinimumsView"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
         };
     };
     getAgent: {

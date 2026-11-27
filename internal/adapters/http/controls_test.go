@@ -43,3 +43,24 @@ func TestStartRefusedWithoutTheAgentLoop(t *testing.T) {
 		t.Fatalf("still blocked: %v", m["controls"])
 	}
 }
+
+// PLAN R38: the minimums are checked on request and stored; a decision needs the review's id.
+func TestTradeMinimumsEndpoints(t *testing.T) {
+	x := newAgentTC(t)
+	code, m, _ := x.do("GET", "/api/v1/risk/minimums", "")
+	if code != 200 || m["review"] != nil || m["canDecide"] != false {
+		t.Fatalf("before a check %d %v", code, m)
+	}
+	code, m, _ = x.do("POST", "/api/v1/risk/minimums/check", "", x.csrfHdr()...)
+	rv, _ := m["review"].(map[string]any)
+	if code != 200 || rv == nil || rv["status"] == nil || rv["current"] == nil || rv["changes"] == nil {
+		t.Fatalf("check %d %v", code, m)
+	}
+	if code, m, _ := x.do("POST", "/api/v1/risk/minimums/nope/decision", `{"approve":true}`, x.csrfHdr()...); code != 404 {
+		t.Fatalf("unknown review %d %v", code, m)
+	}
+	code, m, _ = x.do("GET", "/api/v1/risk/minimums", "")
+	if got, _ := m["review"].(map[string]any); code != 200 || got["id"] != rv["id"] {
+		t.Fatalf("stored %d %v", code, m)
+	}
+}

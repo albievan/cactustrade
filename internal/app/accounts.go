@@ -383,6 +383,13 @@ func (s *Service) SetAccountCredentials(ctx context.Context, p Principal, id str
 	}
 	if len(puts) > 0 {
 		s.audit(ctx, p, "account.keys_set", v.ID, fmt.Sprintf("credentials=%d", len(puts))) // never the values
+		if tradable && v.OnPlatform() == domain.PlatformEtoro && s.needBroker() == nil {
+			// New keys (a new account): check the platform's trade minimums against the limits
+			// at once (PLAN R38). It only proposes; a failure is logged, the keys stay stored.
+			if _, err := s.checkMinimums(ctx, v, p.Username); err != nil {
+				s.d.Log.WarnContext(ctx, "checking the trade minimums after new keys failed", "account", v.ID, "err", err)
+			}
+		}
 	}
 	return nil
 }
