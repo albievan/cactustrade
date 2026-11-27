@@ -2977,6 +2977,9 @@ type RealGateStatus struct {
 	CanSetDays bool        `json:"canSetDays"`
 	Checks     []GateCheck `json:"checks"`
 
+	// DefaultMinDays the number of qualifying demo days required when the admin has not set one
+	DefaultMinDays int `json:"defaultMinDays"`
+
 	// DemoAccountId the demo account the checklist is for; absent = none
 	DemoAccountId *string `json:"demoAccountId,omitempty"`
 

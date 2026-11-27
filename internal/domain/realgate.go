@@ -25,14 +25,15 @@ type EvidenceRule struct {
 	MaxAgeDays int
 }
 
-// DefaultEvidenceRule is OD20's default: 20 qualifying days in the last 60, the latest at
-// most 7 days old.
-var DefaultEvidenceRule = EvidenceRule{MinDays: 20, WindowDays: 60, MaxAgeDays: 7}
+// DefaultEvidenceRule is the default evidence rule: 5 qualifying days in the last 60 (owner's
+// decision D37, 2026-11-27; OD20 started at 20), the latest at most 7 days old.
+var DefaultEvidenceRule = EvidenceRule{MinDays: 5, WindowDays: 60, MaxAgeDays: 7}
 
 // MinEvidenceDaysFloor is the fewest qualifying demo days a real account's admin may require
-// (owner's decision D36, 2026-11-27): the number is the admin's to set per real account, but
-// the demo period can never be switched off. The most is the window (WindowDays).
-const MinEvidenceDaysFloor = 5
+// (owner's decisions D36 and D37, 2026-11-27): the number is the admin's to set per real
+// account, 1 at the least, so the demo period can never be switched off. The most is the
+// window (WindowDays).
+const MinEvidenceDaysFloor = 1
 
 // WithMinDays is the rule requiring n qualifying days (MinEvidenceDaysFloor..WindowDays).
 func (r EvidenceRule) WithMinDays(n int) (EvidenceRule, error) {

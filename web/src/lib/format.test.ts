@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dateTime, hourMinute } from "./format";
+import { dateTime, dayDate, hourMinute } from "./format";
 
 describe("format", () => {
   it("writes the full local date and time", () => {
@@ -7,5 +7,7 @@ describe("format", () => {
     expect(dateTime(iso)).toBe("26/11/2026 20:05");
     expect(hourMinute(iso)).toBe("20:05");
     expect(dateTime("not a time")).toBe("—");
+    expect(dayDate(iso)).toBe("26/11/2026");
+    expect(dayDate("not a time")).toBe("—");
   });
 });

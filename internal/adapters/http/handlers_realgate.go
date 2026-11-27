@@ -59,7 +59,7 @@ func toRealGateStatus(v app.RealGateView) RealGateStatus {
 		DemoCandidates: make([]Account, 0, len(v.DemoCandidates)), Checks: make([]GateCheck, 0, len(v.Checks)),
 		Evidence: GateEvidence{Count: v.Evidence.Count, Days: make([]string, 0, len(v.Evidence.Days))},
 		Rule:     EvidenceRule{MinDays: v.Rule.MinDays, WindowDays: v.Rule.WindowDays, MaxAgeDays: v.Rule.MaxAgeDays},
-		Phrase:   v.Phrase, CanArm: v.CanArm, CanDisarm: v.CanDisarm, CanSetDays: v.CanSetDays, MinDaysFloor: domain.MinEvidenceDaysFloor,
+		Phrase:   v.Phrase, CanArm: v.CanArm, CanDisarm: v.CanDisarm, CanSetDays: v.CanSetDays, MinDaysFloor: domain.MinEvidenceDaysFloor, DefaultMinDays: domain.DefaultEvidenceRule.MinDays,
 	}
 	if v.DemoAccountID != "" {
 		out.DemoAccountId = ptr(v.DemoAccountID)

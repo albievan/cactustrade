@@ -198,8 +198,8 @@ func TestArmRealRefusals(t *testing.T) {
 		{"wrong password (403)", func(_ *testing.T, g *gateEnv) (string, string, string) {
 			return g.a.ID, domain.ArmPhrase(g.real.Name), "not it"
 		}, domain.ErrWrongPassword, "", "wrong password"},
-		{"19 qualifying days", func(t *testing.T, g *gateEnv) (string, string, string) {
-			g.seedEvidence(t, g.a.ID, 19, 1)
+		{"4 qualifying days (the default needs 5)", func(t *testing.T, g *gateEnv) (string, string, string) {
+			g.seedEvidence(t, g.a.ID, 4, 1)
 			return g.a.ID, domain.ArmPhrase(g.real.Name), adminPassword
 		}, domain.ErrConflict, domain.CheckEvidence, "demo_evidence"},
 		{"20 days, the latest 8 days old", func(t *testing.T, g *gateEnv) (string, string, string) {
@@ -207,7 +207,7 @@ func TestArmRealRefusals(t *testing.T) {
 			return g.a.ID, domain.ArmPhrase(g.real.Name), adminPassword
 		}, domain.ErrConflict, domain.CheckEvidence, "demo_evidence"},
 		{"held positions do not count", func(t *testing.T, g *gateEnv) (string, string, string) {
-			g.seedEvidence(t, g.a.ID, 20, 1)
+			g.seedEvidence(t, g.a.ID, 5, 1)
 			ps, _ := g.store.AgentPositions().ListSince(g.ctx, g.a.ID, time.Time{})
 			p := ps[len(ps)-1]
 			p.ClosedAt = p.OpenedAt.Add(12 * time.Hour) // the next risk day
@@ -703,25 +703,25 @@ func TestDemoEvidenceReadsADayAtATime(t *testing.T) {
 }
 
 // TestSetDemoDaysRequired (D36): the admin who owns the real account sets how many qualifying
-// demo days arming needs, 5 up to the 60-day window; the checklist and the view use it;
+// demo days arming needs, 1 up to the 60-day window (default 5, D37); the checklist and the view use it;
 // anyone else, an API key or a number out of range is refused; every change is audited.
 func TestSetDemoDaysRequired(t *testing.T) {
 	g := newGateEnv(t)
 	demo := g.a.ID
-	g.seedEvidence(t, demo, 6, 1)
+	g.seedEvidence(t, demo, 3, 1)
 	v, err := g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, demo)
-	if err != nil || v.Rule.MinDays != 20 || !v.CanSetDays || gateCheck(v, domain.CheckEvidence).Pass || !strings.Contains(gateCheck(v, domain.CheckEvidence).Detail, "20 needed") {
+	if err != nil || v.Rule.MinDays != 5 || !v.CanSetDays || gateCheck(v, domain.CheckEvidence).Pass || !strings.Contains(gateCheck(v, domain.CheckEvidence).Detail, "5 needed") {
 		t.Fatalf("default: rule %+v canSet %v evidence %+v %v", v.Rule, v.CanSetDays, gateCheck(v, domain.CheckEvidence), err)
 	}
-	v, err = g.svc.SetDemoDaysRequired(g.ctx, g.admin, g.real.ID, 5)
-	if err != nil || v.Rule.MinDays != 5 {
-		t.Fatalf("set 5: %+v %v", v.Rule, err)
+	v, err = g.svc.SetDemoDaysRequired(g.ctx, g.admin, g.real.ID, 2)
+	if err != nil || v.Rule.MinDays != 2 {
+		t.Fatalf("set 2: %+v %v", v.Rule, err)
 	}
 	v, _ = g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, demo)
 	if c := gateCheck(v, domain.CheckEvidence); !c.Pass {
-		t.Fatalf("6 days now pass a 5-day rule: %+v", c)
+		t.Fatalf("3 days now pass a 2-day rule: %+v", c)
 	}
-	for _, n := range []int{0, 4, 61, -1} {
+	for _, n := range []int{0, 61, -1} {
 		if _, err := g.svc.SetDemoDaysRequired(g.ctx, g.admin, g.real.ID, n); !errors.Is(err, domain.ErrInvalid) {
 			t.Errorf("%d days accepted: %v", n, err)
 		}
@@ -735,7 +735,7 @@ func TestSetDemoDaysRequired(t *testing.T) {
 	if _, err := g.svc.SetDemoDaysRequired(g.ctx, g.admin, g.a.ID, 30); err == nil {
 		t.Error("a demo account got a demo-days rule")
 	}
-	if got, _ := g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, demo); got.Rule.MinDays != 5 {
+	if got, _ := g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, demo); got.Rule.MinDays != 2 {
 		t.Fatalf("refused changes stored: %d", got.Rule.MinDays)
 	}
 	entries, err := g.store.Audit().List(g.ctx, 50)
@@ -743,7 +743,7 @@ func TestSetDemoDaysRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.ContainsFunc(entries, func(a domain.AuditEntry) bool {
-		return a.Action == "realgate.demo_days_changed" && a.Details == "old=20 new=5"
+		return a.Action == "realgate.demo_days_changed" && a.Details == "old=5 new=2"
 	}) {
 		t.Fatal("the change is not audited")
 	}

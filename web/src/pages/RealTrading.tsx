@@ -217,7 +217,7 @@ function DemoDaysEditor({ st, onSaved }: { st: RealGateStatus; onSaved: (v: Real
           value={days} onChange={(e) => setDays(e.target.value)} />
         <button type="submit" className="btn btn-outline-secondary" disabled={busy || !valid || n === st.rule.minDays}>Save</button>
       </div>
-      <div className="form-text">{st.minDaysFloor}–{st.rule.windowDays} days (default 20). Changing it disarms an armed account and is audited.</div>
+      <div className="form-text">{st.minDaysFloor}–{st.rule.windowDays} days (default {st.defaultMinDays}). Changing it disarms an armed account and is audited.</div>
       <ProblemAlert error={error} className="py-2 small mt-2" />
     </form>
   );

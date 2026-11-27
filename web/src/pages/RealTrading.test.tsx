@@ -19,7 +19,7 @@ function gate(over: Record<string, unknown> = {}) {
     ],
     evidence: { days: ["2026-11-20", "2026-11-21"], count: 19, first: "2026-10-20", last: "2026-11-21" },
     rule: { minDays: 20, windowDays: 60, maxAgeDays: 7 }, phrase: "ENABLE REAL TRADING Live", canArm: true, canDisarm: true,
-    canSetDays: true, minDaysFloor: 5,
+    canSetDays: true, minDaysFloor: 1, defaultMinDays: 5,
     ...over,
   };
 }
@@ -116,7 +116,8 @@ describe("RealTrading", () => {
     const save = screen.getByRole("button", { name: "Save" });
     expect(input).toHaveValue(20);
     expect(save).toBeDisabled(); // unchanged
-    fireEvent.change(input, { target: { value: "4" } });
+    expect(screen.getByText(/1–60 days \(default 5\)/)).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "0" } });
     expect(save).toBeDisabled(); // below the floor
     fireEvent.change(input, { target: { value: "10" } });
     fireEvent.click(save);

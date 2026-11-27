@@ -604,8 +604,8 @@ export interface paths {
         get?: never;
         /**
          * Set how many qualifying demo days arming this real account needs (admin who owns it, web session)
-         * @description D36 (owner, 2026-11-27): the account's admin sets the number, from `minDaysFloor` (5)
-         *     up to the evidence window (60 risk days); the default is 20. What counts as a day
+         * @description D36 and D37 (owner, 2026-11-27): the account's admin sets the number, from `minDaysFloor` (1)
+         *     up to the evidence window (60 risk days); the default is `defaultMinDays` (5). What counts as a day
          *     (OD19) and the window are unchanged. Audited, announced, and an armed gate is disarmed.
          */
         put: operations["setRealGateDemoDays"];
@@ -3199,6 +3199,8 @@ export interface components {
             canSetDays: boolean;
             /** @description the fewest qualifying demo days that may be required (the most is rule.windowDays) */
             minDaysFloor: number;
+            /** @description the number of qualifying demo days required when the admin has not set one */
+            defaultMinDays: number;
         };
         ArmRealRequest: {
             demoAccountId: string;

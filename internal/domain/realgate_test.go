@@ -91,9 +91,12 @@ func TestFoldDayFacts(t *testing.T) {
 	}
 }
 
+// rule20 is a 20-day rule (OD20's first default), so the cases can count up to 20.
+var rule20 = EvidenceRule{MinDays: 20, WindowDays: 60, MaxAgeDays: 7}
+
 func TestQualifyingDays(t *testing.T) {
 	const today RiskDate = "2026-11-24"
-	rule := DefaultEvidenceRule
+	rule := rule20
 	tests := []struct {
 		name  string
 		facts []DayFacts
@@ -185,8 +188,8 @@ func gateInput() GateInput {
 	l.TradingBudget = 100_000
 	return GateInput{
 		Real: real, RealKeys: true, Reconciled: true, Agent: AgentStopped, Limits: l, Demo: &demo,
-		Evidence: QualifyingDays(qualifyingRun(today, 20, 1), today, DefaultEvidenceRule),
-		Today:    today, Rule: DefaultEvidenceRule,
+		Evidence: QualifyingDays(qualifyingRun(today, 20, 1), today, rule20),
+		Today:    today, Rule: rule20,
 		User: GateUser{ID: "u-admin", Role: RoleAdmin, Session: true}, Confirm: "  ENABLE REAL TRADING Live ISA ",
 	}
 }
@@ -377,14 +380,14 @@ func TestRealGate(t *testing.T) {
 }
 
 func TestEvidenceRuleWithMinDays(t *testing.T) {
-	for _, n := range []int{MinEvidenceDaysFloor, 20, DefaultEvidenceRule.WindowDays} {
+	for _, n := range []int{MinEvidenceDaysFloor, 1, 5, 20, DefaultEvidenceRule.WindowDays} {
 		r, err := DefaultEvidenceRule.WithMinDays(n)
 		if err != nil || r.MinDays != n || r.WindowDays != 60 || r.MaxAgeDays != 7 {
 			t.Errorf("%d: %+v %v", n, r, err)
 		}
 	}
 	for _, n := range []int{-1, 0, MinEvidenceDaysFloor - 1, DefaultEvidenceRule.WindowDays + 1} {
-		if r, err := DefaultEvidenceRule.WithMinDays(n); err == nil || r.MinDays != 20 {
+		if r, err := DefaultEvidenceRule.WithMinDays(n); err == nil || r.MinDays != DefaultEvidenceRule.MinDays {
 			t.Errorf("%d accepted: %+v", n, r)
 		}
 	}

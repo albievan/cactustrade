@@ -258,9 +258,11 @@ describe("Dashboard", () => {
     await advance(1_000); // 1 s backoff
     expect(FakeEventSource.all).toHaveLength(2);
     act(() => FakeEventSource.latest().fail());
-    await advance(1_999);
+    // shouldAdvanceTime lets real time move the fake clock too, so check with a margin a
+    // loaded test run cannot use up: no reconnect at 1.5 s (more than the first 1 s step)
+    await advance(1_500);
     expect(FakeEventSource.all).toHaveLength(2);
-    await advance(1); // 2 s backoff
+    await advance(500); // 2 s backoff
     expect(FakeEventSource.all).toHaveLength(3);
     const agentBefore = agentReads();
     act(() => FakeEventSource.latest().fail()); // the third failure: fall back to polling

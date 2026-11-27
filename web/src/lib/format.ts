@@ -15,3 +15,10 @@ export function hourMinute(iso: string): string {
   if (Number.isNaN(d.getTime())) return "—";
   return `${two(d.getHours())}:${two(d.getMinutes())}`;
 }
+
+// dayDate is the local date of a time: "26/11/2026".
+export function dayDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${d.getFullYear()}`;
+}

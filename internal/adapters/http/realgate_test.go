@@ -106,7 +106,7 @@ func TestRealGateEndpoints(t *testing.T) {
 	base := "/api/v1/accounts/" + g.real + "/real-gate"
 	const pw = "a long password"
 
-	g.seedEvidenceDays(t, 0, 19) // one day short (review minor 5: the step's name is what it tests)
+	g.seedEvidenceDays(t, 0, 4) // one day short of the default 5 (D37) (review minor 5: the step's name is what it tests)
 	code, m, _ := g.do("GET", base, "")
 	if code != 200 || m["enabled"] != false || m["armed"] != false || m["phrase"] != "ENABLE REAL TRADING Live" || m["canArm"] != true ||
 		m["canDisarm"] != true || m["demoAccountId"] != g.acct || m["gate"].(map[string]any)["state"] != "locked" {
@@ -119,10 +119,10 @@ func TestRealGateEndpoints(t *testing.T) {
 			failing[c["name"].(string)] = true
 		}
 	}
-	if len(failing) != 1 || !failing["demo_evidence"] || m["evidence"].(map[string]any)["count"] != 19.0 {
+	if len(failing) != 1 || !failing["demo_evidence"] || m["evidence"].(map[string]any)["count"] != 4.0 {
 		t.Fatalf("failing checks %v, evidence %v", failing, m["evidence"])
 	}
-	if m["canSetDays"] != true || m["minDaysFloor"] != 5.0 || m["rule"].(map[string]any)["minDays"] != 20.0 {
+	if m["canSetDays"] != true || m["minDaysFloor"] != 1.0 || m["defaultMinDays"] != 5.0 || m["rule"].(map[string]any)["minDays"] != 5.0 {
 		t.Fatalf("demo days in the status: %v %v %v", m["canSetDays"], m["minDaysFloor"], m["rule"])
 	}
 	for _, s := range []agentStep{
@@ -131,25 +131,25 @@ func TestRealGateEndpoints(t *testing.T) {
 		{"an unknown field", "POST", base + "/arm", `{"demoAccountId":"x","confirm":"y","password":"z","mode":"real"}`, csrf, 400, ""},
 		{"wrong password", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING Live", "not it"), csrf, 403, "the password is not correct"},
 		{"wrong phrase", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING", pw), csrf, 422, ""},
-		{"19 days: one short of the evidence", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING Live", pw), csrf, 409, "Real trading cannot be armed"},
+		{"4 days: one short of the evidence", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING Live", pw), csrf, 409, "Real trading cannot be armed"},
 		{"a demo account has no gate", "GET", "/api/v1/accounts/" + g.acct + "/real-gate", "", nil, 422, ""},
 		{"an unknown account", "GET", "/api/v1/accounts/nope/real-gate", "", nil, 404, ""},
 		{"disarm without CSRF", "POST", base + "/disarm", `{}`, nil, 403, ""},
 		{"demo days without CSRF", "PUT", base + "/demo-days", `{"minDays":10}`, nil, 403, ""},
-		{"demo days below the floor", "PUT", base + "/demo-days", `{"minDays":4}`, csrf, 422, ""},
+		{"demo days below the floor", "PUT", base + "/demo-days", `{"minDays":0}`, csrf, 422, ""},
 	} {
 		code, m, _ := g.do(s.method, s.path, s.body, s.hdr...)
 		if code != s.code || (s.state != "" && m["title"] != s.state && m["detail"] != s.state) {
 			t.Fatalf("%s: %d %v", s.name, code, m)
 		}
 	}
-	g.seedEvidenceDays(t, 19, 1) // the 20th day
+	g.seedEvidenceDays(t, 4, 1) // the 5th day
 	code, m, _ = g.do("POST", base+"/arm", armBody(g.acct, " ENABLE REAL TRADING Live ", pw), csrf...)
 	if code != 403 || m["title"] != "Real trading is not enabled in this build" {
 		t.Fatalf("every check passing: %d %v", code, m)
 	}
 	code, m, _ = g.do("GET", base, "")
-	if code != 200 || m["armed"] != false || m["gate"].(map[string]any)["state"] != "locked" || m["evidence"].(map[string]any)["count"] != 20.0 {
+	if code != 200 || m["armed"] != false || m["gate"].(map[string]any)["state"] != "locked" || m["evidence"].(map[string]any)["count"] != 5.0 {
 		t.Fatalf("status after %d %v", code, m)
 	}
 	for _, c := range m["checks"].([]any) {
