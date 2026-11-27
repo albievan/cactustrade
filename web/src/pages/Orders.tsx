@@ -5,6 +5,7 @@ import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
 import { DirectionBadge } from "../components/DirectionBadge";
+import { dateTime } from "../lib/format";
 import { applyFilters, choices, groupRows, nextSort, sortRows, type Column, type Filters, type Sort } from "../lib/tableView";
 
 const stateBadge: Record<string, string> = {
@@ -19,11 +20,12 @@ const num = (s?: string) => (s ? Number(s) : -Infinity);
 
 // The columns of the orders table. Each one can be filtered; the "group" ones can group rows.
 const columns: Column<Order>[] = [
-  { key: "time", label: "Time", text: (o) => new Date(o.createdAt).toLocaleString(), sort: (o) => o.createdAt, filter: "text" },
+  { key: "time", label: "Time", text: (o) => dateTime(o.createdAt), sort: (o) => o.createdAt, filter: "text" },
   { key: "day", label: "Day", text: (o) => new Date(o.createdAt).toLocaleDateString(), sort: (o) => o.createdAt, group: true, hidden: true },
   { key: "kind", label: "Kind", text: (o) => kindWord[o.kind] ?? o.kind, filter: "choice", group: true },
   { key: "what", label: "What", text: (o) => o.kindLabel, filter: "text" },
   { key: "share", label: "Share", text: (o) => o.symbol || String(o.instrumentId), filter: "choice", group: true },
+  { key: "exchange", label: "Exchange", text: (o) => o.exchange || "—", filter: "choice", group: true },
   { key: "direction", label: "Direction", text: (o) => cap(o.direction), filter: "choice", group: true },
   { key: "amount", label: "Amount", text: (o) => (o.kind === "open" ? usd(o.amountCents) : "—"), sort: (o) => (o.kind === "open" ? o.amountCents : -1), filter: "text", align: "end" },
   { key: "entry", label: "Entry", text: (o) => o.entry ?? "—", sort: (o) => num(o.entry), filter: "text", align: "end" },
@@ -95,7 +97,7 @@ export function Orders() {
           <li><strong>done</strong> (a close request): the position was closed.</li>
         </ul>
         <p className="mb-0">Filter with the boxes under each heading, search every column at once, click a heading to sort
-          (again to reverse, a third time back to the latest at the top), and group by kind, share, direction, state, reason or day.
+          (again to reverse, a third time back to the latest at the top), and group by kind, share, exchange, direction, state, reason or day.
           The direction of a close or cancel is that of the position or order it acts on. The latest 500 orders are shown.</p>
       </InfoCard>
       <ProblemAlert error={error} />
@@ -172,10 +174,11 @@ export function Orders() {
                     )}
                     {!closed[g.value] && g.rows.map((o) => (
                       <tr key={o.requestId}>
-                        <td className="text-nowrap">{new Date(o.createdAt).toLocaleString()}</td>
+                        <td className="text-nowrap">{dateTime(o.createdAt)}</td>
                         <td>{kindWord[o.kind] ?? o.kind}</td>
                         <td>{o.kindLabel}</td>
                         <td>{o.symbol || o.instrumentId}</td>
+                        <td className="text-nowrap">{o.exchange || "—"}</td>
                         <td><DirectionBadge direction={o.direction} /></td>
                         <td className="text-end">{o.kind === "open" ? usd(o.amountCents) : "—"}</td>
                         <td className="text-end">{o.entry ?? "—"}</td>

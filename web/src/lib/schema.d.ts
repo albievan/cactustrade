@@ -3228,6 +3228,10 @@ export interface components {
             /** Format: int64 */
             instrumentId: number;
             symbol: string;
+            /** @description the exchange's calendar market of the order's share (LSE, NYSE, ASX); empty when the instrument is not cached */
+            market: string;
+            /** @description the exchange named for people, e.g. Sydney (ASX); empty when unknown */
+            exchange: string;
             amountCents: components["schemas"]["Cents"];
             entry?: components["schemas"]["Decimal"];
             stopLoss?: components["schemas"]["Decimal"];

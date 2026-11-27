@@ -371,7 +371,7 @@ func TestLiveSnapshot(t *testing.T) {
 	if snap.State != domain.AgentRunning || !snap.Reconciliation.OK || snap.Killed || !snap.Lease.Mine {
 		t.Fatalf("snapshot state = %+v", snap)
 	}
-	if len(snap.OpenOrders) != 0 || len(snap.RecentOrders) != 1 || snap.RecentOrders[0].Symbol != "AAPL" {
+	if len(snap.OpenOrders) != 0 || len(snap.RecentOrders) != 1 || snap.RecentOrders[0].Symbol != "AAPL" || snap.RecentOrders[0].Market != domain.MarketNYSE || snap.Regimes[0].Market != domain.MarketNYSE {
 		t.Fatalf("orders = %+v / %+v", snap.OpenOrders, snap.RecentOrders)
 	}
 	if len(snap.Regimes) != 1 || !snap.Regimes[0].Known || snap.Regimes[0].Regime != domain.RegimeTrending {

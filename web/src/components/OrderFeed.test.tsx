@@ -5,7 +5,7 @@ import { OrderFeed } from "./LiveCards";
 
 function order(over: Partial<Order>): Order {
   return {
-    requestId: "r", mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", amountCents: 50000,
+    requestId: "r", mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)", amountCents: 50000,
     state: "filled", stateLabel: "filled", reason: "", sends: 1, createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:00Z", ...over,
   };
 }
@@ -48,5 +48,13 @@ describe("OrderFeed", () => {
   it("says when there are none", () => {
     render(<OrderFeed orders={[]} />);
     expect(screen.getByText("No orders yet.")).toBeInTheDocument();
+  });
+
+  it("shows the full date and time and the exchange of each order", () => {
+    const at = new Date(2026, 10, 26, 20, 50).toISOString();
+    render(<OrderFeed orders={[order({ requestId: "x", kindLabel: "Buy CBA", symbol: "CBA.ASX", market: "ASX", exchange: "Sydney (ASX)", updatedAt: at, createdAt: at })]} />);
+    const line = within(screen.getByRole("list", { name: "Orders feed" })).getByRole("listitem");
+    expect(within(line).getByText("26/11/2026 20:50")).toBeInTheDocument();
+    expect(within(line).getByText("Sydney (ASX)")).toBeInTheDocument();
   });
 });

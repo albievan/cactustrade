@@ -3581,7 +3581,7 @@ components:
           items: { $ref: "#/components/schemas/MissingItem" }
     Order:
       type: object
-      required: [requestId, mode, kind, kindLabel, direction, instrumentId, symbol, amountCents, state, stateLabel, reason, sends, createdAt, updatedAt]
+      required: [requestId, mode, kind, kindLabel, direction, instrumentId, symbol, market, exchange, amountCents, state, stateLabel, reason, sends, createdAt, updatedAt]
       properties:
         requestId: { type: string, description: "our x-request-id, stored before the order is sent" }
         mode: { $ref: "#/components/schemas/TradingMode" }
@@ -3590,6 +3590,8 @@ components:
         direction: { type: string, description: "long, short or empty (cancel)" }
         instrumentId: { type: integer, format: int64 }
         symbol: { type: string }
+        market: { type: string, description: "the exchange's calendar market of the order's share (LSE, NYSE, ASX); empty when the instrument is not cached" }
+        exchange: { type: string, description: "the exchange named for people, e.g. Sydney (ASX); empty when unknown" }
         amountCents: { $ref: "#/components/schemas/Cents" }
         entry: { $ref: "#/components/schemas/Decimal" }
         stopLoss: { $ref: "#/components/schemas/Decimal" }

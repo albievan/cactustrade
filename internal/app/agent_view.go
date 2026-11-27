@@ -373,6 +373,8 @@ func (s *Service) flattenTimes(ctx context.Context, now time.Time, l domain.Risk
 type OrderView struct {
 	domain.Order
 	Symbol string
+	// Market is the exchange of the order's instrument ("" when it is not cached).
+	Market domain.Market
 }
 
 // subject names the order's instrument for people: its symbol, else its id.
@@ -497,14 +499,17 @@ func (s *Service) Orders(ctx context.Context, p Principal, accountID string, lim
 		return nil, fmt.Errorf("app.Orders: %w", err)
 	}
 	out := make([]OrderView, 0, len(orders))
-	labels := map[domain.InstrumentID]string{}
+	tags := s.instrumentTags(ctx)
 	for _, o := range orders {
-		sym, ok := labels[o.Instrument]
-		if !ok && o.Instrument > 0 {
-			sym = s.instrumentLabel(ctx, o.Instrument)
-			labels[o.Instrument] = sym
+		sym, m := "", domain.Market("")
+		if o.Instrument > 0 {
+			in := tags(o.Instrument)
+			sym, m = in.Symbol, in.Market
+			if sym == "" {
+				sym = "instrument " + strconv.FormatInt(int64(o.Instrument), 10)
+			}
 		}
-		out = append(out, OrderView{Order: o, Symbol: sym})
+		out = append(out, OrderView{Order: o, Symbol: sym, Market: m})
 	}
 	return out, nil
 }

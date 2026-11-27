@@ -223,6 +223,7 @@ func toOrder(o app.OrderView) Order {
 		RequestId: o.RequestID, Mode: TradingMode(o.Mode), Kind: string(o.Kind), KindLabel: o.KindLabel(), Direction: string(o.Direction),
 		InstrumentId: int64(o.Instrument), Symbol: o.Symbol, AmountCents: Cents(o.Amount), State: string(o.State), StateLabel: o.StateLabel(),
 		Reason: o.ReasonLabel(), Sends: o.Sends, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt,
+		Market: string(o.Market), Exchange: o.Market.Label(),
 	}
 	if o.Entry > 0 {
 		x.Entry = ptr(dec(o.Entry))

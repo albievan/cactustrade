@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModeProvider } from "../lib/mode";
 import { Orders } from "./Orders";
+import { dateTime } from "../lib/format";
 
 const account = { id: "a1", name: "Main demo", ownerId: "1", ownerName: "admin", mode: "demo", platform: "etoro", envKeys: false, access: "owner", createdAt: "" };
 const status = { version: "0.1.0", build: "1", mode: "demo", agentState: "running", database: "sqlite", startedAt: "", now: "", account };
@@ -22,7 +23,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Orders", () => {
   it("lists the orders in a table", async () => {
     serve([
-      { requestId: "11111111-1111-4111-8111-111111111111", mode: "demo", kind: "open", kindLabel: "Short AAPL", direction: "short", instrumentId: 1001, symbol: "AAPL",
+      { requestId: "11111111-1111-4111-8111-111111111111", mode: "demo", kind: "open", kindLabel: "Short AAPL", direction: "short", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)",
         amountCents: 200000, entry: "100", stopLoss: "103", takeProfit: "94", state: "filled", stateLabel: "filled", reason: "", sends: 1,
         createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:01Z" },
       { requestId: "22222222-2222-4222-8222-222222222222", mode: "demo", kind: "close", kindLabel: "Close request for instrument 1002 (position 5)", direction: "long", instrumentId: 1002, symbol: "",
@@ -35,6 +36,7 @@ describe("Orders", () => {
     expect(body.getByText("103")).toBeInTheDocument();
     expect(body.getByText("filled")).toBeInTheDocument();
     expect(body.getByText("Short")).toBeInTheDocument(); // the direction badge
+    expect(body.getByText("New York (NYSE/NASDAQ)")).toBeInTheDocument(); // the exchange
     expect(body.getByText("Close request for instrument 1002 (position 5)")).toBeInTheDocument();
     expect(body.getByText("1002")).toBeInTheDocument(); // no symbol cached: the id
     expect(body.getByText("answer lost")).toBeInTheDocument();
@@ -71,7 +73,16 @@ describe("Orders", () => {
     fireEvent.click(screen.getByRole("button", { name: "Time" }));
     expect(shares()).toEqual(["AAPL", "TSLA", "TSLA"]);
     fireEvent.click(screen.getByRole("button", { name: "Amount" }));
-    expect((within(screen.getByRole("table")).getAllByRole("row")[2] as HTMLTableRowElement).cells[0].textContent).toBe(new Date(many[2].createdAt).toLocaleString());
+    expect((within(screen.getByRole("table")).getAllByRole("row")[2] as HTMLTableRowElement).cells[0].textContent).toBe(dateTime(many[2].createdAt));
+  });
+
+  it("filters and groups by exchange", async () => {
+    serve(many.map((o, i) => ({ ...o, exchange: i === 0 ? "New York (NYSE/NASDAQ)" : "Sydney (ASX)" })));
+    await screen.findByText("Buy AAPL");
+    fireEvent.change(screen.getByLabelText("Filter by Exchange"), { target: { value: "Sydney (ASX)" } });
+    expect(shares()).toEqual(["TSLA", "TSLA"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "exchange" } });
+    expect(screen.getByRole("button", { name: "Exchange: Sydney (ASX)" })).toBeInTheDocument();
   });
 
   it("filters by any column and searches them all", async () => {

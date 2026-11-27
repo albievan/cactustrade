@@ -4,7 +4,7 @@ import type { Order } from "./api";
 import { duration } from "../components/LiveCards";
 
 const o = (requestId: string, state = "sent"): Order => ({
-  requestId, mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1, symbol: "AAPL", amountCents: 100,
+  requestId, mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)", amountCents: 100,
   state, stateLabel: state, reason: "", sends: 1, createdAt: "", updatedAt: "",
 });
 

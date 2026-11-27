@@ -2656,13 +2656,19 @@ type Order struct {
 	// Entry An exact decimal (prices and units, up to 6 places)
 	Entry        *Decimal `json:"entry,omitempty"`
 	EtoroOrderId *int64   `json:"etoroOrderId,omitempty"`
-	InstrumentId int64    `json:"instrumentId"`
+
+	// Exchange the exchange named for people, e.g. Sydney (ASX); empty when unknown
+	Exchange     string `json:"exchange"`
+	InstrumentId int64  `json:"instrumentId"`
 
 	// Kind open, close or cancel
 	Kind string `json:"kind"`
 
 	// KindLabel what the order is, worded by the server, e.g. "Buy GOOG", "Cancel request for GOOG (buy order 396359836)", "Close request for GOOG (position 3649965576)"
-	KindLabel  string      `json:"kindLabel"`
+	KindLabel string `json:"kindLabel"`
+
+	// Market the exchange's calendar market of the order's share (LSE, NYSE, ASX); empty when the instrument is not cached
+	Market     string      `json:"market"`
 	Mode       TradingMode `json:"mode"`
 	PositionId *int64      `json:"positionId,omitempty"`
 

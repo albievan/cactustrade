@@ -26,7 +26,7 @@ const agent = {
 
 function order(over: Partial<Order> = {}): Order {
   return {
-    requestId: "r1", mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", amountCents: 50000,
+    requestId: "r1", mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)", amountCents: 50000,
     state: "sent", stateLabel: "sent", reason: "", sends: 1, createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:00Z", ...over,
   };
 }

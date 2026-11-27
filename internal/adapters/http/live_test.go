@@ -664,7 +664,7 @@ func TestLiveStreamResync(t *testing.T) {
 			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, x.url(x.acct), nil)
 			st := &liveStream{
 				s: x.h, w: w, r: req, rc: http.NewResponseController(w), p: x.admin, account: x.acct,
-				filter: map[string]bool{x.acct: true}, symbols: map[int64]string{},
+				filter: map[string]bool{x.acct: true}, symbols: map[int64]liveTag{},
 			}
 			events := make(chan ports.Event, 4)
 			for i := range tt.fill {

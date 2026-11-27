@@ -44,6 +44,7 @@ type LivePosition struct {
 type LiveRegime struct {
 	Instrument domain.InstrumentID
 	Symbol     string
+	Market     domain.Market // the share's exchange (for the live order messages)
 	// Known: there is a review with regime probabilities; Regime is the most likely one.
 	Known  bool
 	Regime domain.Regime
@@ -203,15 +204,15 @@ func (s *Service) liveOrders(ctx context.Context, accountID string, out *LiveSna
 	if err != nil {
 		return fmt.Errorf("app.LiveSnapshot: %w", err)
 	}
-	names := s.symbols(ctx)
+	tags := s.instrumentTags(ctx)
 	view := func(os []domain.Order) []OrderView {
 		vs := make([]OrderView, 0, len(os))
 		for _, o := range os {
-			sym := ""
+			var in domain.Instrument
 			if o.Instrument > 0 {
-				sym = names(o.Instrument)
+				in = tags(o.Instrument)
 			}
-			vs = append(vs, OrderView{Order: o, Symbol: sym})
+			vs = append(vs, OrderView{Order: o, Symbol: in.Symbol, Market: in.Market})
 		}
 		return vs
 	}
@@ -237,7 +238,7 @@ func (s *Service) liveRegimes(ctx context.Context, a domain.Account) ([]LiveRegi
 	cfg := s.strategyConfig(ctx, a, s.riskLimits(ctx, accountID))
 	out := make([]LiveRegime, 0, len(wl))
 	for _, w := range wl {
-		r := LiveRegime{Instrument: w.Instrument.ID, Symbol: w.Instrument.Symbol}
+		r := LiveRegime{Instrument: w.Instrument.ID, Symbol: w.Instrument.Symbol, Market: w.Instrument.Market}
 		for _, x := range rv { // newest first: the first with probabilities is the latest
 			if x.Instrument == w.Instrument.ID && len(x.Probs) > 0 {
 				r.Known, r.Regime, r.Probs, r.At = true, mostLikely(x.Probs), x.Probs, x.At

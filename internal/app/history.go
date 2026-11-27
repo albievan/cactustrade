@@ -518,6 +518,23 @@ func (s *Service) snapshots(ctx context.Context, accountID string, from, to time
 
 // symbols names instruments from the instrument cache, remembering each answer for the
 // call ("" when not cached).
+// instrumentTags looks cached instruments up (symbol and market), once per id; an instrument
+// that is not cached is the zero Instrument.
+func (s *Service) instrumentTags(ctx context.Context) func(domain.InstrumentID) domain.Instrument {
+	seen := map[domain.InstrumentID]domain.Instrument{}
+	return func(id domain.InstrumentID) domain.Instrument {
+		if in, ok := seen[id]; ok {
+			return in
+		}
+		in, _, err := s.d.Store.Instruments().Get(ctx, id)
+		if err != nil {
+			in = domain.Instrument{}
+		}
+		seen[id] = in
+		return in
+	}
+}
+
 func (s *Service) symbols(ctx context.Context) func(domain.InstrumentID) string {
 	seen := map[domain.InstrumentID]string{}
 	return func(id domain.InstrumentID) string {

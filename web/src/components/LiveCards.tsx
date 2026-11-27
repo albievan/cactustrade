@@ -1,3 +1,4 @@
+import { dateTime, hourMinute } from "../lib/format";
 import { useState, type ReactNode } from "react";
 import { usd, type Order } from "../lib/api";
 import type { Live, LiveFigures, LiveRegime, LiveSnapshot } from "../lib/live";
@@ -234,8 +235,9 @@ export function OrderFeed({ orders }: { orders: Order[] }) {
         <ul className="list-unstyled small mb-0" aria-label="Orders feed">
           {lines.map(({ order: o, times, since }) => (
             <li key={o.requestId} className="d-flex flex-wrap align-items-center gap-2 py-1 border-bottom">
-              <span className="text-secondary text-nowrap">{times > 1 ? `${clock(since)}–${clock(o.updatedAt)}` : clock(o.updatedAt)}</span>
+              <span className="text-secondary text-nowrap">{times > 1 ? `${dateTime(since)}–${sameDay(since, o.updatedAt) ? hourMinute(o.updatedAt) : dateTime(o.updatedAt)}` : dateTime(o.updatedAt)}</span>
               <DirectionBadge direction={o.direction} />
+              {o.exchange && <span className="badge text-bg-light border" title={`Exchange: ${o.exchange}`}>{o.exchange}</span>}
               <span className="fw-semibold">{o.kindLabel}</span>
               {o.kind === "open" && <span>{usd(o.amountCents)}</span>}
               <span className={"badge " + (orderBadge[o.state] ?? "text-bg-secondary")}>{o.stateLabel}</span>
@@ -247,6 +249,8 @@ export function OrderFeed({ orders }: { orders: Order[] }) {
     </div></div>
   );
 }
+
+const sameDay = (a: string, b: string) => new Date(a).toDateString() === new Date(b).toDateString();
 
 // foldRepeats folds identical requests that follow each other (same wording and state) into one
 // line with how many there were and the time of the oldest one.

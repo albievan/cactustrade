@@ -187,7 +187,7 @@ func TestOrdersList(t *testing.T) {
 			if err != nil || len(got) != tt.want {
 				t.Fatalf("orders = %+v, %v", got, err)
 			}
-			if o := got[0]; o.Symbol != "AAPL" || o.Kind != domain.OrderOpen || o.State != domain.OrderFilled || o.RequestID != ae.b.Intents[0].RequestID {
+			if o := got[0]; o.Symbol != "AAPL" || o.Market != domain.MarketNYSE || o.Kind != domain.OrderOpen || o.State != domain.OrderFilled || o.RequestID != ae.b.Intents[0].RequestID {
 				t.Fatalf("order = %+v", o)
 			}
 		})

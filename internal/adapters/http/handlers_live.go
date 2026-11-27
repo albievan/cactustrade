@@ -188,7 +188,7 @@ func (s *Server) GetLiveStream(w http.ResponseWriter, r *http.Request, params Ge
 	w.WriteHeader(http.StatusOK)
 	st := &liveStream{
 		s: s, w: w, r: r, rc: http.NewResponseController(w), p: p, account: snap.Account.ID,
-		filter: filter, symbols: map[int64]string{},
+		filter: filter, symbols: map[int64]liveTag{},
 	}
 	// The server's ReadTimeout would end the stream (HTTP/1.1 cancels the request when its
 	// background read times out): no read deadline from here on.
@@ -201,6 +201,12 @@ func (s *Server) GetLiveStream(w http.ResponseWriter, r *http.Request, params Ge
 	st.loop(ctx, events)
 }
 
+// liveTag is an instrument's symbol and exchange as the latest snapshot named them.
+type liveTag struct {
+	symbol string
+	market domain.Market
+}
+
 // liveStream is one open stream.
 type liveStream struct {
 	s       *Server
@@ -210,8 +216,9 @@ type liveStream struct {
 	p       app.Principal
 	account string
 	filter  map[string]bool
-	// symbols are the instrument symbols of the latest snapshot, for order messages.
-	symbols  map[int64]string
+	// symbols are the instrument symbols and exchanges of the latest snapshot, for order
+	// messages.
+	symbols  map[int64]liveTag
 	lastSnap time.Time
 }
 
@@ -283,7 +290,7 @@ func (st *liveStream) forward(e ports.Event) (change bool, err error) {
 		if !mine {
 			return false, nil
 		}
-		return false, st.send("order", LiveOrder{AccountId: acct, Order: toOrder(app.OrderView{Order: d, Symbol: st.symbols[int64(d.Instrument)]})})
+		return false, st.send("order", LiveOrder{AccountId: acct, Order: toOrder(app.OrderView{Order: d, Symbol: st.symbols[int64(d.Instrument)].symbol, Market: st.symbols[int64(d.Instrument)].market})})
 	case app.TickSummary:
 		if !mine {
 			return false, nil
@@ -335,16 +342,16 @@ func (st *liveStream) sendSnapshot(snap app.LiveSnapshot) error {
 	out := toLiveSnapshot(snap)
 	clear(st.symbols)
 	for _, o := range snap.OpenOrders {
-		st.symbols[int64(o.Instrument)] = o.Symbol
+		st.symbols[int64(o.Instrument)] = liveTag{o.Symbol, o.Market}
 	}
 	for _, o := range snap.RecentOrders {
-		st.symbols[int64(o.Instrument)] = o.Symbol
+		st.symbols[int64(o.Instrument)] = liveTag{o.Symbol, o.Market}
 	}
 	for _, p := range snap.Positions {
-		st.symbols[int64(p.Instrument)] = p.Symbol
+		st.symbols[int64(p.Instrument)] = liveTag{p.Symbol, p.Market}
 	}
 	for _, rg := range snap.Regimes {
-		st.symbols[int64(rg.Instrument)] = rg.Symbol
+		st.symbols[int64(rg.Instrument)] = liveTag{rg.Symbol, rg.Market}
 	}
 	return st.send("snapshot", out)
 }
