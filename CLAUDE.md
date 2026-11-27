@@ -41,7 +41,9 @@ Each rule has a test; a change that breaks one is a BLOCKER.
    endpoints in its `allowlist.go`: market data, instrument search/eligibility, costs,
    portfolio/PnL/order info, open order, close position, cancel order, position SL/TP.
    Money, transfer, balance-history, cash-account, sub-account, copy-trading, agent-portfolio,
-   SSO, watchlist, social and Partners-API paths must not exist in the client at all.
+   SSO, watchlist, social and Partners-API paths must not exist in the client at all — with
+   one exception: `GET /api/v1/watchlists` (read the user's own watchlists for the import;
+   owner's decision D38, 2026-11-27); no watchlist write path, pinned by `TestWatchlistReadOnly`.
    `allowlist_test.go` fails the build when any other `/api/` path literal appears.
 2. **Never spend more than is in the account.** Before every order fetch available cash from
    eToro (no cache older than a few seconds) and reject when

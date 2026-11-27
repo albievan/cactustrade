@@ -269,3 +269,19 @@ func (o *OAuthConnector) Exchange(ctx context.Context, code, redirectURI, codeVe
 	o.Verifiers = append(o.Verifiers, codeVerifier)
 	return nil
 }
+
+// Watchlists is a fake ports.PlatformWatchlists: the lists it holds, or Err.
+type Watchlists struct {
+	Lists []domain.PlatformWatchlist
+	Err   error
+	Calls int
+}
+
+// Watchlists returns the lists (read-only, like eToro's GET).
+func (w *Watchlists) Watchlists(context.Context) ([]domain.PlatformWatchlist, error) {
+	w.Calls++
+	if w.Err != nil {
+		return nil, w.Err
+	}
+	return w.Lists, nil
+}

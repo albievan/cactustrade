@@ -1067,6 +1067,46 @@ paths:
         "413": { $ref: "#/components/responses/Problem" }
         "415": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/platform:
+    get:
+      tags: [market]
+      operationId: listPlatformWatchlists
+      summary: The current account's watchlists on eToro, for the import (trade access)
+      description: |
+        R46, owner's decision D38 (2026-11-27): eToro's watchlists are read (one GET), never
+        written. Trading 212, Saxo and Tiger have no watchlists in their APIs.
+      responses:
+        "200":
+          description: The eToro watchlists
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PlatformWatchlist" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/platform/{watchlistId}/import:
+    parameters:
+      - { name: watchlistId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [market]
+      operationId: importPlatformWatchlist
+      summary: Add the shares of one eToro watchlist to the current account's watchlist (trade access, web UI)
+      description: |
+        Every share goes through the same eToro check as adding by hand; refused ones are
+        reported, not added; people on the list are left out; at most 200 shares per import.
+        Importing the same list twice changes nothing the second time.
+      responses:
+        "200":
+          description: What was merged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WatchlistImportResult" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/watchlist/{instrumentId}:
     parameters:
       - { name: instrumentId, in: path, required: true, schema: { type: integer, format: int64, minimum: 1 } }
@@ -2829,6 +2869,16 @@ components:
         instrumentId: { type: integer, format: int64 }
         name: { type: string, description: "the share's symbol or the theme's name" }
         reason: { type: string }
+    PlatformWatchlist:
+      type: object
+      required: [id, name, type, isDefault, shares, others]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string, description: "eToro's watchlist type: Static, Dynamic, RecentlyInvested or Default" }
+        isDefault: { type: boolean }
+        shares: { type: integer, description: "instruments on the list (each is checked on import)" }
+        others: { type: integer, description: "entries that are not instruments (people); never imported" }
     WatchlistImportResult:
       type: object
       required: [added, already, skipped, themesCreated, themesUpdated, themesUnchanged, themesSkipped, notes]

@@ -437,6 +437,12 @@ type Research interface {
 	Screen(ctx context.Context, industryID int64, limit int) ([]domain.Instrument, error)
 }
 
+// PlatformWatchlists reads the user's own watchlists on the trading platform (R46, owner's
+// decision D38): read-only, there is no method that writes one.
+type PlatformWatchlists interface {
+	Watchlists(ctx context.Context) ([]domain.PlatformWatchlist, error)
+}
+
 // Broker is the only door to the eToro account. It exposes no money-movement operation by
 // design, and its open order takes no leverage, direction or settlement parameter.
 type Broker interface {

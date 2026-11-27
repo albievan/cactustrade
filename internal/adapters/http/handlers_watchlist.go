@@ -161,6 +161,11 @@ func (s *Server) ImportWatchlist(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, toImportResult(res))
+}
+
+// toImportResult is an import's outcome on the wire.
+func toImportResult(res app.ImportResult) WatchlistImportResult {
 	skips := func(xs []app.ImportSkip) []ImportSkip {
 		out := make([]ImportSkip, 0, len(xs))
 		for _, x := range xs {
@@ -172,8 +177,32 @@ func (s *Server) ImportWatchlist(w http.ResponseWriter, r *http.Request) {
 		}
 		return out
 	}
-	writeJSON(w, http.StatusOK, WatchlistImportResult{
+	return WatchlistImportResult{
 		Added: res.Added, Already: res.Already, Skipped: skips(res.Skipped), ThemesCreated: res.ThemesCreated,
 		ThemesUpdated: res.ThemesUpdated, ThemesUnchanged: res.ThemesUnchanged, ThemesSkipped: skips(res.ThemesSkipped), Notes: res.Notes,
-	})
+	}
+}
+
+// ListPlatformWatchlists lists the current account's eToro watchlists (R46, D38).
+func (s *Server) ListPlatformWatchlists(w http.ResponseWriter, r *http.Request) {
+	ws, err := s.svc.PlatformWatchlists(r.Context(), state(r).principal)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := make([]PlatformWatchlist, 0, len(ws))
+	for _, x := range ws {
+		out = append(out, PlatformWatchlist{Id: x.ID, Name: x.Name, Type: x.Type, IsDefault: x.IsDefault, Shares: len(x.Instruments), Others: x.Others})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ImportPlatformWatchlist adds one eToro watchlist's shares to the current account's list.
+func (s *Server) ImportPlatformWatchlist(w http.ResponseWriter, r *http.Request, watchlistID string) {
+	res, err := s.svc.ImportPlatformWatchlist(r.Context(), state(r).principal, watchlistID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toImportResult(res))
 }

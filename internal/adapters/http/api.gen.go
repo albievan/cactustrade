@@ -2860,6 +2860,22 @@ type PlatformInfo struct {
 	ViewOnly bool `json:"viewOnly"`
 }
 
+// PlatformWatchlist defines model for PlatformWatchlist.
+type PlatformWatchlist struct {
+	Id        string `json:"id"`
+	IsDefault bool   `json:"isDefault"`
+	Name      string `json:"name"`
+
+	// Others entries that are not instruments (people); never imported
+	Others int `json:"others"`
+
+	// Shares instruments on the list (each is checked on import)
+	Shares int `json:"shares"`
+
+	// Type eToro's watchlist type: Static, Dynamic, RecentlyInvested or Default
+	Type string `json:"type"`
+}
+
 // Portfolio defines model for Portfolio.
 type Portfolio struct {
 	AsOf time.Time `json:"asOf"`
@@ -4464,6 +4480,12 @@ type ServerInterface interface {
 	// GetWatchlistOverview Whether the caller may edit the watchlist and what the account holds (viewer)
 	// (GET /api/v1/watchlist/overview)
 	GetWatchlistOverview(w http.ResponseWriter, r *http.Request)
+	// ListPlatformWatchlists The current account's watchlists on eToro, for the import (trade access)
+	// (GET /api/v1/watchlist/platform)
+	ListPlatformWatchlists(w http.ResponseWriter, r *http.Request)
+	// ImportPlatformWatchlist Add the shares of one eToro watchlist to the current account's watchlist (trade access, web UI)
+	// (POST /api/v1/watchlist/platform/{watchlistId}/import)
+	ImportPlatformWatchlist(w http.ResponseWriter, r *http.Request, watchlistId string)
 	// ListWatchlistQuotes Current bid/ask of the watchlist (viewer)
 	// (GET /api/v1/watchlist/quotes)
 	ListWatchlistQuotes(w http.ResponseWriter, r *http.Request)
@@ -7335,6 +7357,46 @@ func (siw *ServerInterfaceWrapper) GetWatchlistOverview(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// ListPlatformWatchlists operation middleware
+func (siw *ServerInterfaceWrapper) ListPlatformWatchlists(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPlatformWatchlists(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportPlatformWatchlist operation middleware
+func (siw *ServerInterfaceWrapper) ImportPlatformWatchlist(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "watchlistId" -------------
+	var watchlistId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "watchlistId", r.PathValue("watchlistId"), &watchlistId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "watchlistId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportPlatformWatchlist(w, r, watchlistId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListWatchlistQuotes operation middleware
 func (siw *ServerInterfaceWrapper) ListWatchlistQuotes(w http.ResponseWriter, r *http.Request) {
 
@@ -7609,6 +7671,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/theme-proposals", wrapper.ProposeWatchlistThemes)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/export", wrapper.ExportWatchlist)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist/import", wrapper.ImportWatchlist)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/platform", wrapper.ListPlatformWatchlists)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist/platform/{watchlistId}/import", wrapper.ImportPlatformWatchlist)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/watchlist/{instrumentId}", wrapper.RemoveFromWatchlist)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/reload", wrapper.ReloadSettings)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/restart", wrapper.RestartServer)

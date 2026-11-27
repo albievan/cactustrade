@@ -276,6 +276,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Connectors: map[domain.Platform]ports.OAuthConnector{domain.PlatformSaxo: saxoClient},
 		LLM:        reviewer,
 		Research:   broker,
+		Watchlists: broker,
 		// Web research (PLAN R29): the same LLM client, with its provider's web search as
 		// its only tool; it returns data only and has no broker.
 		Researcher:   reviewer,

@@ -93,6 +93,7 @@ export type ThemeAssignment = components["schemas"]["ThemeAssignment"];
 export type ThemeProposal = components["schemas"]["ThemeProposal"];
 export type ThemeProposals = components["schemas"]["ThemeProposals"];
 export type WatchlistImportResult = components["schemas"]["WatchlistImportResult"];
+export type PlatformWatchlist = components["schemas"]["PlatformWatchlist"];
 export type ResearchView = components["schemas"]["ResearchView"];
 export type ResearchRun = components["schemas"]["ResearchRun"];
 export type ResearchProposal = components["schemas"]["ResearchProposal"];
@@ -331,6 +332,9 @@ export const api = {
   researchSettings: () => request<ResearchSetup>("GET", "/api/v1/llm/research"),
   setResearchSettings: (c: ResearchConfig) => request<ResearchSetup>("PUT", "/api/v1/llm/research", c),
   importWatchlist: (file: unknown) => request<WatchlistImportResult>("POST", "/api/v1/watchlist/import", file),
+  platformWatchlists: () => request<PlatformWatchlist[]>("GET", "/api/v1/watchlist/platform"),
+  importPlatformWatchlist: (id: string) =>
+    request<WatchlistImportResult>("POST", `/api/v1/watchlist/platform/${encodeURIComponent(id)}/import`),
   killAgent: (reason: string) => request<KillReport>("POST", "/api/v1/agent/kill", { reason }),
   resetKill: (confirm: string) => request<AgentStatusResult>("POST", "/api/v1/agent/reset", { confirm }),
   reconcileAgent: () => request<Reconciliation>("POST", "/api/v1/agent/reconcile"),

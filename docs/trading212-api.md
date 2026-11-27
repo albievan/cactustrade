@@ -58,7 +58,7 @@ the owner first.
 
 `POST /equity/orders/market` `{ticker, quantity, extendedHours}` (50/min), `/limit` (`limitPrice`),
 `/stop` (`stopPrice`), `/stop_limit` (`stopPrice`, `limitPrice`, `timeValidity` DAY|GOOD_TILL_CANCEL);
-a sell is a negative quantity; `DELETE /equity/orders/{id}` cancels (not guaranteed mid-fill); no
+a sell is a negative quantity; `DELETE /equity/orders/{id}` cancels (may fail when the order is already filling); no
 close endpoint (sell the quantity). Key scope `orders:execute`; Invest and Stocks ISA only. **Not
 idempotent** (no client order id; a repeated request may duplicate an order). No SL/TP on a market
 order. No market data. `GET /equity/metadata/instruments` (1/50 s) gives ticker, ISIN, currency,

@@ -110,9 +110,16 @@ describe("Watchlist themes, file and holdings (R27)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
-      if (init?.method === "POST") posts.push({ url, body: JSON.parse(String(init.body)) });
+      if (init?.method === "POST") posts.push({ url, body: init.body ? JSON.parse(String(init.body)) : null });
       if (url.endsWith("/api/v1/auth/me")) return json(me);
       if (url.endsWith("/api/v1/system/status")) return json(status(canEdit ? "owner" : "view"));
+      if (url.endsWith("/api/v1/watchlist/platform")) return json([
+        { id: "w1", name: "Tech", type: "Static", isDefault: false, shares: 3, others: 0 },
+        { id: "w2", name: "My Watchlist", type: "Default", isDefault: true, shares: 2, others: 1 },
+      ]);
+      if (url.endsWith("/api/v1/watchlist/platform/w2/import")) return json({
+        added: ["AAPL"], already: ["EXMP"], skipped: [], themesCreated: [], themesUpdated: [], themesUnchanged: [], themesSkipped: [],
+        notes: ["1 entries that are not shares (people) were left out"] });
       if (url.endsWith("/api/v1/watchlist")) return json(items);
       if (url.endsWith("/api/v1/themes")) return json(themes);
       if (url.endsWith("/api/v1/watchlist/overview")) return json({ canEdit, holdings: {
@@ -174,6 +181,20 @@ describe("Watchlist themes, file and holdings (R27)", () => {
     expect(res).toHaveTextContent("Not added: SAP.DE — only shares listed in London");
     expect(res.className).toContain("alert-warning");
     expect(posts).toContainEqual({ url: "/api/v1/watchlist/import", body: { version: 1, watchlist: [], themes: [] } });
+  });
+
+  it("imports one of the account's eToro watchlists (R46)", async () => {
+    const posts = serve(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Import a watchlist from eToro" }));
+    const pick = await screen.findByLabelText("eToro watchlist");
+    expect((pick as HTMLSelectElement).value).toBe("w2"); // the default list first
+    expect(Array.from((pick as HTMLSelectElement).options).map((o) => o.text)).toEqual(["Tech (3 shares)", "My Watchlist (2 shares)"]);
+    expect(screen.getByText(/1 people on this list are left out/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    const res = await screen.findByRole("status", { name: "Import result" });
+    expect(res).toHaveTextContent("1 share added, 1 already there");
+    expect(posts).toContainEqual({ url: "/api/v1/watchlist/platform/w2/import", body: null });
+    expect(screen.queryByLabelText("eToro watchlist")).not.toBeInTheDocument();
   });
 
   it("refuses a file that is not JSON before sending it", async () => {

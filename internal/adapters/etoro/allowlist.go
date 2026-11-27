@@ -68,6 +68,9 @@ const (
 	OpCancelOrder     Op = "cancel_order"
 	OpClosePosition   Op = "close_position"
 	OpSetStopLossTake Op = "set_sl_tp"
+	// OpWatchlists reads the user's eToro watchlists (owner's decision D38, 2026-11-27):
+	// the only watchlist path in the client, a GET. No watchlist write exists here.
+	OpWatchlists Op = "watchlists"
 )
 
 // QuotaGroup is an eToro rate-limit pool (requests per rolling 60 s, per user key).
@@ -81,12 +84,13 @@ const (
 	QuotaExecution   QuotaGroup = "execution"   // 20: open + close + cancel together
 	QuotaEligibility QuotaGroup = "eligibility" // 20, dedicated
 	QuotaCosts       QuotaGroup = "costs"       // 20, dedicated
+	QuotaWatchlists  QuotaGroup = "watchlists"  // 60, shared by eToro's watchlist GETs
 )
 
 // QuotaLimits are the documented per-minute limits.
 var QuotaLimits = map[QuotaGroup]int{
 	QuotaMarketData: 120, QuotaPortfolio: 60, QuotaDefault: 60,
-	QuotaExecution: 20, QuotaEligibility: 20, QuotaCosts: 20,
+	QuotaExecution: 20, QuotaEligibility: 20, QuotaCosts: 20, QuotaWatchlists: 60,
 }
 
 // Endpoint is one allowlisted operation.
@@ -136,5 +140,7 @@ var Allowlist = map[Op]Endpoint{
 	},
 	// Only ever used to set or TIGHTEN a long stop: eToro moves balance into margin when a
 	// stop is deepened beyond its maximum.
+	// Read-only, the user's own watchlists (D38): one path for demo and real.
+	OpWatchlists:      {Method: "GET", Demo: "/api/v1/watchlists", Real: "/api/v1/watchlists", Quota: QuotaWatchlists},
 	OpSetStopLossTake: {Method: "PATCH", Demo: "/api/v2/trading/demo/positions/{positionId}", Real: "/api/v2/trading/positions/{positionId}", Quota: QuotaDefault, Mutates: true},
 }

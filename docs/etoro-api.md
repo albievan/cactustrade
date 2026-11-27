@@ -318,3 +318,13 @@ endpoints, and the whole Partners API (onboarding, KYC, deposits, withdrawals).
 - `GET rates` answers `{"results":[{"instrumentId","bid","ask","date","quoteType"}]}` (fields flat, not under `rate`); `date` has no zone and is UTC.
 - Eligibility for BARC.L, AAPL, CBA.ASX: `real`/long/[1] and `cfd`/short/[1,2,5,10,20], `isPotential` false, `minPositionAmount` 10.
 - Costs: SDRT on LSE buys; a $0.15 transaction fee on shorts. Recordings: `internal/adapters/etoro/testdata/recorded/probe-2026-11-24/`.
+
+## Watchlists (read-only; D38, verified 2026-11-27)
+
+`GET /api/v1/watchlists` (same path for demo and real; `x-request-id` required; quota 60 / 60 s
+shared by eToro's watchlist GETs). Query: `itemsPerPageForSingle` (1–1000, default 100),
+`ensureBuiltinWatchlists` (default true; cactusTrade sends false), `addRelatedAssets`. Answer:
+`{status, isSucceeded, meta{…}, watchlists:[{watchlistId, name, watchlistType
+(Static|Dynamic|RecentlyInvested|Default), isDefault, totalItems, items:[{itemId, itemType
+(Instrument|Person), itemRank, market{symbolName, exchangeId, …}}]}], exception?}`. `itemId` of an
+`Instrument` item is the eToro instrumentId. No other watchlist path is allowlisted.

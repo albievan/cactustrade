@@ -30,10 +30,35 @@ func allowedPaths() map[string]bool {
 	return ok
 }
 
+// readOnlyWatchlistPath is the one watchlist path the owner allowed (D38, 2026-11-27): GET
+// the user's own watchlists. Any other watchlist path (create, rename, delete, items, public
+// lists) stays forbidden.
+const readOnlyWatchlistPath = "/api/v1/watchlists"
+
+// TestWatchlistReadOnly: the watchlist operation is exactly that one GET, mutates nothing,
+// and no other operation has a watchlist path.
+func TestWatchlistReadOnly(t *testing.T) {
+	for op, e := range Allowlist {
+		hit := strings.Contains(strings.ToLower(e.Demo+e.Real), "watchlist")
+		if op == OpWatchlists {
+			if e.Method != "GET" || e.Mutates || e.Demo != readOnlyWatchlistPath || e.Real != readOnlyWatchlistPath {
+				t.Fatalf("the watchlist read changed: %+v (D38: one GET only)", e)
+			}
+			continue
+		}
+		if hit {
+			t.Errorf("%s: %q/%q is a watchlist path; only GET %s is allowed (D38)", op, e.Demo, e.Real, readOnlyWatchlistPath)
+		}
+	}
+}
+
 // TestAllowlistHasNoMoneyPaths: no allowlisted path touches money, copy trading or social.
 func TestAllowlistHasNoMoneyPaths(t *testing.T) {
 	for op, e := range Allowlist {
 		for _, p := range []string{e.Demo, e.Real} {
+			if op == OpWatchlists && p == readOnlyWatchlistPath && e.Method == "GET" {
+				continue // D38, pinned by TestWatchlistReadOnly
+			}
 			if !strings.HasPrefix(p, "/api/") {
 				t.Errorf("%s: %q is not an /api/ path", op, p)
 			}

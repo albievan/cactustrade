@@ -312,7 +312,7 @@ func (s *Service) ImportWatchlist(ctx context.Context, p Principal, f domain.Wat
 		Added: []string{}, Already: []string{}, Skipped: []ImportSkip{}, ThemesCreated: []string{},
 		ThemesUpdated: []string{}, ThemesUnchanged: []string{}, ThemesSkipped: []ImportSkip{}, Notes: []string{},
 	}
-	if err := s.importShares(ctx, v, p.Username, f.Watchlist, &res); err != nil {
+	if err := s.importShares(ctx, v, p.Username, f.Watchlist, true, &res); err != nil {
 		return ImportResult{}, err
 	}
 	if err := s.importThemes(ctx, p, v, f.Themes, &res); err != nil {
@@ -325,8 +325,10 @@ func (s *Service) ImportWatchlist(ctx context.Context, p Principal, f domain.Wat
 	return res, nil
 }
 
-// importShares adds the file's shares through addToWatchlist.
-func (s *Service) importShares(ctx context.Context, v domain.AccountView, actor string, shares []domain.FileShare, res *ImportResult) error {
+// importShares adds the shares through addToWatchlist. fileMarket: the file names each
+// share's market and an unsupported one is refused before eToro is asked (a platform
+// watchlist names none; eToro's instrument decides, as when adding by hand).
+func (s *Service) importShares(ctx context.Context, v domain.AccountView, actor string, shares []domain.FileShare, fileMarket bool, res *ImportResult) error {
 	items, err := s.d.Store.Watchlist().List(ctx, v.ID)
 	if err != nil {
 		return fmt.Errorf("app.ImportWatchlist: %w", err)
@@ -341,7 +343,7 @@ func (s *Service) importShares(ctx context.Context, v domain.AccountView, actor 
 			res.Already = append(res.Already, cmp.Or(sym, name))
 			continue
 		}
-		if !domain.SupportedMarket(sh.Market) {
+		if fileMarket && !domain.SupportedMarket(sh.Market) {
 			res.Skipped = append(res.Skipped, ImportSkip{
 				Instrument: sh.Instrument, Name: name,
 				Reason: "market “" + sh.Market + "” is not traded here: only London (LSE), New York (NYSE/NASDAQ) and Sydney (ASX)",

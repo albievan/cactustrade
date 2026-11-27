@@ -44,6 +44,9 @@ func newMarketTC(t *testing.T) (*tc, *fakes.Broker) {
 	svc, err := app.New(app.Deps{
 		Store: st, Secrets: &fakes.SecretStore{Now: clk.Now}, Hasher: fakes.Hasher{}, Random: &fakes.Random{}, Clock: clk,
 		Broker: b, Market: b, Calendar: lseOnly{}, Research: b,
+		Watchlists: &fakes.Watchlists{Lists: []domain.PlatformWatchlist{
+			{ID: "w1", Name: "Tech", Type: "Static", IsDefault: true, Instruments: []domain.InstrumentID{1, 3}, Others: 1},
+		}},
 	}, app.Config{Version: "9.9.9"})
 	if err != nil {
 		t.Fatal(err)
@@ -347,5 +350,27 @@ func TestResearchEndpoints(t *testing.T) {
 	}
 	if code, _, _ := x.do("DELETE", "/api/v1/themes/"+id, "", csrf...); code != 204 {
 		t.Fatalf("delete %d", code)
+	}
+}
+
+// TestPlatformWatchlistEndpoints (R46/D38): list the eToro watchlists, import one (CSRF),
+// each share checked like a hand add; an unknown list is 404.
+func TestPlatformWatchlistEndpoints(t *testing.T) {
+	x, _ := newMarketTC(t)
+	csrf := []string{"X-CSRF-Token", x.csrf}
+	var lists []map[string]any
+	if code := x.getJSON("/api/v1/watchlist/platform", &lists); code != 200 || len(lists) != 1 || lists[0]["id"] != "w1" ||
+		lists[0]["shares"] != 2.0 || lists[0]["others"] != 1.0 || lists[0]["isDefault"] != true {
+		t.Fatalf("lists %d %v", code, lists)
+	}
+	if code, _, _ := x.do("POST", "/api/v1/watchlist/platform/w1/import", "", nil...); code != 403 {
+		t.Fatalf("import without CSRF %d", code)
+	}
+	code, m, _ := x.do("POST", "/api/v1/watchlist/platform/w1/import", "", csrf...)
+	if code != 200 || len(m["added"].([]any)) != 1 || m["added"].([]any)[0] != "AAPL" || len(m["skipped"].([]any)) != 1 || len(m["notes"].([]any)) != 1 {
+		t.Fatalf("import %d %v", code, m)
+	}
+	if code, _, _ := x.do("POST", "/api/v1/watchlist/platform/nope/import", "", csrf...); code != 404 {
+		t.Fatalf("unknown list %d", code)
 	}
 }

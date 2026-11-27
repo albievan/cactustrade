@@ -65,6 +65,8 @@ type Deps struct {
 	// available (with reviewing on, the agent then rejects every trade).
 	LLM      ports.Reviewer
 	Research ports.Research // industries and the screen for the scanner (nil = not available)
+	// Watchlists reads the user's eToro watchlists for the import (R46; nil = not available).
+	Watchlists ports.PlatformWatchlists
 	// Researcher is web research for the watchlist (PLAN R29): an LLM whose only tool is its
 	// provider's built-in web search. It only returns data; nil = not available.
 	Researcher ports.Researcher

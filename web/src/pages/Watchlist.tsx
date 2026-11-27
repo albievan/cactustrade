@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   api, errorText, usd, WATCHLIST_EXPORT_URL, type Instrument, type Quote, type Theme, type ThemeProposals, type WatchHolding,
-  type WatchItem, type WatchlistCount, type WatchlistImportResult, type WatchlistOverview,
+  type PlatformWatchlist, type WatchItem, type WatchlistCount, type WatchlistImportResult, type WatchlistOverview,
 } from "../lib/api";
 import { useSession } from "../lib/session";
 import { useMode, useRefreshMode } from "../lib/mode";
@@ -34,6 +34,7 @@ export function Watchlist() {
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [proposals, setProposals] = useState<ThemeProposals | null>(null);
   const [imported, setImported] = useState<WatchlistImportResult | null>(null);
+  const [platformLists, setPlatformLists] = useState<PlatformWatchlist[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [loaded, setLoaded] = useState(false);
@@ -96,6 +97,11 @@ export function Watchlist() {
               title="Export the watchlist and themes as JSON" aria-label="Export the watchlist and themes as JSON">
               <i className="bi bi-download" />
             </a>
+            <button type="button" className="btn btn-outline-secondary" title="Import a watchlist from eToro"
+              aria-label="Import a watchlist from eToro" disabled={busy}
+              onClick={() => void run(async () => { setImported(null); setPlatformLists(await api.platformWatchlists()); })}>
+              <i className="bi bi-cloud-download" />
+            </button>
             <ImportButton disabled={busy} onPicked={(file) => void run(async () => {
               setImported(null);
               setImported(await api.importWatchlist(file));
@@ -104,6 +110,14 @@ export function Watchlist() {
           </div>
         )}
       </div>
+      {platformLists && (
+        <PlatformImport lists={platformLists} busy={busy} onClose={() => setPlatformLists(null)}
+          onImport={(id) => void run(async () => {
+            setImported(await api.importPlatformWatchlist(id));
+            setPlatformLists(null);
+            load();
+          })} />
+      )}
       {imported && <ImportResult result={imported} onClose={() => setImported(null)} />}
       {proposals && (
         <Proposals proposals={proposals} busy={busy} onClose={() => setProposals(null)}
@@ -294,6 +308,39 @@ function ImportButton({ disabled, onPicked, onError }: { disabled: boolean; onPi
       </button>
       <input ref={input} type="file" accept=".json,application/json" className="d-none" aria-label="Watchlist file" onChange={(e) => void picked(e)} />
     </>
+  );
+}
+
+// PlatformImport lets the user pick one of their eToro watchlists to import (R46, D38). The
+// server reads eToro (never writes) and checks every share like a hand add.
+function PlatformImport({ lists, busy, onImport, onClose }: {
+  lists: PlatformWatchlist[]; busy: boolean; onImport: (id: string) => void; onClose: () => void;
+}) {
+  const [id, setId] = useState(() => (lists.find((l) => l.isDefault) ?? lists[0])?.id ?? "");
+  const picked = lists.find((l) => l.id === id);
+  return (
+    <div className="card mb-3" aria-label="Import from eToro"><div className="card-body py-2">
+      <div className="d-flex align-items-center mb-2">
+        <strong className="me-auto">Import a watchlist from eToro</strong>
+        <button type="button" className="btn-close" aria-label="Close" onClick={onClose} />
+      </div>
+      {lists.length === 0 ? (
+        <p className="small text-secondary mb-0">This account has no watchlists on eToro.</p>
+      ) : (
+        <>
+          <div className="input-group input-group-sm" style={{ maxWidth: 480 }}>
+            <select className="form-select" aria-label="eToro watchlist" value={id} onChange={(e) => setId(e.target.value)}>
+              {lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.shares} {l.shares === 1 ? "share" : "shares"})</option>)}
+            </select>
+            <button type="button" className="btn btn-primary" disabled={busy || !picked || picked.shares === 0} onClick={() => onImport(id)}>Import</button>
+          </div>
+          <div className="form-text">
+            Each share is checked with eToro like adding by hand (exchange, eligibility); refused ones are listed, not added.
+            {picked && picked.others > 0 && ` ${picked.others} people on this list are left out.`} Nothing changes on eToro.
+          </div>
+        </>
+      )}
+    </div></div>
   );
 }
 

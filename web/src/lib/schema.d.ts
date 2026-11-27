@@ -960,6 +960,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/watchlist/platform": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The current account's watchlists on eToro, for the import (trade access)
+         * @description R46, owner's decision D38 (2026-11-27): eToro's watchlists are read (one GET), never
+         *     written. Trading 212, Saxo and Tiger have no watchlists in their APIs.
+         */
+        get: operations["listPlatformWatchlists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlist/platform/{watchlistId}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                watchlistId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add the shares of one eToro watchlist to the current account's watchlist (trade access, web UI)
+         * @description Every share goes through the same eToro check as adding by hand; refused ones are
+         *     reported, not added; people on the list are left out; at most 200 shares per import.
+         *     Importing the same list twice changes nothing the second time.
+         */
+        post: operations["importPlatformWatchlist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/watchlist/{instrumentId}": {
         parameters: {
             query?: never;
@@ -2504,6 +2549,17 @@ export interface components {
             /** @description the share's symbol or the theme's name */
             name: string;
             reason: string;
+        };
+        PlatformWatchlist: {
+            id: string;
+            name: string;
+            /** @description eToro's watchlist type: Static, Dynamic, RecentlyInvested or Default */
+            type: string;
+            isDefault: boolean;
+            /** @description instruments on the list (each is checked on import) */
+            shares: number;
+            /** @description entries that are not instruments (people); never imported */
+            others: number;
         };
         WatchlistImportResult: {
             added: string[];
@@ -5574,6 +5630,55 @@ export interface operations {
             404: components["responses"]["Problem"];
             413: components["responses"]["Problem"];
             415: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    listPlatformWatchlists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The eToro watchlists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformWatchlist"][];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    importPlatformWatchlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                watchlistId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What was merged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistImportResult"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };
     };
