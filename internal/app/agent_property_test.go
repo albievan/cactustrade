@@ -32,7 +32,7 @@ const (
 	propForeignIn  = domain.InstrumentID(999)
 )
 
-// propInstruments are the shares of every scenario: NYSE, LSE (entries off, OD9) and ASX.
+// propInstruments are the shares of every scenario: NYSE, LSE and ASX.
 var propInstruments = []struct {
 	id  domain.InstrumentID
 	sym string

@@ -131,6 +131,8 @@ type Service struct {
 	gates *gateLatch
 	// research serialises web research's stored state and marks running runs (PLAN R29).
 	research *researchLocks
+	// fx caches the eToro instruments of the currency pairs costs are converted with.
+	fx *fxIDs
 }
 
 // New builds the service.
@@ -151,7 +153,7 @@ func New(d Deps, cfg Config) (*Service, error) {
 	if d.Sleep == nil {
 		d.Sleep = sleepCtx
 	}
-	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch(), research: newResearchLocks()}, nil
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch(), research: newResearchLocks(), fx: newFXIDs()}, nil
 }
 
 // sleepCtx waits for d with a real timer, or until ctx ends.

@@ -4,19 +4,18 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
-	"strings"
 	"time"
 )
 
-// EntriesAllowed reports whether the agent may open positions on market m. LSE entries stay
-// off until the stop and rate units (GBX or GBP, U4/Q1) are verified with a live demo
-// account (owner's decision OD9); NYSE/NASDAQ and ASX are allowed. Exits are never affected.
+// EntriesAllowed reports whether the agent may open positions on market m: London (LSE),
+// New York (NYSE/NASDAQ) and Sydney (ASX). LSE was off until its units were verified
+// (owner's decision OD9, settled 2026-11-27). Exits are never affected.
 func EntriesAllowed(m Market) (bool, string) {
 	switch m {
-	case MarketNYSE, MarketASX:
+	case MarketNYSE, MarketASX, MarketLSE:
+		// LSE back on 2026-11-27 (OD9 settled): prices, candles and stops are all in pence
+		// (GBX), so stops are in the same unit as the prices they come from (PLAN step 2.7).
 		return true, ""
-	case MarketLSE:
-		return false, "LSE entries are off until the stop and price units (GBX or GBP) are verified (owner's decision OD9)"
 	}
 	return false, fmt.Sprintf("market %q is not supported", m)
 }
@@ -73,16 +72,38 @@ func mulDiv(a, b, c int64) int64 {
 	return int64(q)
 }
 
+// toUSDMicros converts v micros of a currency worth rate USD micros per unit to USD micros,
+// rounded up (a cost is never understated); a negative v (a rebate) converts to 0.
+func toUSDMicros(v int64, rate Micros) int64 {
+	if v <= 0 || rate <= 0 {
+		return 0
+	}
+	hi, lo := bits.Mul64(uint64(v), uint64(rate))
+	if hi >= 1_000_000 {
+		return math.MaxInt64
+	}
+	q, r := bits.Div64(hi, lo, 1_000_000)
+	if q >= math.MaxInt64 {
+		return math.MaxInt64
+	}
+	if r != 0 {
+		q++
+	}
+	return int64(q)
+}
+
 // microsPerCent converts USD micros (1 USD = 1 000 000) to cents (1 USD = 100).
 const microsPerCent = 10_000
 
 // CostCheck is the cost gate (OD8): an entry of size in direction d at entry, aiming at
 // takeProfit, is refused when eToro's costs for it are at least the gross gain at the
-// take-profit, size × |takeProfit − entry| / entry. It fails closed: no take-profit (or
-// one on the losing side), no cost lines, or a cost line in a currency other than USD (the
-// account currency) is a refusal. Negative cost lines (rebates) are ignored. It returns
-// the gross gain and the costs in cents (costs rounded up) and, when refused, why.
-func CostCheck(size Cents, d Direction, entry, takeProfit Micros, costs []CostItem) (ok bool, gain, total Cents, why string) {
+// take-profit, size × |takeProfit − entry| / entry. A cost line in another currency than
+// USD (the account currency), e.g. an ASX overnight fee in AUD or an LSE one in GBX, is
+// converted with eToro's own rate in fx (rounded up). It fails closed: no take-profit (or
+// one on the losing side), no cost lines, or a cost line in a currency fx has no rate for
+// is a refusal. Negative cost lines (rebates) are ignored. It returns the gross gain and the
+// costs in cents (costs rounded up) and, when refused, why.
+func CostCheck(size Cents, d Direction, entry, takeProfit Micros, costs []CostItem, fx FXRates) (ok bool, gain, total Cents, why string) {
 	switch {
 	case !d.Valid():
 		return false, 0, 0, "unknown direction"
@@ -97,15 +118,20 @@ func CostCheck(size Cents, d Direction, entry, takeProfit Micros, costs []CostIt
 	}
 	var micros int64
 	for _, c := range costs {
-		if cur := strings.ToUpper(strings.TrimSpace(c.Currency)); cur != "" && cur != "USD" {
-			return false, 0, 0, fmt.Sprintf("a cost line (%s) is in %s, not USD", c.Type, c.Currency)
+		v := int64(c.Value)
+		if cur := NormCurrency(c.Currency); cur != "" && cur != "USD" {
+			rate, ok := fx[cur]
+			if !ok || rate <= 0 {
+				return false, 0, 0, fmt.Sprintf("a cost line (%s) is in %s and eToro's rate to convert it to USD is not available", c.Type, c.Currency)
+			}
+			v = toUSDMicros(v, rate)
 		}
-		if c.Value > 0 {
-			if micros > math.MaxInt64-int64(c.Value) {
+		if v > 0 {
+			if micros > math.MaxInt64-v {
 				micros = math.MaxInt64
 				break
 			}
-			micros += int64(c.Value)
+			micros += v
 		}
 	}
 	total = Cents(micros / microsPerCent)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -38,7 +39,7 @@ type TraceStep string
 
 // The steps of an entry decision, in order (PLAN 4.10).
 const (
-	StepSession      TraceStep = "session"      // the instrument's market is in session (LSE off, OD9)
+	StepSession      TraceStep = "session"      // the instrument's market takes entries and is in session
 	StepCandles      TraceStep = "candles"      // closed 5-minute bars, the forming one dropped
 	StepSignal       TraceStep = "signal"       // the strategy proposes a candidate
 	StepCosts        TraceStep = "costs"        // eToro's costs below the gross gain at the target (OD8)
@@ -401,7 +402,7 @@ func (s *Service) decide(ctx context.Context, a domain.Account, l domain.RiskLim
 	bctx := ports.WithAccount(ctx, a)
 	size := min(c.SuggestedSize, sizing)
 	// (4) Costs below the gross gain at the take-profit (OD8).
-	if !s.costGate(bctx, c, size, c.Entry, it) {
+	if !s.costGate(bctx, c, size, c.Entry, l, it) {
 		dl.end(domain.DecisionRejectedCost, lastDetail(it))
 		return ""
 	}
@@ -465,7 +466,7 @@ func (s *Service) decide(ctx context.Context, a domain.Account, l domain.RiskLim
 	}
 	dl.d.Risk = domain.DecisionRisk{Allowed: true, Size: dec.Size, Reason: cmpOr(dec.Reason, fmt.Sprintf("allowed $%s of $%s requested", dec.Size, size))}
 	// The cost gate again when the engine shrank the size: fixed fees weigh more.
-	if dec.Size < size && !s.costGate(bctx, c, dec.Size, entry, it) {
+	if dec.Size < size && !s.costGate(bctx, c, dec.Size, entry, l, it) {
 		dl.end(domain.DecisionRejectedCost, lastDetail(it))
 		return ""
 	}
@@ -586,17 +587,26 @@ func (s *Service) signal(in domain.Instrument, bars []domain.Candle, sizing doma
 }
 
 // costGate runs step (4) for size at entry: eToro's costs must stay below the gross gain at
-// the take-profit; a failed costs call is a refusal (OD8).
-func (s *Service) costGate(bctx context.Context, c domain.Candidate, size domain.Cents, entry domain.Micros, it *InstrumentTrace) bool {
+// the take-profit; a failed costs call is a refusal (OD8). Cost lines in AUD or GBX/GBP are
+// converted to USD with eToro's own rate, no older than the price limit l.MaxQuoteAge.
+func (s *Service) costGate(bctx context.Context, c domain.Candidate, size domain.Cents, entry domain.Micros, l domain.RiskLimits, it *InstrumentTrace) bool {
 	costs, err := s.d.Broker.Costs(bctx, c.Instrument, c.Direction, size)
 	if err != nil {
 		return it.fail(StepCosts, "the costs could not be read: %v", err)
 	}
-	ok, gain, total, why := domain.CostCheck(size, c.Direction, entry, c.TakeProfitRate, costs)
+	fx, err := s.fxRates(bctx, costs, l.MaxQuoteAge)
+	if err != nil {
+		return it.fail(StepCosts, "a cost line could not be converted to USD: %v", err)
+	}
+	ok, gain, total, why := domain.CostCheck(size, c.Direction, entry, c.TakeProfitRate, costs, fx)
 	if !ok {
 		return it.fail(StepCosts, "%s", why)
 	}
-	it.pass(StepCosts, fmt.Sprintf("costs $%s, gross gain at the target $%s (size $%s)", total, gain, size))
+	msg := fmt.Sprintf("costs $%s, gross gain at the target $%s (size $%s)", total, gain, size)
+	for _, cur := range slices.Sorted(maps.Keys(fx)) {
+		msg += fmt.Sprintf("; %s converted at eToro's %s USD", cur, fx[cur])
+	}
+	it.pass(StepCosts, msg)
 	return true
 }
 

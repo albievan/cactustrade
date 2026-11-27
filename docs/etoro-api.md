@@ -294,6 +294,12 @@ exposure and the conversion cost are not described in the pages read, so cactusT
 `costs` endpoint for each candidate (spread, markup, transaction fee, tax such as UK stamp
 duty) instead of modelling them itself. Open question for phase 2: GBX quote units on LSE.
 
+Cost lines are not all in USD: the costs endpoint lists the **overnight fee** in the
+instrument's currency (AUD on the ASX, GBX on the LSE) while spread, markup, transaction fee
+and SDRT are USD (recordings of 2026-11-24). cactusTrade converts such a line with eToro's
+own rate, the ask of the AUDUSD / GBPUSD instrument (GBX = GBPUSD ÷ 100), found by an exact
+symbol match in instrument search, and refuses when that rate is missing or stale (R36).
+
 ## Never in the client (deny list, for the allowlist test)
 
 `/api/v1/money/*` (transfers, transferable balance, cash-account transactions),

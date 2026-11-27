@@ -24,6 +24,9 @@ type agentMarket struct {
 	quotes   map[domain.InstrumentID]domain.Quote
 	QuoteAge time.Duration
 	Err      error
+	// found is what Search returns (the currency pairs costs are converted with).
+	found       []domain.Instrument
+	searchCalls int
 }
 
 var _ ports.MarketData = (*agentMarket)(nil)
@@ -68,7 +71,12 @@ func (m *agentMarket) Candles(_ context.Context, id domain.InstrumentID, iv time
 	return out, nil
 }
 
-func (m *agentMarket) Search(context.Context, string) ([]domain.Instrument, error) { return nil, nil }
+func (m *agentMarket) Search(context.Context, string) ([]domain.Instrument, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.searchCalls++
+	return m.found, nil
+}
 
 func (m *agentMarket) Instruments(context.Context, []domain.InstrumentID) ([]domain.Instrument, error) {
 	return nil, nil
@@ -426,7 +434,12 @@ func TestAgentTickRefusals(t *testing.T) {
 			}
 		}, skip: "the watchlist is empty"},
 		{name: "portfolio unreadable", setup: func(t *testing.T, ae *agentEnv) { ae.b.PortfolioErr = domain.ErrUnavailable }, skip: "reading the portfolio failed"},
-		{name: "LSE entries off (OD9)", watch: []domain.InstrumentID{instLSE}, step: StepSession},
+		{name: "a cost line in AUD, no AUDUSD at eToro", setup: func(t *testing.T, ae *agentEnv) {
+			ae.svc.d.Broker = &costsBroker{SimBroker: ae.b, items: []domain.CostItem{{Type: "overnightFee", Value: 0, Currency: "AUD"}}}
+		}, step: StepCosts},
+		{name: "a cost line in EUR (not converted)", setup: func(t *testing.T, ae *agentEnv) {
+			ae.svc.d.Broker = &costsBroker{SimBroker: ae.b, items: []domain.CostItem{{Type: "overnightFee", Value: 0, Currency: "EUR"}}}
+		}, step: StepCosts},
 		{name: "ASX not in session", watch: []domain.InstrumentID{instASX}, step: StepSession},
 		{name: "within 30 min of the close", setup: func(t *testing.T, ae *agentEnv) {
 			ae.clock.Advance(time.Date(2026, 11, 23, 20, 35, 5, 0, time.UTC).Sub(ae.clock.Now()))
@@ -693,4 +706,59 @@ func TestPlaceEntryCancelledBeforeSend(t *testing.T) {
 	if st := x.order(t, o.RequestID); st.State != domain.OrderAbandoned {
 		t.Fatalf("state = %s", st.State)
 	}
+}
+
+// TestAgentConvertsForeignCosts: an LSE entry whose overnight fee eToro lists in pence and an
+// ASX-style AUD line are converted with eToro's own GBP/USD and AUD/USD rates (found once by
+// an exact symbol search), and a stale rate is a refusal (fail closed).
+func TestAgentConvertsForeignCosts(t *testing.T) {
+	const gbpusd, audusd domain.InstrumentID = 2, 7
+	setup := func(t *testing.T) *agentEnv {
+		ae := newAgentEnv(t, instLSE)
+		ae.m.found = []domain.Instrument{
+			{ID: 900, Symbol: "GBPUSD.X"}, {ID: gbpusd, Symbol: "GBPUSD"}, {ID: audusd, Symbol: "AUDUSD"},
+		}
+		ae.m.setQuote(gbpusd, 1_269_000, 1_270_000)
+		ae.m.setQuote(audusd, 649_000, 650_000)
+		ae.svc.d.Broker = &costsBroker{SimBroker: ae.b, items: []domain.CostItem{
+			{Type: "marketSpread", Value: 30_000, Currency: "USD"},
+			{Type: "overnightFee", Value: 100_000_000, Currency: "GBX"}, // 100p = $1.27
+			{Type: "overnightFee", Value: 1_000_000, Currency: "AUD"},   // A$1 = $0.65
+		}}
+		return ae
+	}
+	t.Run("converted", func(t *testing.T) {
+		ae := setup(t)
+		tr := ae.tick(t)
+		if tr.Entries != 1 || len(tr.Instruments) != 1 {
+			t.Fatalf("trace %+v", tr)
+		}
+		var costs string
+		for _, c := range tr.Instruments[0].Checks {
+			if c.Step == StepCosts {
+				costs = c.Detail
+			}
+		}
+		for _, want := range []string{"costs $1.95", "AUD converted at eToro's 0.65 USD", "GBX converted at eToro's 0.0127 USD"} {
+			if !strings.Contains(costs, want) {
+				t.Errorf("costs detail %q lacks %q", costs, want)
+			}
+		}
+		ae.tick(t)
+		if ae.m.searchCalls != 2 {
+			t.Errorf("search calls = %d, want 2 (one per pair, then cached)", ae.m.searchCalls)
+		}
+	})
+	t.Run("stale rate", func(t *testing.T) {
+		ae := setup(t)
+		ae.m.QuoteAge = time.Hour
+		tr := ae.tick(t)
+		if tr.Entries != 0 || len(tr.Instruments) != 1 {
+			t.Fatalf("trace %+v", tr)
+		}
+		last := tr.Instruments[0].Checks[len(tr.Instruments[0].Checks)-1]
+		if last.Step != StepCosts || last.Pass || !strings.Contains(last.Detail, "stale") {
+			t.Fatalf("last check %+v, want a stale-rate cost refusal", last)
+		}
+	})
 }

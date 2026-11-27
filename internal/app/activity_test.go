@@ -53,16 +53,16 @@ func TestPublishTickAndDecisions(t *testing.T) {
 	}{
 		{
 			name:        "an entry",
-			wantChecked: 3, wantIdeas: 1, wantOrders: 1,
-			wantReasons:  map[TraceStep]int{StepSession: 2},
-			wantOutcomes: []domain.DecisionOutcome{domain.DecisionOrdered},
+			wantChecked: 3, wantIdeas: 2, wantOrders: 2,
+			wantReasons:  map[TraceStep]int{StepSession: 1},
+			wantOutcomes: []domain.DecisionOutcome{domain.DecisionOrdered, domain.DecisionOrdered},
 		},
 		{
 			name:        "the reviewer rejects",
 			setup:       func(t *testing.T, ae *agentEnv) { ae.reviewing(t, verdict(reject, nil)) },
-			wantChecked: 3, wantIdeas: 1,
-			wantReasons:  map[TraceStep]int{StepSession: 2, StepReview: 1},
-			wantOutcomes: []domain.DecisionOutcome{domain.DecisionRejectedReviewer},
+			wantChecked: 3, wantIdeas: 2,
+			wantReasons:  map[TraceStep]int{StepSession: 1, StepReview: 2},
+			wantOutcomes: []domain.DecisionOutcome{domain.DecisionRejectedReviewer, domain.DecisionRejectedReviewer},
 		},
 		{
 			name: "no signal",
@@ -70,7 +70,7 @@ func TestPublishTickAndDecisions(t *testing.T) {
 				ae.setCand(func(domain.InstrumentID) *domain.Candidate { return nil })
 			},
 			wantChecked: 3,
-			wantReasons: map[TraceStep]int{StepSession: 2, StepSignal: 1},
+			wantReasons: map[TraceStep]int{StepSession: 1, StepSignal: 2},
 		},
 		{
 			name: "skipped: paused",
