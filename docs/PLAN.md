@@ -1495,6 +1495,15 @@ U1–U11 (demo, step 4.17) must be settled first.
 - **RU9:** extended-hours fills.
 - **RU10:** whether real `orders:lookup` takes `referenceId` the same way as demo.
 
+**RU results, 2026-11-27** (`etoro-probe --real-read` on Real Money Maker, AAPL and BARC.L, read only; D39):
+- RU1 settled: spec v1.427.0 has every allowlisted real path; v2 create-order is not deprecated (v3 exists, async).
+- RU3 settled: real eligibility answers `real`/long/×1 **yes** and `cfd`/short/×1 **yes** (`isPotential` false), minimum $10 each; the owner's CFD appropriateness is passed.
+- RU5 settled for what `costs` reports: long AAPL $100 → spread $0.02; short → transactionFee $0.15 + spread; long BARC.L → spread $0.03 + **sdrt $0.50** (UK stamp duty 0.5 %); overnight fees in GBX (converted, R36). Every line goes through the cost gate.
+- RU6 settled: minimum position $10 long and short (R38 minimums apply).
+- RU7 settled for cactusTrade: a real short's `maxStopLossPercentage` is 50 %; our stops are a few % above entry, far inside it, so no stop is "beyond the maximum"; real shorts are 0 % by default anyway (OD25).
+- RU8 partly: the same read quota groups answered on real without 429; execution quota is seen at 7.24.
+- RU2 (key permissions: the owner's real keys need **Write** for trading), RU4 (unsettled proceeds in `credit`), RU9 (cactusTrade trades only in session), RU10 (`orders:lookup` by `referenceId` on real) settle at the owner's first real run (7.24), accepted under D39.
+
 
 **Owner, 2026-11-25:** "i still need to see how the platform performes before i allow real money trading". Real trading stays off; 7.18 waits for an observation period on demo (the Analysis page, R31, and the statements, R30, are the record). 4.17 evidence so far: kill drill run by the owner 2026-11-25 08:51 UTC with **no** positions open (the 2-position drill, a short, and a restart mid-position are still open: they need the agent trading in session).
 
