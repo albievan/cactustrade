@@ -57,4 +57,14 @@ describe("OrderFeed", () => {
     expect(within(line).getByText("26/11/2026 20:50")).toBeInTheDocument();
     expect(within(line).getByText("Sydney (ASX)")).toBeInTheDocument();
   });
+
+  it("names the trading platform and the account of the orders (R47)", () => {
+    const account = { id: "r1", name: "Real Money Maker", ownerId: "1", ownerName: "admin", mode: "real", platform: "etoro", envKeys: false, access: "owner", createdAt: "" } as never;
+    render(<OrderFeed orders={[order({ requestId: "x" })]} account={account} />);
+    expect(screen.getAllByLabelText("eToro account Real Money Maker")).toHaveLength(2); // the header and the line
+    const line = within(screen.getByRole("list", { name: "Orders feed" })).getByRole("listitem");
+    expect(within(line).getByText("eToro")).toBeInTheDocument();
+    expect(within(line).getByText("Real Money Maker")).toBeInTheDocument();
+    expect(within(line).getByText("REAL")).toBeInTheDocument();
+  });
 });

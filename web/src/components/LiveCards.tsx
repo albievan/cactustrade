@@ -1,6 +1,6 @@
 import { dateTime, hourMinute } from "../lib/format";
 import { useState, type ReactNode } from "react";
-import { usd, type Order } from "../lib/api";
+import { platformBadge, platformLabel, usd, type Account, type Order } from "../lib/api";
 import type { Live, LiveFigures, LiveRegime, LiveSnapshot } from "../lib/live";
 import type { RegimeText } from "../lib/api";
 import { FixButton } from "./FixButton";
@@ -211,7 +211,7 @@ export function LivePositions({ snapshot }: { snapshot: LiveSnapshot | null }) {
 // OrderFeed is the orders and fills feed (the events are in the activity log, R26): each line
 // shows its direction (long or short), the feed can show long or short orders only, and
 // identical requests in a row (e.g. a cancel repeated every minute) are folded into one line.
-export function OrderFeed({ orders }: { orders: Order[] }) {
+export function OrderFeed({ orders, account }: { orders: Order[]; account?: Account }) {
   const [only, setOnly] = useState<"" | "long" | "short">("");
   const count = (d: string) => orders.filter((o) => o.direction === d).length;
   const lines = foldRepeats(only ? orders.filter((o) => o.direction === only) : orders);
@@ -223,6 +223,7 @@ export function OrderFeed({ orders }: { orders: Order[] }) {
     <div className="card h-100"><div className="card-body">
       <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
         <h2 className="h5 mb-0 flex-grow-1">Orders and fills</h2>
+        {account && <AccountTag account={account} />}
         {orders.length > 0 && (
           <div className="btn-group btn-group-sm" role="group" aria-label="Show orders by direction">
             {pick("", "All", orders.length)}{pick("long", "Long", count("long"))}{pick("short", "Short", count("short"))}
@@ -236,6 +237,7 @@ export function OrderFeed({ orders }: { orders: Order[] }) {
           {lines.map(({ order: o, times, since }) => (
             <li key={o.requestId} className="d-flex flex-wrap align-items-center gap-2 py-1 border-bottom">
               <span className="text-secondary text-nowrap">{times > 1 ? `${dateTime(since)}–${sameDay(since, o.updatedAt) ? hourMinute(o.updatedAt) : dateTime(o.updatedAt)}` : dateTime(o.updatedAt)}</span>
+              {account && <AccountTag account={account} small />}
               <DirectionBadge direction={o.direction} />
               {o.exchange && <span className="badge text-bg-light border" title={`Exchange: ${o.exchange}`}>{o.exchange}</span>}
               <span className="fw-semibold">{o.kindLabel}</span>
@@ -247,6 +249,17 @@ export function OrderFeed({ orders }: { orders: Order[] }) {
         </ul>
       )}
     </div></div>
+  );
+}
+
+// AccountTag names the trading platform and the account the orders are on (R47).
+function AccountTag({ account: a, small }: { account: Account; small?: boolean }) {
+  return (
+    <span className={"d-inline-flex align-items-center gap-1" + (small ? "" : " small")} aria-label={`${platformLabel[a.platform]} account ${a.name}`}>
+      <span className={"badge " + platformBadge[a.platform]}>{platformLabel[a.platform]}</span>
+      <span className={small ? "text-secondary" : "fw-semibold"}>{a.name}</span>
+      {a.mode === "real" ? <span className="badge text-bg-danger">REAL</span> : !small && <span className="badge text-bg-info">demo</span>}
+    </span>
   );
 }
 

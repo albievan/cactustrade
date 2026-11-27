@@ -69,10 +69,8 @@ function LiveDashboard({ account }: { account: Account }) {
       <LiveStats snapshot={s} />
       <ActivityLog account={account} live={live} />
       <AgentPanel live={live} />
-      <div className="row g-3 mb-4">
-        <div className="col-xl-6"><LimitBars figures={s?.figures} accountId={account.id} /></div>
-        <div className="col-xl-6"><OrderFeed orders={live.orders} /></div>
-      </div>
+      <div className="mb-4"><OrderFeed orders={live.orders} account={account} /></div>
+      <div className="mb-4"><LimitBars figures={s?.figures} accountId={account.id} /></div>
       <LivePositions snapshot={s} />
       <InfoCard id="dashboard-live" title="How the live view works">
         <ul className="small mb-0">
