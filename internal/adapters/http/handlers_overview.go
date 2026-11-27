@@ -13,6 +13,11 @@ func toHoldings(h domain.Holdings) Holdings {
 		Equity: MinorUnits(h.Equity), UnrealisedPnl: MinorUnits(h.UnrealisedPnL), RealisedPnl: MinorUnits(h.RealisedPnL),
 		Positions: make([]Holding, 0, len(h.Positions)), AsOf: h.AsOf,
 	}
+	sum := h.Summary()
+	out.Summary = HoldingsSummary{
+		Longs: sum.Longs, Shorts: sum.Shorts, LongValue: MinorUnits(sum.LongValue), ShortValue: MinorUnits(sum.ShortValue),
+		LongPnl: MinorUnits(sum.LongPnL), ShortPnl: MinorUnits(sum.ShortPnL), UnknownValues: sum.UnknownValues,
+	}
 	for _, p := range h.Positions {
 		x := Holding{
 			Symbol: p.Symbol, Name: p.Name, Currency: p.Currency, Quantity: dec(p.Quantity), AvgPrice: dec(p.AvgPrice),

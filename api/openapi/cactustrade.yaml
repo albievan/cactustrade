@@ -3309,9 +3309,10 @@ components:
         cfd: { type: boolean }
     Holdings:
       type: object
-      required: [platform, currency, cash, invested, equity, unrealisedPnl, realisedPnl, positions, asOf]
+      required: [platform, currency, cash, invested, equity, unrealisedPnl, realisedPnl, positions, summary, asOf]
       description: Amounts are minor units of `currency`, the account's own currency.
       properties:
+        summary: { $ref: "#/components/schemas/HoldingsSummary" }
         platform: { $ref: "#/components/schemas/Platform" }
         currency: { type: string }
         cash: { $ref: "#/components/schemas/MinorUnits" }
@@ -3323,6 +3324,18 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Holding" }
         asOf: { type: string, format: date-time }
+    HoldingsSummary:
+      type: object
+      description: "The open positions by side (R44), counted and summed by the server in the account currency. A position whose value the platform did not report is counted but not summed (unknownValues)."
+      required: [longs, shorts, longValue, shortValue, longPnl, shortPnl, unknownValues]
+      properties:
+        longs: { type: integer }
+        shorts: { type: integer }
+        longValue: { $ref: "#/components/schemas/MinorUnits" }
+        shortValue: { $ref: "#/components/schemas/MinorUnits" }
+        longPnl: { $ref: "#/components/schemas/MinorUnits" }
+        shortPnl: { $ref: "#/components/schemas/MinorUnits" }
+        unknownValues: { type: integer }
     AccountHoldings:
       type: object
       required: [account, noKeys]

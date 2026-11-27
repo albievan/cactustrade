@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   api, errorText, platformBadge, platformLabel, usd, viewOnly,
-  type Account, type AccountKeys, type AccountShare, type BrokerCheck, type CredentialSpec, type Platform, type PlatformInfo,
+  type Account, type AccountHoldings, type AccountKeys, type AccountShare, type BrokerCheck, type CredentialSpec, type Platform, type PlatformInfo,
 } from "../lib/api";
 import { useSession } from "../lib/session";
 import { useRefreshMode } from "../lib/mode";
 import { ProblemAlert } from "../components/ProblemAlert";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { AccountFigures } from "../components/AccountFigures";
 
 // Each user's trading platform accounts (eToro, and the view-only Trading 212, Saxo and Tiger
 // Brokers) and the ones shared with them, as a grid of cards. Every credential field comes
@@ -91,6 +92,8 @@ export function Accounts() {
   const { can } = useSession();
   const refreshMode = useRefreshMode();
   const [accounts, setAccounts] = useState<Account[]>([]);
+  // each account's figures from the overview (R44); null once read without that account
+  const [figures, setFigures] = useState<Record<string, AccountHoldings> | null>(null);
   const [specs, setSpecs] = useState<Specs>({});
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
@@ -98,6 +101,7 @@ export function Accounts() {
   const [openKeys] = useState(() => new URLSearchParams(window.location.search).get("keys") ?? "");
   const load = useCallback(() => {
     api.accounts().then(setAccounts).catch(setError);
+    api.overview().then((ov) => setFigures(Object.fromEntries(ov.accounts.map((h) => [h.account.id, h])))).catch(() => setFigures({}));
     void refreshMode();
   }, [refreshMode]);
   useEffect(load, [load]);
@@ -139,7 +143,8 @@ export function Accounts() {
       {can("agent.control") && <CreateAccount specs={specs} onCreated={load} />}
       {accounts.length === 0 && <p className="text-secondary">No accounts yet.</p>}
       <div className="row row-cols-1 row-cols-md-2 row-cols-xxl-3 g-3">
-        {accounts.map((a) => <AccountCard key={a.id} a={a} spec={specs[a.platform]} onChange={load} openKeys={a.id === openKeys} />)}
+        {accounts.map((a) => <AccountCard key={a.id} a={a} spec={specs[a.platform]} onChange={load} openKeys={a.id === openKeys}
+          figures={figures === null ? undefined : figures[a.id] ?? null} />)}
       </div>
     </>
   );
@@ -240,7 +245,9 @@ function KeyStatus({ keys, platform }: { keys: AccountKeys | null; platform: Pla
   );
 }
 
-function AccountCard({ a, spec, onChange, openKeys }: { a: Account; spec?: PlatformInfo; onChange: () => void; openKeys?: boolean }) {
+function AccountCard({ a, spec, onChange, openKeys, figures }: {
+  a: Account; spec?: PlatformInfo; onChange: () => void; openKeys?: boolean; figures?: AccountHoldings | null;
+}) {
   const owner = a.access === "owner";
   const vo = viewOnly(a.platform);
   const saxo = a.platform === "saxo";
@@ -310,6 +317,7 @@ function AccountCard({ a, spec, onChange, openKeys }: { a: Account; spec?: Platf
             {a.envKeys && <span className="badge text-bg-secondary" title="Keys from ETORO_DEMO_PUB / ETORO_DEMO_PK">environment keys</span>}
           </div>
           <div className="small text-secondary mb-1">{owner ? "yours" : `${a.ownerName}'s · you can ${vo ? "view" : a.access}`}</div>
+          <AccountFigures h={figures} />
           <div className="small mb-1">Keys: <KeyStatus keys={keys} platform={a.platform} /></div>
           {owner && (
             <div className="small mb-2">

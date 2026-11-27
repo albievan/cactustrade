@@ -59,6 +59,7 @@ func TestOverviewEndpoints(t *testing.T) {
 				Currency  string           `json:"currency"`
 				Equity    int64            `json:"equity"`
 				Positions []map[string]any `json:"positions"`
+				Summary   map[string]any   `json:"summary"`
 			} `json:"holdings"`
 			Error  string `json:"error"`
 			NoKeys bool   `json:"noKeys"`
@@ -71,7 +72,8 @@ func TestOverviewEndpoints(t *testing.T) {
 	for _, a := range ov.Accounts {
 		switch a.Account["name"] {
 		case "ISA":
-			if a.Holdings == nil || a.Holdings.Currency != "GBP" || a.Holdings.Positions[0]["quantity"] != "1.5" || a.Holdings.Positions[0]["openedAt"] != nil {
+			if a.Holdings == nil || a.Holdings.Currency != "GBP" || a.Holdings.Positions[0]["quantity"] != "1.5" || a.Holdings.Positions[0]["openedAt"] != nil ||
+				a.Holdings.Summary["longs"] != 1.0 || a.Holdings.Summary["shorts"] != 0.0 || a.Holdings.Summary["longValue"] != 900.0 {
 				t.Fatalf("ISA %+v", a)
 			}
 		case "Main demo":

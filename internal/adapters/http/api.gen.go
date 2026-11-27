@@ -2137,9 +2137,34 @@ type Holdings struct {
 	// cents, GBP pence…), whole units for JPY and KRW.
 	RealisedPnl MinorUnits `json:"realisedPnl"`
 
+	// Summary The open positions by side (R44), counted and summed by the server in the account currency. A position whose value the platform did not report is counted but not summed (unknownValues).
+	Summary HoldingsSummary `json:"summary"`
+
 	// UnrealisedPnl An amount in minor units of the currency given next to it: hundredths for most (USD
 	// cents, GBP pence…), whole units for JPY and KRW.
 	UnrealisedPnl MinorUnits `json:"unrealisedPnl"`
+}
+
+// HoldingsSummary The open positions by side (R44), counted and summed by the server in the account currency. A position whose value the platform did not report is counted but not summed (unknownValues).
+type HoldingsSummary struct {
+	// LongPnl An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	LongPnl MinorUnits `json:"longPnl"`
+
+	// LongValue An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	LongValue MinorUnits `json:"longValue"`
+	Longs     int        `json:"longs"`
+
+	// ShortPnl An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	ShortPnl MinorUnits `json:"shortPnl"`
+
+	// ShortValue An amount in minor units of the currency given next to it: hundredths for most (USD
+	// cents, GBP pence…), whole units for JPY and KRW.
+	ShortValue    MinorUnits `json:"shortValue"`
+	Shorts        int        `json:"shorts"`
+	UnknownValues int        `json:"unknownValues"`
 }
 
 // ImportSkip defines model for ImportSkip.

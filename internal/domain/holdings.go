@@ -142,3 +142,38 @@ func TotalsByCurrency(hs []Holdings) []CurrencyTotal {
 	slices.SortFunc(out, func(a, b CurrencyTotal) int { return strings.Compare(a.Currency, b.Currency) })
 	return out
 }
+
+// HoldingsSummary is the account tile's breakdown (R44): how many long and short positions
+// are open, what each side is worth now and its open P&L, in the account currency. A position
+// whose value the platform did not report (Unknown) is counted but adds nothing to the sums;
+// UnknownValues says how many there were.
+type HoldingsSummary struct {
+	Longs, Shorts         int
+	LongValue, ShortValue Cents
+	LongPnL, ShortPnL     Cents
+	UnknownValues         int
+}
+
+// Summary counts and sums the open positions by side.
+func (h Holdings) Summary() HoldingsSummary {
+	var s HoldingsSummary
+	for _, p := range h.Positions {
+		if p.Long {
+			s.Longs++
+		} else {
+			s.Shorts++
+		}
+		if p.Unknown {
+			s.UnknownValues++
+			continue
+		}
+		if p.Long {
+			s.LongValue += p.Value
+			s.LongPnL += p.PnL
+		} else {
+			s.ShortValue += p.Value
+			s.ShortPnL += p.PnL
+		}
+	}
+	return s
+}

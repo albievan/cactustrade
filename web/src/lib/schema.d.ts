@@ -2954,6 +2954,7 @@ export interface components {
         };
         /** @description Amounts are minor units of `currency`, the account's own currency. */
         Holdings: {
+            summary: components["schemas"]["HoldingsSummary"];
             platform: components["schemas"]["Platform"];
             currency: string;
             cash: components["schemas"]["MinorUnits"];
@@ -2964,6 +2965,16 @@ export interface components {
             positions: components["schemas"]["Holding"][];
             /** Format: date-time */
             asOf: string;
+        };
+        /** @description The open positions by side (R44), counted and summed by the server in the account currency. A position whose value the platform did not report is counted but not summed (unknownValues). */
+        HoldingsSummary: {
+            longs: number;
+            shorts: number;
+            longValue: components["schemas"]["MinorUnits"];
+            shortValue: components["schemas"]["MinorUnits"];
+            longPnl: components["schemas"]["MinorUnits"];
+            shortPnl: components["schemas"]["MinorUnits"];
+            unknownValues: number;
         };
         AccountHoldings: {
             account: components["schemas"]["Account"];

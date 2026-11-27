@@ -218,3 +218,9 @@ body[data-mode=real] .app-head .brand-version { color: rgba(255, 255, 255, .8); 
 .chart-axis { fill: var(--muted); font-size: 11px; }
 .chart-line-1 { stroke: var(--chart-1); } .chart-line-2 { stroke: var(--chart-2); } .chart-line-3 { stroke: var(--chart-3); }
 .chart-bg-1 { background: var(--chart-1); } .chart-bg-2 { background: var(--chart-2); }
+
+/* R44: an account tile's figures */
+.account-figures { --bs-table-bg: transparent; width: auto; }
+.account-figures th { font-weight: 500; color: var(--bs-secondary-color); padding-right: 1rem; white-space: nowrap; }
+.account-figures td { padding-right: 1rem; }
+.account-figures caption { caption-side: bottom; color: var(--bs-secondary-color); }
