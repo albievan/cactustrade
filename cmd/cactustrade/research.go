@@ -87,7 +87,7 @@ func researchAccount(ctx context.Context, store *sqlstore.Store, secrets ports.S
 	switch {
 	case !a.Tradable():
 		return domain.Account{}, fmt.Errorf("account %q is not an eToro account: %w", id, domain.ErrUnavailable)
-	case a.Mode != domain.ModeDemo && !(realRead && a.Mode == domain.ModeReal):
+	case a.Mode != domain.ModeDemo && (!realRead || a.Mode != domain.ModeReal):
 		return domain.Account{}, fmt.Errorf("account %q is not a demo account: research reads only with demo keys: %w", id, domain.ErrRealModeGated)
 	}
 	ak, uk := domain.AccountKeyNames(a)
