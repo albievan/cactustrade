@@ -652,7 +652,8 @@ paths:
         the real account (eToro, real, keys, reconciled, not killed, agent stopped, limits within
         the real-money ceilings), the linked demo account (same owner), the demo evidence (20
         qualifying risk days in the last 60, the latest at most 7 days old) and the arming user
-        (an admin who owns the account, in a web session). `enabled` is false in this build:
+        (an admin who owns the account, in a web session; the number of days is the account
+        admin's, D36). `enabled` is false in this build:
         arming is always refused until the owner's written consent (PLAN 7.18).
       parameters:
         - { name: demoAccountId, in: query, required: false, schema: { type: string, maxLength: 64 }, description: "the demo account the checklist is for (default: the one last armed with, else the owner's first)" }
@@ -699,6 +700,37 @@ paths:
         "409": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/real-gate/demo-days:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    put:
+      tags: [accounts]
+      operationId: setRealGateDemoDays
+      summary: Set how many qualifying demo days arming this real account needs (admin who owns it, web session)
+      description: |
+        D36 (owner, 2026-11-27): the account's admin sets the number, from `minDaysFloor` (5)
+        up to the evidence window (60 risk days); the default is 20. What counts as a day
+        (OD19) and the window are unchanged. Audited, announced, and an armed gate is disarmed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [minDays]
+              properties:
+                minDays: { type: integer }
+      responses:
+        "200":
+          description: The gate and its checklist under the new rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealGateStatus" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
   /api/v1/accounts/{accountId}/real-gate/disarm:
     parameters:
       - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
@@ -3521,7 +3553,7 @@ components:
         maxAgeDays: { type: integer }
     RealGateStatus:
       type: object
-      required: [account, gate, armed, enabled, demoCandidates, checks, evidence, rule, phrase, canArm, canDisarm]
+      required: [account, gate, armed, enabled, demoCandidates, checks, evidence, rule, phrase, canArm, canDisarm, canSetDays, minDaysFloor]
       properties:
         account: { $ref: "#/components/schemas/Account" }
         gate: { $ref: "#/components/schemas/RealGate" }
@@ -3540,6 +3572,8 @@ components:
         phrase: { type: string, description: "what to type to arm" }
         canArm: { type: boolean, description: "the caller may submit an arm request (the server still checks everything)" }
         canDisarm: { type: boolean }
+        canSetDays: { type: boolean, description: "the caller may change the qualifying demo days arming needs (an admin who owns the account, web session)" }
+        minDaysFloor: { type: integer, description: "the fewest qualifying demo days that may be required (the most is rule.windowDays)" }
     ArmRealRequest:
       type: object
       required: [demoAccountId, confirm, password]

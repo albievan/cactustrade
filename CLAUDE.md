@@ -63,8 +63,9 @@ Each rule has a test; a change that breaks one is a BLOCKER.
 7. **Idempotency.** Every order carries a unique `x-request-id` persisted *before* sending; a
    retry reuses it. On start-up reconcile against the eToro portfolio before anything else.
 
-**Demo by default.** Real mode only through the gated switch (≥ 20 trading days of demo
-history, admin, typed confirmation phrase, banner on every page). Never run real-mode orders
+**Demo by default.** Real mode only through the gated switch (≥ N qualifying days of demo
+history, N set per real account by its admin, 5–60, default 20 — owner's decision D36,
+2026-11-27; admin, typed confirmation phrase, banner on every page). Never run real-mode orders
 yourself. Never put real credentials in code, tests, fixtures, logs or commits.
 
 ## 3. Architecture — non-negotiable

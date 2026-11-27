@@ -29,6 +29,20 @@ type EvidenceRule struct {
 // most 7 days old.
 var DefaultEvidenceRule = EvidenceRule{MinDays: 20, WindowDays: 60, MaxAgeDays: 7}
 
+// MinEvidenceDaysFloor is the fewest qualifying demo days a real account's admin may require
+// (owner's decision D36, 2026-11-27): the number is the admin's to set per real account, but
+// the demo period can never be switched off. The most is the window (WindowDays).
+const MinEvidenceDaysFloor = 5
+
+// WithMinDays is the rule requiring n qualifying days (MinEvidenceDaysFloor..WindowDays).
+func (r EvidenceRule) WithMinDays(n int) (EvidenceRule, error) {
+	if n < MinEvidenceDaysFloor || n > r.WindowDays {
+		return r, Invalid("minDays", fmt.Sprintf("must be %d-%d qualifying demo days", MinEvidenceDaysFloor, r.WindowDays))
+	}
+	r.MinDays = n
+	return r, nil
+}
+
 // DayFacts is what the linked demo account did on one risk day (OD19).
 type DayFacts struct {
 	Day RiskDate
@@ -328,6 +342,7 @@ const (
 	DisarmKill    = "the kill switch tripped"
 	DisarmKeys    = "the account's eToro keys changed"
 	DisarmLimits  = "a risk limit was raised"
+	DisarmDays    = "the demo days required changed"
 	DisarmRestore = "a backup was restored after the gate was armed"
 	DisarmExpired = "the arming expired (30 days)"
 	// DisarmRestored is recorded by the restore itself, which locks every gate whatever the

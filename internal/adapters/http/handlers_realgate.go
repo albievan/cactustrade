@@ -59,7 +59,7 @@ func toRealGateStatus(v app.RealGateView) RealGateStatus {
 		DemoCandidates: make([]Account, 0, len(v.DemoCandidates)), Checks: make([]GateCheck, 0, len(v.Checks)),
 		Evidence: GateEvidence{Count: v.Evidence.Count, Days: make([]string, 0, len(v.Evidence.Days))},
 		Rule:     EvidenceRule{MinDays: v.Rule.MinDays, WindowDays: v.Rule.WindowDays, MaxAgeDays: v.Rule.MaxAgeDays},
-		Phrase:   v.Phrase, CanArm: v.CanArm, CanDisarm: v.CanDisarm,
+		Phrase:   v.Phrase, CanArm: v.CanArm, CanDisarm: v.CanDisarm, CanSetDays: v.CanSetDays, MinDaysFloor: domain.MinEvidenceDaysFloor,
 	}
 	if v.DemoAccountID != "" {
 		out.DemoAccountId = ptr(v.DemoAccountID)
@@ -86,6 +86,20 @@ func (s *Server) GetRealGate(w http.ResponseWriter, r *http.Request, accountID s
 		demo = *params.DemoAccountId
 	}
 	v, err := s.svc.RealGateStatus(r.Context(), state(r).principal, accountID, demo)
+	if err != nil {
+		s.failGate(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRealGateStatus(v))
+}
+
+// SetRealGateDemoDays sets how many qualifying demo days arming needs (D36).
+func (s *Server) SetRealGateDemoDays(w http.ResponseWriter, r *http.Request, accountID string) {
+	var req SetRealGateDemoDaysJSONRequestBody
+	if !decode(w, r, &req) {
+		return
+	}
+	v, err := s.svc.SetDemoDaysRequired(r.Context(), state(r).principal, accountID, req.MinDays)
 	if err != nil {
 		s.failGate(w, r, err)
 		return

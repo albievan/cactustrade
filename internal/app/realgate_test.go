@@ -464,6 +464,11 @@ func TestRealGateAutoDisarm(t *testing.T) {
 			l.MaxOpenPositions++
 			g.setLimits(t, l)
 		}, domain.DisarmLimits},
+		{"demo days required changed", func(t *testing.T, g *gateEnv) {
+			if _, err := g.svc.SetDemoDaysRequired(g.ctx, g.admin, g.real.ID, 10); err != nil {
+				t.Fatal(err)
+			}
+		}, domain.DisarmDays},
 		{"a limit lowered", func(t *testing.T, g *gateEnv) {
 			l := domain.DefaultRealRiskLimits
 			l.TradingBudget = 500_00
@@ -695,4 +700,60 @@ func TestDemoEvidenceReadsADayAtATime(t *testing.T) {
 	if _, err := g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, ""); err == nil {
 		t.Fatal("a read error was ignored")
 	}
+}
+
+// TestSetDemoDaysRequired (D36): the admin who owns the real account sets how many qualifying
+// demo days arming needs, 5 up to the 60-day window; the checklist and the view use it;
+// anyone else, an API key or a number out of range is refused; every change is audited.
+func TestSetDemoDaysRequired(t *testing.T) {
+	g := newGateEnv(t)
+	demo := g.a.ID
+	g.seedEvidence(t, demo, 6, 1)
+	v, err := g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, demo)
+	if err != nil || v.Rule.MinDays != 20 || !v.CanSetDays || gateCheck(v, domain.CheckEvidence).Pass || !strings.Contains(gateCheck(v, domain.CheckEvidence).Detail, "20 needed") {
+		t.Fatalf("default: rule %+v canSet %v evidence %+v %v", v.Rule, v.CanSetDays, gateCheck(v, domain.CheckEvidence), err)
+	}
+	v, err = g.svc.SetDemoDaysRequired(g.ctx, g.admin, g.real.ID, 5)
+	if err != nil || v.Rule.MinDays != 5 {
+		t.Fatalf("set 5: %+v %v", v.Rule, err)
+	}
+	v, _ = g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, demo)
+	if c := gateCheck(v, domain.CheckEvidence); !c.Pass {
+		t.Fatalf("6 days now pass a 5-day rule: %+v", c)
+	}
+	for _, n := range []int{0, 4, 61, -1} {
+		if _, err := g.svc.SetDemoDaysRequired(g.ctx, g.admin, g.real.ID, n); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("%d days accepted: %v", n, err)
+		}
+	}
+	op := g.user(t, "operator2", domain.RoleOperator)
+	for name, p := range map[string]Principal{"api key": apiKey(g.admin), "not admin": op} {
+		if _, err := g.svc.SetDemoDaysRequired(g.ctx, p, g.real.ID, 30); err == nil {
+			t.Errorf("%s set the days", name)
+		}
+	}
+	if _, err := g.svc.SetDemoDaysRequired(g.ctx, g.admin, g.a.ID, 30); err == nil {
+		t.Error("a demo account got a demo-days rule")
+	}
+	if got, _ := g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, demo); got.Rule.MinDays != 5 {
+		t.Fatalf("refused changes stored: %d", got.Rule.MinDays)
+	}
+	entries, err := g.store.Audit().List(g.ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(entries, func(a domain.AuditEntry) bool {
+		return a.Action == "realgate.demo_days_changed" && a.Details == "old=20 new=5"
+	}) {
+		t.Fatal("the change is not audited")
+	}
+}
+
+func gateCheck(v RealGateView, name string) domain.GateCheck {
+	for _, c := range v.Checks {
+		if c.Name == name {
+			return c
+		}
+	}
+	return domain.GateCheck{}
 }

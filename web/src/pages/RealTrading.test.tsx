@@ -19,6 +19,7 @@ function gate(over: Record<string, unknown> = {}) {
     ],
     evidence: { days: ["2026-11-20", "2026-11-21"], count: 19, first: "2026-10-20", last: "2026-11-21" },
     rule: { minDays: 20, windowDays: 60, maxAgeDays: 7 }, phrase: "ENABLE REAL TRADING Live", canArm: true, canDisarm: true,
+    canSetDays: true, minDaysFloor: 5,
     ...over,
   };
 }
@@ -35,6 +36,7 @@ function serve(g: ReturnType<typeof gate>, armAnswer?: { status: number; body: u
     if (url.endsWith("/api/v1/system/status")) return json(status);
     if (url.endsWith("/api/v1/accounts")) return json([real, demo, t212]);
     if (url.includes("/real-gate/arm")) return json(armAnswer?.body ?? {}, armAnswer?.status ?? 200);
+    if (url.includes("/real-gate/demo-days")) return json({ ...g, rule: { ...g.rule, minDays: JSON.parse(String(init?.body)).minDays } });
     if (url.includes("/real-gate/disarm")) return json({ accountId: "r1", state: "locked", evidenceDays: 0, version: 0 });
     if (url.includes("/real-gate")) return json(g);
     return new Response("{}", { status: 404 });
@@ -106,5 +108,25 @@ describe("RealTrading", () => {
     for (const banned of [".role", ".access", ".via", "permissions", "minDays -", ">= st.rule", "count >=", "ENABLE REAL TRADING "]) {
       expect(source).not.toContain(banned);
     }
+  });
+
+  it("lets the account's admin set the demo days needed (D36), within the server's range", async () => {
+    const calls = serve(gate());
+    const input = await screen.findByLabelText("Qualifying demo days needed before arming");
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(input).toHaveValue(20);
+    expect(save).toBeDisabled(); // unchanged
+    fireEvent.change(input, { target: { value: "4" } });
+    expect(save).toBeDisabled(); // below the floor
+    fireEvent.change(input, { target: { value: "10" } });
+    fireEvent.click(save);
+    expect(await screen.findByText("Arming now needs 10 qualifying demo days (audited).")).toBeInTheDocument();
+    expect(calls).toContainEqual({ method: "PUT", url: "/api/v1/accounts/r1/real-gate/demo-days", body: { minDays: 10 } });
+  });
+
+  it("hides the demo days setting from anyone else", async () => {
+    serve(gate({ canSetDays: false }));
+    await screen.findByRole("list", { name: "Checklist for Live" });
+    expect(screen.queryByLabelText("Qualifying demo days needed before arming")).not.toBeInTheDocument();
   });
 });

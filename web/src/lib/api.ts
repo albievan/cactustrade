@@ -312,6 +312,9 @@ export const api = {
       (demoAccountId ? `?demoAccountId=${encodeURIComponent(demoAccountId)}` : "")),
   armRealGate: (accountId: string, demoAccountId: string, confirm: string, password: string) =>
     request<RealGate>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/real-gate/arm`, { demoAccountId, confirm, password }),
+  // D36: the account's admin sets how many qualifying demo days arming needs.
+  setRealGateDemoDays: (accountId: string, minDays: number) =>
+    request<RealGateStatus>("PUT", `/api/v1/accounts/${encodeURIComponent(accountId)}/real-gate/demo-days`, { minDays }),
   disarmRealGate: (accountId: string, reason?: string) =>
     request<RealGate>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/real-gate/disarm`, reason ? { reason } : {}),
   watchlistCounts: () => request<WatchlistCount[]>("GET", "/api/v1/watchlist/counts"),

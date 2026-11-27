@@ -122,6 +122,9 @@ func TestRealGateEndpoints(t *testing.T) {
 	if len(failing) != 1 || !failing["demo_evidence"] || m["evidence"].(map[string]any)["count"] != 19.0 {
 		t.Fatalf("failing checks %v, evidence %v", failing, m["evidence"])
 	}
+	if m["canSetDays"] != true || m["minDaysFloor"] != 5.0 || m["rule"].(map[string]any)["minDays"] != 20.0 {
+		t.Fatalf("demo days in the status: %v %v %v", m["canSetDays"], m["minDaysFloor"], m["rule"])
+	}
 	for _, s := range []agentStep{
 		{"without CSRF", "POST", base + "/arm", armBody(g.acct, "ENABLE REAL TRADING Live", pw), nil, 403, ""},
 		{"without a body", "POST", base + "/arm", "", csrf, 415, ""},
@@ -132,6 +135,8 @@ func TestRealGateEndpoints(t *testing.T) {
 		{"a demo account has no gate", "GET", "/api/v1/accounts/" + g.acct + "/real-gate", "", nil, 422, ""},
 		{"an unknown account", "GET", "/api/v1/accounts/nope/real-gate", "", nil, 404, ""},
 		{"disarm without CSRF", "POST", base + "/disarm", `{}`, nil, 403, ""},
+		{"demo days without CSRF", "PUT", base + "/demo-days", `{"minDays":10}`, nil, 403, ""},
+		{"demo days below the floor", "PUT", base + "/demo-days", `{"minDays":4}`, csrf, 422, ""},
 	} {
 		code, m, _ := g.do(s.method, s.path, s.body, s.hdr...)
 		if code != s.code || (s.state != "" && m["title"] != s.state && m["detail"] != s.state) {
@@ -151,6 +156,11 @@ func TestRealGateEndpoints(t *testing.T) {
 		if c.(map[string]any)["pass"] != true {
 			t.Fatalf("check %v", c)
 		}
+	}
+	// D36: the account's admin lowers the days needed; the status follows.
+	code, m, _ = g.do("PUT", base+"/demo-days", `{"minDays":12}`, csrf...)
+	if code != 200 || m["rule"].(map[string]any)["minDays"] != 12.0 {
+		t.Fatalf("demo days %d %v", code, m)
 	}
 	code, m, _ = g.do("POST", base+"/disarm", `{"reason":"drill"}`, csrf...)
 	if code != 200 || m["state"] != "locked" || m["version"] != 0.0 {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, viewOnly, type Account, type RealGateStatus } from "../lib/api";
 import { useRefreshMode } from "../lib/mode";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -103,6 +103,9 @@ function GateCard({ account }: { account: Account }) {
               {st.evidence.count > 0 && <> ({st.evidence.first} to {st.evidence.last})</>}; the latest at most {st.rule.maxAgeDays} days old.
               {st.evidence.days.length > 0 && <div className="text-break">{st.evidence.days.join(" · ")}</div>}
             </div>
+            {st.canSetDays && (
+              <DemoDaysEditor st={st} onSaved={(next) => { setSt(next); setMsg(`Arming now needs ${next.rule.minDays} qualifying demo days (audited).`); }} />
+            )}
             <div className="d-flex gap-2">
               {st.canArm && (
                 <button type="button" className="btn btn-outline-danger" onClick={() => { setMsg(""); setArming(true); }}>
@@ -182,5 +185,40 @@ function DisarmDialog({ accountId, name, onCancel, onDone }: { accountId: string
       <label className="form-label" htmlFor="disarm-reason">Reason (optional)</label>
       <input id="disarm-reason" className="form-control" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
     </ConfirmDialog>
+  );
+}
+
+// DemoDaysEditor lets the account's admin set how many qualifying demo days arming needs
+// (D36). The server checks who may and the range, and audits the change.
+function DemoDaysEditor({ st, onSaved }: { st: RealGateStatus; onSaved: (v: RealGateStatus) => void }) {
+  const [days, setDays] = useState(String(st.rule.minDays));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => { setDays(String(st.rule.minDays)); }, [st.rule.minDays]);
+  const n = Number(days);
+  const valid = Number.isInteger(n) && n >= st.minDaysFloor && n <= st.rule.windowDays;
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      onSaved(await api.setRealGateDemoDays(st.account.id, n));
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const id = "days-" + st.account.id;
+  return (
+    <form className="mb-3" onSubmit={save}>
+      <label className="form-label small" htmlFor={id}>Qualifying demo days needed before arming</label>
+      <div className="input-group input-group-sm" style={{ maxWidth: 260 }}>
+        <input id={id} className="form-control" type="number" min={st.minDaysFloor} max={st.rule.windowDays} step={1}
+          value={days} onChange={(e) => setDays(e.target.value)} />
+        <button type="submit" className="btn btn-outline-secondary" disabled={busy || !valid || n === st.rule.minDays}>Save</button>
+      </div>
+      <div className="form-text">{st.minDaysFloor}–{st.rule.windowDays} days (default 20). Changing it disarms an armed account and is audited.</div>
+      <ProblemAlert error={error} className="py-2 small mt-2" />
+    </form>
   );
 }

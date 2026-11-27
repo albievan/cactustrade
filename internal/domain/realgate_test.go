@@ -375,3 +375,17 @@ func TestRealGate(t *testing.T) {
 		}
 	}
 }
+
+func TestEvidenceRuleWithMinDays(t *testing.T) {
+	for _, n := range []int{MinEvidenceDaysFloor, 20, DefaultEvidenceRule.WindowDays} {
+		r, err := DefaultEvidenceRule.WithMinDays(n)
+		if err != nil || r.MinDays != n || r.WindowDays != 60 || r.MaxAgeDays != 7 {
+			t.Errorf("%d: %+v %v", n, r, err)
+		}
+	}
+	for _, n := range []int{-1, 0, MinEvidenceDaysFloor - 1, DefaultEvidenceRule.WindowDays + 1} {
+		if r, err := DefaultEvidenceRule.WithMinDays(n); err == nil || r.MinDays != 20 {
+			t.Errorf("%d accepted: %+v", n, r)
+		}
+	}
+}

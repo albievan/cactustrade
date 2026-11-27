@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,9 @@ type RealGateView struct {
 	// permission; a web session or an API key, OD23).
 	CanArm    bool
 	CanDisarm bool
+	// CanSetDays: the caller may change how many qualifying demo days arming needs (D36: an
+	// admin who owns the account, in a web session).
+	CanSetDays bool
 }
 
 // gateLatch remembers, per account, the latest disarm asked for in this process: a gate
@@ -192,7 +196,7 @@ func (s *Service) RealGateStatus(ctx context.Context, p Principal, accountID, de
 	if err != nil {
 		return RealGateView{}, fmt.Errorf("app.RealGateStatus: %w", err)
 	}
-	out := RealGateView{Account: v, Rule: domain.DefaultEvidenceRule, Phrase: domain.ArmPhrase(v.Name), Enabled: domain.RealTradingEnabled}
+	out := RealGateView{Account: v, Rule: s.evidenceRule(ctx, v.ID), Phrase: domain.ArmPhrase(v.Name), Enabled: domain.RealTradingEnabled}
 	var why string
 	out.Armed, why = s.gateLive(ctx, g)
 	if g.State == domain.GateArmed && !out.Armed {
@@ -238,7 +242,7 @@ func (s *Service) RealGateStatus(ctx context.Context, p Principal, accountID, de
 		}
 		out.Checks = append(out.Checks, c)
 		if c.Name == domain.CheckArmingUser {
-			out.CanArm = c.Pass
+			out.CanArm, out.CanSetDays = c.Pass, c.Pass
 		}
 	}
 	out.CanDisarm = p.Can(domain.PermKillSwitch) && v.Access.AtLeast(domain.AccessTrade)
@@ -253,7 +257,7 @@ func (s *Service) gateInput(ctx context.Context, p Principal, a domain.Account, 
 	in := domain.GateInput{
 		Real: a, RealKeys: s.hasKeys(ctx, a), Reconciled: s.Reconciled(a.ID).OK, Killed: killed || kerr != nil,
 		Agent: s.agentState(ctx, a.ID), Limits: s.riskLimitsFor(ctx, a), Demo: demo,
-		Today: domain.RiskDay(now), Rule: domain.DefaultEvidenceRule,
+		Today: domain.RiskDay(now), Rule: s.evidenceRule(ctx, a.ID),
 		User: domain.GateUser{ID: p.UserID, Role: p.Role, Session: p.Via == ViaSession}, Confirm: confirm,
 	}
 	if demo != nil {
@@ -603,4 +607,60 @@ func (s *Service) mailGateChange(ctx context.Context, a domain.Account, actor, t
 			"\n\nYou get this because you are an administrator or the account's owner.\n"+
 			"cactusTrade is software, not financial advice — trading can lose money.")
 	}
+}
+
+// demoDaysKey stores how many qualifying demo days a real account's arming needs (D36).
+func demoDaysKey(accountID string) string { return "realgate.min_days." + accountID }
+
+// evidenceRule is the real account's evidence rule: the default (OD20) with the admin's
+// number of days when one is stored and valid (else the default, logged).
+func (s *Service) evidenceRule(ctx context.Context, accountID string) domain.EvidenceRule {
+	rule := domain.DefaultEvidenceRule
+	v, err := s.d.Store.Settings().Get(ctx, demoDaysKey(accountID))
+	if err != nil {
+		return rule
+	}
+	n, err := strconv.Atoi(v)
+	if err == nil {
+		if r, err := rule.WithMinDays(n); err == nil {
+			return r
+		}
+	}
+	s.d.Log.ErrorContext(ctx, "stored demo days for the real gate are invalid; using the default", "account", accountID, "value", v)
+	return rule
+}
+
+// SetDemoDaysRequired sets how many qualifying demo days arming the real account needs
+// (D36): an admin who owns the account, in a web session; MinEvidenceDaysFloor up to the
+// window. Audited with the old and new numbers and announced; an armed gate is disarmed (it
+// was armed under the old rule).
+func (s *Service) SetDemoDaysRequired(ctx context.Context, p Principal, accountID string, days int) (RealGateView, error) {
+	v, err := s.realAccount(ctx, p, accountID, domain.AccessOwner)
+	if err != nil {
+		return RealGateView{}, err
+	}
+	switch {
+	case p.Role != domain.RoleAdmin:
+		return RealGateView{}, fmt.Errorf("only an admin can set the demo days real trading needs: %w", domain.ErrForbidden)
+	case p.UserID == "" || p.UserID != v.OwnerID:
+		return RealGateView{}, fmt.Errorf("only the account's owner can set the demo days real trading needs: %w", domain.ErrForbidden)
+	case p.Via != ViaSession:
+		return RealGateView{}, fmt.Errorf("the demo days real trading needs can only be set in the web UI: %w", domain.ErrForbidden)
+	}
+	old := s.evidenceRule(ctx, v.ID)
+	next, err := old.WithMinDays(days)
+	if err != nil {
+		return RealGateView{}, err
+	}
+	if next.MinDays != old.MinDays {
+		if err := s.d.Store.Settings().Set(ctx, demoDaysKey(v.ID), strconv.Itoa(days), s.d.Clock.Now().UTC()); err != nil {
+			return RealGateView{}, fmt.Errorf("app.SetDemoDaysRequired: %w", err)
+		}
+		s.audit(ctx, p, "realgate.demo_days_changed", v.ID, fmt.Sprintf("old=%d new=%d", old.MinDays, next.MinDays))
+		s.emitFor(ctx, v.ID, p.Username, "realgate.demo_days_changed", domain.SeverityWarning,
+			"Demo days needed for real trading on "+v.Name+" changed",
+			fmt.Sprintf("%d → %d qualifying demo days in the last %d risk days", old.MinDays, next.MinDays, next.WindowDays))
+		s.disarmIfArmed(ctx, v.Account, p, domain.DisarmDays)
+	}
+	return s.RealGateStatus(ctx, p, v.ID, "")
 }

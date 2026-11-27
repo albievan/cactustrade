@@ -551,7 +551,8 @@ export interface paths {
          *     the real account (eToro, real, keys, reconciled, not killed, agent stopped, limits within
          *     the real-money ceilings), the linked demo account (same owner), the demo evidence (20
          *     qualifying risk days in the last 60, the latest at most 7 days old) and the arming user
-         *     (an admin who owns the account, in a web session). `enabled` is false in this build:
+         *     (an admin who owns the account, in a web session; the number of days is the account
+         *     admin's, D36). `enabled` is false in this build:
          *     arming is always refused until the owner's written consent (PLAN 7.18).
          */
         get: operations["getRealGate"];
@@ -585,6 +586,30 @@ export interface paths {
          *     armed. Every refusal after the password is audited.
          */
         post: operations["armRealGate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/{accountId}/real-gate/demo-days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set how many qualifying demo days arming this real account needs (admin who owns it, web session)
+         * @description D36 (owner, 2026-11-27): the account's admin sets the number, from `minDaysFloor` (5)
+         *     up to the evidence window (60 risk days); the default is 20. What counts as a day
+         *     (OD19) and the window are unchanged. Audited, announced, and an armed gate is disarmed.
+         */
+        put: operations["setRealGateDemoDays"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3170,6 +3195,10 @@ export interface components {
             /** @description the caller may submit an arm request (the server still checks everything) */
             canArm: boolean;
             canDisarm: boolean;
+            /** @description the caller may change the qualifying demo days arming needs (an admin who owns the account, web session) */
+            canSetDays: boolean;
+            /** @description the fewest qualifying demo days that may be required (the most is rule.windowDays) */
+            minDaysFloor: number;
         };
         ArmRealRequest: {
             demoAccountId: string;
@@ -5061,6 +5090,39 @@ export interface operations {
             409: components["responses"]["Problem"];
             422: components["responses"]["Problem"];
             429: components["responses"]["Problem"];
+        };
+    };
+    setRealGateDemoDays: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    minDays: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The gate and its checklist under the new rule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealGateStatus"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
         };
     };
     disarmRealGate: {

@@ -2970,9 +2970,12 @@ type RealGateStatus struct {
 	Armed bool `json:"armed"`
 
 	// CanArm the caller may submit an arm request (the server still checks everything)
-	CanArm    bool        `json:"canArm"`
-	CanDisarm bool        `json:"canDisarm"`
-	Checks    []GateCheck `json:"checks"`
+	CanArm    bool `json:"canArm"`
+	CanDisarm bool `json:"canDisarm"`
+
+	// CanSetDays the caller may change the qualifying demo days arming needs (an admin who owns the account, web session)
+	CanSetDays bool        `json:"canSetDays"`
+	Checks     []GateCheck `json:"checks"`
 
 	// DemoAccountId the demo account the checklist is for; absent = none
 	DemoAccountId *string `json:"demoAccountId,omitempty"`
@@ -2984,6 +2987,9 @@ type RealGateStatus struct {
 	Enabled  bool         `json:"enabled"`
 	Evidence GateEvidence `json:"evidence"`
 	Gate     RealGate     `json:"gate"`
+
+	// MinDaysFloor the fewest qualifying demo days that may be required (the most is rule.windowDays)
+	MinDaysFloor int `json:"minDaysFloor"`
 
 	// Phrase what to type to arm
 	Phrase string       `json:"phrase"`
@@ -3734,6 +3740,11 @@ type GetRealGateParams struct {
 	DemoAccountId *string `form:"demoAccountId,omitempty" json:"demoAccountId,omitempty"`
 }
 
+// SetRealGateDemoDaysJSONBody defines parameters for SetRealGateDemoDays.
+type SetRealGateDemoDaysJSONBody struct {
+	MinDays int `json:"minDays"`
+}
+
 // GetAgentParams defines parameters for GetAgent.
 type GetAgentParams struct {
 	// AccountId The account (default the caller's current account)
@@ -3976,6 +3987,9 @@ type SetAccountKeysJSONRequestBody = SetAccountKeysRequest
 // ArmRealGateJSONRequestBody defines body for ArmRealGate for application/json ContentType.
 type ArmRealGateJSONRequestBody = ArmRealRequest
 
+// SetRealGateDemoDaysJSONRequestBody defines body for SetRealGateDemoDays for application/json ContentType.
+type SetRealGateDemoDaysJSONRequestBody SetRealGateDemoDaysJSONBody
+
 // DisarmRealGateJSONRequestBody defines body for DisarmRealGate for application/json ContentType.
 type DisarmRealGateJSONRequestBody = DisarmRealRequest
 
@@ -4101,6 +4115,9 @@ type ServerInterface interface {
 	// ArmRealGate Ask to arm real trading (admin who owns the account, web session only, password and phrase) — refused in this build
 	// (POST /api/v1/accounts/{accountId}/real-gate/arm)
 	ArmRealGate(w http.ResponseWriter, r *http.Request, accountId string)
+	// SetRealGateDemoDays Set how many qualifying demo days arming this real account needs (admin who owns it, web session)
+	// (PUT /api/v1/accounts/{accountId}/real-gate/demo-days)
+	SetRealGateDemoDays(w http.ResponseWriter, r *http.Request, accountId string)
 	// DisarmRealGate Disarm real trading now (trade access and agent.kill; web session or API key; never rate limited)
 	// (POST /api/v1/accounts/{accountId}/real-gate/disarm)
 	DisarmRealGate(w http.ResponseWriter, r *http.Request, accountId string)
@@ -4653,6 +4670,32 @@ func (siw *ServerInterfaceWrapper) ArmRealGate(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ArmRealGate(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetRealGateDemoDays operation middleware
+func (siw *ServerInterfaceWrapper) SetRealGateDemoDays(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetRealGateDemoDays(w, r, accountId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7519,6 +7562,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/saxo/connect", wrapper.ConnectSaxoAccount)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/real-gate", wrapper.GetRealGate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts/{accountId}/real-gate/arm", wrapper.ArmRealGate)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/real-gate/demo-days", wrapper.SetRealGateDemoDays)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts/{accountId}/real-gate/disarm", wrapper.DisarmRealGate)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/oauth/saxo/callback", wrapper.SaxoCallback)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platforms", wrapper.ListPlatforms)
