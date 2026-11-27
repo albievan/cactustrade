@@ -15,6 +15,12 @@
 #                        CACTUSTRADE_BACKUP_RECIPIENT (.sql.gz.age); without a recipient a
 #                        plain .sql.gz (mode 600) with a warning. Either way it holds the
 #                        credentials only encrypted under the master key, which is never in it
+#   --backup-schedule WHEN
+#                        back up on a schedule on THIS machine (macOS launchd, Linux cron):
+#                        "daily HH:MM" (local time), "hourly", "every Nh" (N = 1-24) or "off".
+#                        Saved in .env.local with --backup-dir / --backup-keep; each run is
+#                        --backup-now, logged to BACKUP_DIR/backup-schedule.log
+#   --backup-prune       delete the oldest backups in BACKUP_DIR beyond BACKUP_KEEP
 #   --restore FILE       replace the database with a backup (.sql.gz.age, .sql.gz or .sql):
 #                        checks the file first, asks for 'restore', takes a backup, stops the
 #                        app, restores, starts the app (it reconciles with eToro first)
@@ -34,6 +40,9 @@
 #   --yes                    do not ask for confirmation (--delete-uninstall, --upgrade, --restore)
 #   --identity FILE          --restore: the age identity (private key) of an encrypted backup;
 #                            default CACTUSTRADE_BACKUP_IDENTITY_FILE
+#   --backup-dir DIR         the backup folder (any folder on this machine; default BACKUP_DIR
+#                            from .env, ./backups); saved by --backup-schedule
+#   --backup-keep N          keep the newest N backups (0 = all); saved by --backup-schedule
 #   --dry-run                --restore: only check that the file decrypts and is a cactusTrade
 #                            dump this version can restore; nothing is stopped or changed
 #   -h, --help               show this help
@@ -47,6 +56,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 ACTION="" TARGET="" SSH_HOST="" ASSUME_YES=0 UPGRADE_TO="" DOWN_TO="" RESTORE_FILE="" IDENTITY_FILE="" DRY_RUN=0
+SCHEDULE="" OPT_BACKUP_DIR="" OPT_BACKUP_KEEP=""
+ENV_LOCAL="${CACTUSTRADE_ENV_LOCAL:-$ROOT/.env.local}"
 REMOTE_DIR="${CACTUSTRADE_REMOTE_DIR:-/opt/cactustrade}"
 
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -70,6 +81,12 @@ while [[ $# -gt 0 ]]; do
     --restore)
       [[ -z "$ACTION" ]] || die "choose one action"; ACTION=restore; RESTORE_FILE="${2:-}"; shift
       [[ -n "$RESTORE_FILE" && "$RESTORE_FILE" != --* ]] || die "--restore needs a backup file" ;;
+    --backup-schedule)
+      [[ -z "$ACTION" ]] || die "choose one action"; ACTION=backup-schedule; SCHEDULE="${2:-}"; shift
+      [[ -n "$SCHEDULE" && "$SCHEDULE" != --* ]] || die "--backup-schedule needs \"daily HH:MM\", \"hourly\", \"every Nh\" or \"off\"" ;;
+    --backup-prune) [[ -z "$ACTION" ]] || die "choose one action"; ACTION=backup-prune ;;
+    --backup-dir) OPT_BACKUP_DIR="${2:-}"; shift; [[ -n "$OPT_BACKUP_DIR" && "$OPT_BACKUP_DIR" != --* ]] || die "--backup-dir needs a folder" ;;
+    --backup-keep) OPT_BACKUP_KEEP="${2:-}"; shift; [[ "$OPT_BACKUP_KEEP" =~ ^[0-9]+$ ]] || die "--backup-keep needs a number (0 = keep all)" ;;
     --identity) IDENTITY_FILE="${2:-}"; shift; [[ -n "$IDENTITY_FILE" && "$IDENTITY_FILE" != --* ]] || die "--identity needs a file" ;;
     --dry-run) DRY_RUN=1 ;;
     --yes | -y) ASSUME_YES=1 ;;
@@ -84,6 +101,7 @@ DOCKER=docker
 [[ "$TARGET" == podman ]] && DOCKER=podman
 [[ -z "$UPGRADE_TO" || "$ACTION" == upgrade ]] || die "--to goes with --upgrade"
 [[ ( -z "$IDENTITY_FILE" && $DRY_RUN -eq 0 ) || "$ACTION" == restore ]] || die "--identity and --dry-run go with --restore"
+[[ -z "$SSH_HOST" || ( "$ACTION" != backup-schedule && "$ACTION" != backup-prune ) ]] || die "--backup-schedule and --backup-prune run on the machine itself: run them there, without --ssh-access"
 export TARGET
 
 # ---------------------------------------------------------------------------------------
@@ -91,8 +109,11 @@ export TARGET
 # ---------------------------------------------------------------------------------------
 load_env() {
   [[ -f .env ]] || die ".env not found in $ROOT"
-  [[ -f .env.local ]] && read_env_file .env.local
+  [[ -f "$ENV_LOCAL" ]] && read_env_file "$ENV_LOCAL"
   read_env_file .env
+  # --backup-dir / --backup-keep win over the files for this run
+  [[ -z "$OPT_BACKUP_DIR" ]] || export BACKUP_DIR="$OPT_BACKUP_DIR"
+  [[ -z "$OPT_BACKUP_KEEP" ]] || export BACKUP_KEEP="$OPT_BACKUP_KEEP"
 }
 read_env_file() {
   local line key val
@@ -290,6 +311,113 @@ backup_done() {
   else
     ok "backup $(basename "$1") in $(abs_dir "$BACKUP_DIR"), NOT encrypted (a restore needs the same master_key)"
   fi
+}
+
+# backup_prune deletes the oldest backups in BACKUP_DIR beyond BACKUP_KEEP (unset or 0 =
+# keep all). Only cactusTrade's own backup files (cactustrade-<time>.sql.gz[.age]) are ever
+# touched; their names sort by time.
+backup_prune() {
+  local keep="${BACKUP_KEEP:-0}" files=() f n i
+  [[ "$keep" =~ ^[0-9]+$ ]] || die "BACKUP_KEEP must be a number (0 = keep all): $keep"
+  [[ "$keep" -gt 0 && -d "$BACKUP_DIR" ]] || return 0
+  while IFS= read -r f; do files+=("$f"); done < <(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'cactustrade-*.sql.gz' -o -name 'cactustrade-*.sql.gz.age' \) | LC_ALL=C sort)
+  n=${#files[@]}
+  [[ $n -gt $keep ]] || return 0
+  for ((i = 0; i < n - keep; i++)); do
+    rm -f -- "${files[$i]}"
+    info "removed the old backup $(basename "${files[$i]}") (keeping the newest $keep)"
+  done
+}
+
+# set_env_local sets KEY=value in .env.local (replacing the key's line, else appending).
+set_env_local() {
+  local key="$1" val="$2" tmp
+  touch "$ENV_LOCAL"
+  tmp="$(mktemp "${ENV_LOCAL}.XXXXXX")"
+  grep -v -E "^${key}=" "$ENV_LOCAL" >"$tmp" || true
+  printf '%s="%s"\n' "$key" "$val" >>"$tmp"
+  mv "$tmp" "$ENV_LOCAL"
+}
+
+# scheduler is the machine's scheduler: launchd on macOS, cron elsewhere
+# (CACTUSTRADE_SCHEDULER overrides, for tests).
+scheduler() {
+  if [[ -n "${CACTUSTRADE_SCHEDULER:-}" ]]; then printf '%s' "$CACTUSTRADE_SCHEDULER"
+  elif [[ "$(uname -s)" == Darwin ]]; then printf launchd
+  else printf cron; fi
+}
+
+LAUNCHD_LABEL=com.cactustrade.backup
+launchd_plist() { printf '%s/Library/LaunchAgents/%s.plist' "$HOME" "$LAUNCHD_LABEL"; }
+CRON_MARK="# cactustrade-backup"
+
+# backup_schedule installs (or with "off" removes) the scheduled --backup-now of this target.
+backup_schedule() {
+  local when="$SCHEDULE" hour="" minute="" every="" dir log
+  case "$when" in
+    off) ;;
+    hourly) every=1 ;;
+    every\ *h) every="${when#every }"; every="${every%h}"
+      [[ "$every" =~ ^[0-9]+$ && "$every" -ge 1 && "$every" -le 24 ]] || die "every Nh: N must be 1-24" ;;
+    daily\ *) [[ "$when" =~ ^daily\ ([0-9]{1,2}):([0-9]{2})$ ]] || die "daily HH:MM, e.g. \"daily 02:30\""
+      hour=$((10#${BASH_REMATCH[1]})); minute=$((10#${BASH_REMATCH[2]}))
+      [[ $hour -le 23 && $minute -le 59 ]] || die "daily HH:MM: not a time of day: ${when#daily }" ;;
+    *) die "--backup-schedule: \"daily HH:MM\", \"hourly\", \"every Nh\" or \"off\" (not \"$when\")" ;;
+  esac
+  dir="$(abs_dir "$BACKUP_DIR")"
+  if [[ "$when" != off ]]; then
+    mkdir -p "$dir" || die "cannot create the backup folder $dir"
+    [[ -w "$dir" ]] || die "the backup folder is not writable: $dir"
+  fi
+  log="$dir/backup-schedule.log"
+  set_env_local BACKUP_DIR "$dir"
+  [[ -z "${BACKUP_KEEP:-}" ]] || set_env_local BACKUP_KEEP "$BACKUP_KEEP"
+  set_env_local BACKUP_SCHEDULE "$when"
+  local path_dirs="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" d
+  d="$(command -v "$DOCKER" 2>/dev/null || true)"
+  [[ -z "$d" ]] || path_dirs="$(dirname "$d"):$path_dirs"
+  case "$(scheduler)" in
+    launchd)
+      local plist uid; plist="$(launchd_plist)"; uid="$(id -u)"
+      launchctl bootout "gui/$uid/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+      rm -f "$plist"
+      if [[ "$when" == off ]]; then ok "scheduled backups are off"; return; fi
+      mkdir -p "$(dirname "$plist")"
+      {
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n'
+        printf '  <key>Label</key><string>%s</string>\n' "$LAUNCHD_LABEL"
+        printf '  <key>ProgramArguments</key><array><string>/bin/bash</string><string>%s/deploy.sh</string><string>--backup-now</string><string>--%s</string></array>\n' "$ROOT" "$TARGET"
+        printf '  <key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string><key>CACTUSTRADE_ENV_LOCAL</key><string>%s</string></dict>\n' "$path_dirs" "$ENV_LOCAL"
+        if [[ -n "$every" ]]; then
+          printf '  <key>StartInterval</key><integer>%d</integer>\n' $((every * 3600))
+        else
+          printf '  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>%d</integer><key>Minute</key><integer>%d</integer></dict>\n' "$hour" "$minute"
+        fi
+        printf '  <key>StandardOutPath</key><string>%s</string>\n  <key>StandardErrorPath</key><string>%s</string>\n' "$log" "$log"
+        printf '</dict></plist>\n'
+      } >"$plist"
+      launchctl bootstrap "gui/$uid" "$plist" || die "launchctl could not load $plist"
+      ok "scheduled backups: $when (this Mac's time), into $dir$( [[ -n "${BACKUP_KEEP:-}" && "${BACKUP_KEEP}" != 0 ]] && printf ', keeping the newest %s' "$BACKUP_KEEP"); log $log"
+      ;;
+    cron)
+      local line="" cur
+      cur="$(crontab -l 2>/dev/null | grep -v -F "$CRON_MARK" || true)"
+      if [[ "$when" != off ]]; then
+        if [[ -n "$every" ]]; then line="0 */$every * * *"; else line="$minute $hour * * *"; fi
+        line="$line PATH=$path_dirs CACTUSTRADE_ENV_LOCAL=$ENV_LOCAL /bin/bash $ROOT/deploy.sh --backup-now --$TARGET >>$log 2>&1 $CRON_MARK"
+      fi
+      printf '%s\n%s\n' "$cur" "$line" | sed '/^$/d' | crontab - || die "crontab could not be changed"
+      if [[ "$when" == off ]]; then ok "scheduled backups are off"; else ok "scheduled backups: $when (this machine's time), into $dir; log $log"; fi
+      ;;
+  esac
+}
+
+# backup_schedule_status prints the schedule, folder, retention and newest backup.
+backup_schedule_status() {
+  local newest
+  newest="$(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'cactustrade-*.sql.gz' -o -name 'cactustrade-*.sql.gz.age' \) 2>/dev/null | LC_ALL=C sort | tail -1)"
+  printf 'backups: schedule %s, folder %s, keep %s, newest %s\n' "${BACKUP_SCHEDULE:-off}" "$(abs_dir "$BACKUP_DIR")" \
+    "$( [[ "${BACKUP_KEEP:-0}" == 0 ]] && printf all || printf '%s' "$BACKUP_KEEP")" "$( [[ -n "$newest" ]] && basename "$newest" || printf none)"
 }
 
 # cactustrade_local prints a cactustrade binary on this machine for encrypt / decrypt:
@@ -547,7 +675,7 @@ docker_delete_uninstall() {
   ok "cactusTrade and all of its data were removed"
 }
 
-docker_status() { docker_preflight; compose ps; }
+docker_status() { docker_preflight; compose ps; backup_schedule_status; }
 
 docker_version() {
   docker_preflight
@@ -569,6 +697,7 @@ docker_backup_now() {
   (umask 077 && compose exec -T mariadb sh -c "$(cat "$ROOT/deploy/backup/mariadb-dump.sh")" dump "$MARIADB_DATABASE" </dev/null |
     gzip | backup_encrypt >"$f") || { rm -f "$f"; die "the backup failed"; }
   backup_done "$f"
+  backup_prune
 }
 
 docker_stop_app() { compose stop app </dev/null; }
@@ -847,7 +976,7 @@ k8s_delete_uninstall() {
   ok "cactusTrade and all of its data were removed"
 }
 
-k8s_status() { kc -n "$K8S_NAMESPACE" get deploy,pods,svc,pvc,ingress,networkpolicy; }
+k8s_status() { kc -n "$K8S_NAMESPACE" get deploy,pods,svc,pvc,ingress,networkpolicy; backup_schedule_status; }
 
 k8s_version() {
   kc -n "$K8S_NAMESPACE" exec deploy/cactustrade -- /cactustrade version </dev/null || die "cactusTrade is not running in namespace ${K8S_NAMESPACE}"
@@ -863,6 +992,7 @@ k8s_backup_now() {
   (umask 077 && kc -n "$K8S_NAMESPACE" exec -i deploy/mariadb -- sh -c "$(cat "$ROOT/deploy/backup/mariadb-dump.sh")" dump "$MARIADB_DATABASE" </dev/null |
     gzip | backup_encrypt >"$f") || { rm -f "$f"; die "the backup failed"; }
   backup_done "$f"
+  backup_prune
 }
 
 k8s_stop_app() {
@@ -901,6 +1031,10 @@ remote_docker() {
 
 # ---------------------------------------------------------------------------------------
 main() {
+  case "$ACTION" in
+    backup-schedule) backup_schedule; return ;;
+    backup-prune) backup_prune; return ;;
+  esac
   if [[ "$TARGET" == dockerdesktop || "$TARGET" == podman ]]; then
     if [[ -n "$SSH_HOST" && "$ACTION" != restore ]]; then remote_docker; return; fi
     case "$ACTION" in

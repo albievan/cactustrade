@@ -159,6 +159,24 @@ or any age implementation, and keep the identity file safe:
 age-keygen -o backup.agekey     # prints "Public key: age1…"
 ```
 
+**Scheduled backups (containers).** `deploy.sh` can back up on a schedule on the machine that
+runs cactusTrade (macOS: a launchd job; Linux: one crontab line), into any folder you choose
+(an external disk or a synced folder too), keeping the newest N:
+
+```sh
+./deploy.sh --backup-schedule "daily 02:30" --backup-dir ~/cactustrade-backups --backup-keep 14 --dockerdesktop
+./deploy.sh --backup-schedule "every 6h" --dockerdesktop     # or "hourly"; the folder and N are remembered
+./deploy.sh --backup-schedule off --dockerdesktop             # stop
+./deploy.sh --status --dockerdesktop                          # shows the schedule, folder and newest backup
+```
+
+Each run is `--backup-now` (encrypted as below), logged to `backup-schedule.log` in the folder;
+times are the machine's local time, and a Mac must be awake and logged in. The folder, `N` and
+the schedule are saved in `.env.local` (`BACKUP_DIR`, `BACKUP_KEEP`, `BACKUP_SCHEDULE`);
+`--backup-prune` applies `N` now. Only cactusTrade's own `cactustrade-<time>.sql.gz[.age]` files
+are ever removed. On macOS a folder under Documents, Desktop or an external disk may need
+*Full Disk Access* for `/bin/bash` (System Settings → Privacy & Security).
+
 **Standalone (SQLite).** The server may keep running while you back up:
 
 ```sh
