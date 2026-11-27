@@ -263,6 +263,24 @@ func (e EmailSetupInputTls) Valid() bool {
 	}
 }
 
+// Defines values for EventDirection.
+const (
+	EventDirectionLong  EventDirection = "long"
+	EventDirectionShort EventDirection = "short"
+)
+
+// Valid indicates whether the value is a known member of the EventDirection enum.
+func (e EventDirection) Valid() bool {
+	switch e {
+	case EventDirectionLong:
+		return true
+	case EventDirectionShort:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EventSeverity.
 const (
 	Danger  EventSeverity = "danger"
@@ -1819,15 +1837,21 @@ type EquitySeries struct {
 // Event defines model for Event.
 type Event struct {
 	// AccountId the account the event is about (absent = system-wide)
-	AccountId *string       `json:"accountId,omitempty"`
-	Actor     string        `json:"actor"`
-	At        time.Time     `json:"at"`
-	Detail    *string       `json:"detail,omitempty"`
-	Id        string        `json:"id"`
-	Kind      string        `json:"kind"`
-	Severity  EventSeverity `json:"severity"`
-	Title     string        `json:"title"`
+	AccountId *string   `json:"accountId,omitempty"`
+	Actor     string    `json:"actor"`
+	At        time.Time `json:"at"`
+	Detail    *string   `json:"detail,omitempty"`
+
+	// Direction the direction of the order or position the event is about (absent = none)
+	Direction *EventDirection `json:"direction,omitempty"`
+	Id        string          `json:"id"`
+	Kind      string          `json:"kind"`
+	Severity  EventSeverity   `json:"severity"`
+	Title     string          `json:"title"`
 }
+
+// EventDirection the direction of the order or position the event is about (absent = none)
+type EventDirection string
 
 // EventSeverity defines model for Event.Severity.
 type EventSeverity string

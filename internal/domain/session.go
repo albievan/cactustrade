@@ -73,6 +73,8 @@ type Event struct {
 	Actor    string // username, or "agent" / "system"
 	// AccountID is the eToro account the event is about ("" = the whole system).
 	AccountID string
+	// Direction is the long or short of the order or position an event is about ("" = none).
+	Direction Direction
 }
 
 // AuditEntry records who did what. Details never hold secrets.

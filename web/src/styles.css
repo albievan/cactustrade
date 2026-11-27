@@ -212,3 +212,9 @@ body[data-mode=real] .app-head .brand-version { color: rgba(255, 255, 255, .8); 
 /* Analysis tiles open their details (R35). */
 .kpi-drill { cursor: pointer; padding: 0; color: inherit; background-color: var(--bs-card-bg); }
 .kpi-drill:hover, .kpi-drill:focus-visible { border-color: var(--bs-primary); box-shadow: 0 0 0 .15rem rgba(var(--bs-primary-rgb), .2); }
+
+/* ---- dashboard: live investments graph (R39) ---- */
+.chart-grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-axis { fill: var(--muted); font-size: 11px; }
+.chart-line-1 { stroke: var(--chart-1); } .chart-line-2 { stroke: var(--chart-2); } .chart-line-3 { stroke: var(--chart-3); }
+.chart-bg-1 { background: var(--chart-1); } .chart-bg-2 { background: var(--chart-2); }

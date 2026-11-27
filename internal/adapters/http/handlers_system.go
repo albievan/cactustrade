@@ -53,6 +53,9 @@ func toEvent(e domain.Event) Event {
 	if e.AccountID != "" {
 		ev.AccountId = ptr(e.AccountID)
 	}
+	if e.Direction == domain.Long || e.Direction == domain.Short {
+		ev.Direction = ptr(EventDirection(e.Direction))
+	}
 	return ev
 }
 

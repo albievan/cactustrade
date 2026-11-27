@@ -1,3 +1,4 @@
+import { LiveInvestChart } from "../components/LiveInvestChart";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ReviewBoard } from "../components/ReviewBoard";
@@ -64,6 +65,7 @@ function LiveDashboard({ account }: { account: Account }) {
         <LiveStatus live={live} />
       </div>
       <LiveEnded reason={live.endedReason} />
+      <LiveInvestChart accountId={account.id} snapshot={s} />
       <LiveStats snapshot={s} />
       <ActivityLog account={account} live={live} />
       <AgentPanel live={live} />

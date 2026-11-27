@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Account } from "../lib/api";
 import {
-  ACTIVITY, FILTERS, clockSeconds, fromDecision, fromEvent, mergeActivity, shareLine, shows,
-  type ActivityEntry, type ActivityFilter,
+  ACTIVITY, FILTERS, clockSeconds, fromDecision, fromEvent, mergeActivity, shareLine, shows, showsSide,
+  type ActivityEntry, type ActivityFilter, type Sides,
 } from "../lib/activity";
 import type { Live } from "../lib/live";
 import { ProblemAlert } from "./ProblemAlert";
@@ -17,6 +17,7 @@ export function ActivityLog({ account, live }: { account: Account; live: Live })
   const [error, setError] = useState<unknown>(null);
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const [frozen, setFrozen] = useState<ActivityEntry[] | null>(null);
+  const [sides, setSides] = useState<Sides>({ long: true, short: true });
 
   // The history, again after a resync or every poll while the stream is down.
   useEffect(() => {
@@ -38,7 +39,9 @@ export function ActivityLog({ account, live }: { account: Account; live: Live })
 
   const all = useMemo(() => mergeActivity(history, live.activity), [history, live.activity]);
   const paused = frozen !== null;
-  const shown = (frozen ?? all).filter((e) => shows(e, filter));
+  const shown = (frozen ?? all).filter((e) => shows(e, filter) && showsSide(e, sides));
+  // A side can be switched off only while the other is on: at least one is always shown.
+  const toggleSide = (k: keyof Sides) => setSides((s) => (s[k] && !s[k === "long" ? "short" : "long"] ? s : { ...s, [k]: !s[k] }));
   const seen = useMemo(() => new Set((frozen ?? []).map((e) => e.key)), [frozen]);
   const waiting = paused ? all.filter((e) => !seen.has(e.key)).length : 0;
   const name = (id: string) => (id === "" ? "System" : id === account.id ? account.name : id);
@@ -53,6 +56,15 @@ export function ActivityLog({ account, live }: { account: Account; live: Live })
               <button key={f.id} type="button" className={"btn " + (filter === f.id ? "btn-success" : "btn-outline-success")}
                 title={f.title} aria-label={f.title} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
                 <i className={"bi me-1 " + f.icon} aria-hidden="true" />{f.label}
+              </button>
+            ))}
+          </div>
+          <div className="btn-group btn-group-sm" role="group" aria-label="Show long and/or short">
+            {(["long", "short"] as const).map((k) => (
+              <button key={k} type="button" className={"btn " + (sides[k] ? "btn-secondary" : "btn-outline-secondary")}
+                aria-pressed={sides[k]} title={sides[k] ? `Hide ${k} ideas, orders and positions` : `Show ${k} ideas, orders and positions`}
+                onClick={() => toggleSide(k)}>
+                <i className={"bi me-1 " + (k === "long" ? "bi-arrow-up-right" : "bi-arrow-down-right")} aria-hidden="true" />{k === "long" ? "Long" : "Short"}
               </button>
             ))}
           </div>

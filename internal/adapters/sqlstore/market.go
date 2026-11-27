@@ -157,8 +157,8 @@ func (f rowScanner) Scan(dst ...any) error { return f(dst...) }
 type events struct{ db *sql.DB }
 
 func (r events) Append(ctx context.Context, e domain.Event) error {
-	_, err := r.db.ExecContext(ctx, "INSERT INTO events (id, at, kind, severity, title, detail, actor, account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		e.ID, us(e.At), e.Kind, string(e.Severity), clip(e.Title, 255), clip(e.Detail, 2000), clip(e.Actor, 64), e.AccountID)
+	_, err := r.db.ExecContext(ctx, "INSERT INTO events (id, at, kind, severity, title, detail, actor, account_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		e.ID, us(e.At), e.Kind, string(e.Severity), clip(e.Title, 255), clip(e.Detail, 2000), clip(e.Actor, 64), e.AccountID, string(e.Direction))
 	if isDuplicate(err) {
 		return domain.ErrConflict
 	}
@@ -179,7 +179,7 @@ func accountFilter(ids []string) (string, []any) {
 
 func (r events) List(ctx context.Context, accountIDs []string, limit int) ([]domain.Event, error) {
 	where, args := accountFilter(accountIDs)
-	rows, err := r.db.QueryContext(ctx, "SELECT id, at, kind, severity, title, detail, actor, account_id FROM events WHERE "+where+
+	rows, err := r.db.QueryContext(ctx, "SELECT id, at, kind, severity, title, detail, actor, account_id, direction FROM events WHERE "+where+
 		" ORDER BY at DESC, id DESC LIMIT ?", append(args, limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("events.List: %w", err)
@@ -189,11 +189,11 @@ func (r events) List(ctx context.Context, accountIDs []string, limit int) ([]dom
 	for rows.Next() {
 		var e domain.Event
 		var at int64
-		var sev string
-		if err := rows.Scan(&e.ID, &at, &e.Kind, &sev, &e.Title, &e.Detail, &e.Actor, &e.AccountID); err != nil {
+		var sev, dir string
+		if err := rows.Scan(&e.ID, &at, &e.Kind, &sev, &e.Title, &e.Detail, &e.Actor, &e.AccountID, &dir); err != nil {
 			return nil, fmt.Errorf("events.List: %w", err)
 		}
-		e.At, e.Severity = fromUS(at), domain.EventSeverity(sev)
+		e.At, e.Severity, e.Direction = fromUS(at), domain.EventSeverity(sev), domain.Direction(dir)
 		out = append(out, e)
 	}
 	return out, rows.Err()

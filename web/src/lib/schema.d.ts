@@ -2516,6 +2516,11 @@ export interface components {
             actor: string;
             /** @description the account the event is about (absent = system-wide) */
             accountId?: string;
+            /**
+             * @description the direction of the order or position the event is about (absent = none)
+             * @enum {string}
+             */
+            direction?: "long" | "short";
         };
         EventFeed: {
             events: components["schemas"]["Event"][];

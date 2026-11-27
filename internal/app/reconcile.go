@@ -327,7 +327,7 @@ func (s *Service) adopt(ctx context.Context, a domain.Account, unrecorded []doma
 			continue
 		}
 		adopted[p.ID] = true
-		s.orderEvent(ctx, a, "position.adopted", domain.SeverityWarning,
+		s.orderEvent(ctx, a, o.Direction, "position.adopted", domain.SeverityWarning,
 			"Position in "+s.instrumentLabel(ctx, p.Instrument)+" adopted as cactusTrade's",
 			fmt.Sprintf("eToro holds position %d ($%s) that order %s (%s) opened but that was never recorded; it is now closed like any position of cactusTrade", p.ID, p.Amount, o.RequestID, o.State))
 	}

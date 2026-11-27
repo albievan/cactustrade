@@ -24,12 +24,17 @@ func (s *Service) emit(ctx context.Context, actor, kind string, sev domain.Event
 // emitFor appends an event about one account (seen by the users who can see that account).
 // A failed write is logged, never fatal to the action.
 func (s *Service) emitFor(ctx context.Context, accountID, actor, kind string, sev domain.EventSeverity, title, detail string) {
-	if actor == "" {
-		actor = "system"
+	s.emitEvent(ctx, domain.Event{Kind: kind, Severity: sev, Title: title, Detail: detail, Actor: actor, AccountID: accountID})
+}
+
+// emitEvent stamps e (id, time, "system" when no actor) and appends and publishes it like emitFor.
+func (s *Service) emitEvent(ctx context.Context, e domain.Event) {
+	if e.Actor == "" {
+		e.Actor = "system"
 	}
-	e := domain.Event{ID: s.d.Random.ID(), At: s.d.Clock.Now().UTC(), Kind: kind, Severity: sev, Title: title, Detail: detail, Actor: actor, AccountID: accountID}
+	e.ID, e.At = s.d.Random.ID(), s.d.Clock.Now().UTC()
 	if err := s.d.Store.Events().Append(ctx, e); err != nil {
-		s.d.Log.ErrorContext(ctx, "event write failed", "kind", kind, "err", err)
+		s.d.Log.ErrorContext(ctx, "event write failed", "kind", e.Kind, "err", err)
 	}
 	// After the write (attempted): a live viewer still learns of a kill when the database
 	// is down; the feed has it once the write succeeds.

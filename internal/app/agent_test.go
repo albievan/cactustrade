@@ -744,6 +744,22 @@ func TestAgentConvertsForeignCosts(t *testing.T) {
 				t.Errorf("costs detail %q lacks %q", costs, want)
 			}
 		}
+		evs, err := ae.store.Events().List(ae.ctx, []string{ae.a.ID}, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sent := 0
+		for _, e := range evs {
+			if strings.HasPrefix(e.Kind, "order.") {
+				sent++
+				if e.Direction != domain.Long {
+					t.Errorf("event %s has direction %q, want long (R39)", e.Kind, e.Direction)
+				}
+			}
+		}
+		if sent == 0 {
+			t.Error("no order event")
+		}
 		ae.tick(t)
 		if ae.m.searchCalls != 2 {
 			t.Errorf("search calls = %d, want 2 (one per pair, then cached)", ae.m.searchCalls)

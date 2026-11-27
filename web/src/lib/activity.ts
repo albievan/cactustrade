@@ -30,7 +30,20 @@ export interface ActivityEntry {
   detail?: string;
   groups: ActivityFilter[]; // the filters that show it besides "all"
   shares?: LiveTickShare[]; // a tick: what it did with each share
+  direction?: "long" | "short"; // an idea, order or position: its side (R39)
 }
+
+// Sides is which directions the log shows (R39): both = every entry; one = only the entries
+// of that direction (ideas, orders and positions).
+export type Sides = { long: boolean; short: boolean };
+
+// showsSide: the line passes the long/short filter.
+export function showsSide(e: ActivityEntry, s: Sides): boolean {
+  if (s.long && s.short) return true;
+  return (s.long && e.direction === "long") || (s.short && e.direction === "short");
+}
+
+const side = (d?: string): "long" | "short" | undefined => (d === "long" || d === "short" ? d : undefined);
 
 // FILTERS are the filter row's buttons, in order.
 export const FILTERS: { id: ActivityFilter; label: string; icon: string; title: string }[] = [
@@ -101,7 +114,7 @@ export function fromEvent(e: AppEvent, accountId = e.accountId ?? ""): ActivityE
   else groups.push("agent");
   if (alerting(tone)) groups.push("alerts");
   const by = machines.has(e.actor) ? "" : ` by ${e.actor}`;
-  return { key: "e:" + e.id, at: e.at, accountId, tone, icon, text: e.title + by, detail: e.detail, groups };
+  return { key: "e:" + e.id, at: e.at, accountId, tone, icon, text: e.title + by, detail: e.detail, groups, direction: side(e.direction) };
 }
 
 // fromDecision turns a decision into one line: the idea, the reviewer, the risk engine, the
@@ -127,7 +140,7 @@ export function fromDecision(d: Decision): ActivityEntry {
   if (alerting(tone)) groups.push("alerts");
   return {
     key: "d:" + d.id, at: d.at, accountId: d.accountId, tone, icon: "bi-lightbulb", text: parts.join(" — "),
-    detail: d.riskReason || d.verdictReason || undefined, groups,
+    detail: d.riskReason || d.verdictReason || undefined, groups, direction: side(d.direction),
   };
 }
 

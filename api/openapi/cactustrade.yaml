@@ -2835,6 +2835,7 @@ components:
         detail: { type: string }
         actor: { type: string }
         accountId: { type: string, description: "the account the event is about (absent = system-wide)" }
+        direction: { type: string, enum: [long, short], description: "the direction of the order or position the event is about (absent = none)" }
     EventFeed:
       type: object
       required: [events, unread]

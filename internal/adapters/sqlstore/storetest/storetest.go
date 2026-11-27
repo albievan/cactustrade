@@ -455,7 +455,7 @@ func Run(t *testing.T, s ports.Store) {
 		long := strings.Repeat("é", 2000) // 4000 bytes: clipped on a rune boundary
 		for i, e := range []domain.Event{
 			{ID: "e1", At: t0, Kind: "watchlist.added", Severity: domain.SeverityInfo, Title: "AAPL added", Actor: "admin"},
-			{ID: "e2", At: t0.Add(time.Minute), Kind: "order.filled", Severity: domain.SeveritySuccess, Title: "Bought", Detail: long},
+			{ID: "e2", At: t0.Add(time.Minute), Kind: "order.filled", Severity: domain.SeveritySuccess, Title: "Bought", Detail: long, Direction: domain.Short},
 			{ID: "e3", At: t0.Add(2 * time.Minute), Kind: "killswitch", Severity: domain.SeverityDanger, Title: "Kill", AccountID: "acc-1"},
 			{ID: "e4", At: t0.Add(3 * time.Minute), Kind: "order.filled", Severity: domain.SeverityInfo, Title: "Other account", AccountID: "acc-9"},
 		} {
@@ -469,6 +469,9 @@ func Run(t *testing.T, s ports.Store) {
 		list, err := ev.List(ctx, []string{"acc-1"}, 2)
 		if err != nil || len(list) != 2 || list[0].ID != "e3" || list[1].ID != "e2" || list[0].Severity != domain.SeverityDanger || list[0].AccountID != "acc-1" {
 			t.Fatalf("List = %+v %v", list, err)
+		}
+		if list[1].Direction != domain.Short || list[0].Direction != "" {
+			t.Fatalf("directions = %q %q", list[0].Direction, list[1].Direction)
 		}
 		if !utf8.ValidString(list[1].Detail) || len(list[1].Detail) > 2000 || len(list[1].Detail) < 1990 {
 			t.Fatalf("detail not clipped on a rune boundary: %d bytes", len(list[1].Detail))

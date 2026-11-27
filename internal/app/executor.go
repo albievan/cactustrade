@@ -314,12 +314,12 @@ func (s *Service) warnOnce(ctx context.Context, a domain.Account, o domain.Order
 		s.d.Log.DebugContext(ctx, "order warning already raised", "kind", kind, "request", o.RequestID)
 		return
 	}
-	s.orderEvent(ctx, a, kind, domain.SeverityWarning, title, detail+". Request "+o.RequestID)
+	s.orderEvent(ctx, a, o.Direction, kind, domain.SeverityWarning, title, detail+". Request "+o.RequestID)
 }
 
 // orderEvent records an order.* / position.* event of an account (trade e-mails, R12).
-func (s *Service) orderEvent(ctx context.Context, a domain.Account, kind string, sev domain.EventSeverity, title, detail string) {
-	s.emitFor(ctx, a.ID, "agent", kind, sev, title+" ("+a.Name+")", detail)
+func (s *Service) orderEvent(ctx context.Context, a domain.Account, d domain.Direction, kind string, sev domain.EventSeverity, title, detail string) {
+	s.emitEvent(ctx, domain.Event{AccountID: a.ID, Actor: "agent", Kind: kind, Severity: sev, Title: title + " (" + a.Name + ")", Detail: detail, Direction: d})
 }
 
 // placeEntry sends an entry the risk engine allowed and follows it until eToro has filled,
@@ -396,7 +396,7 @@ func (s *Service) sendOpen(ctx context.Context, a domain.Account, o domain.Order
 		if err != nil {
 			return o, fmt.Errorf("executor.sendOpen: %w", err)
 		}
-		s.orderEvent(wctx, a, "order.sent", domain.SeverityInfo, fmt.Sprintf("%s $%s of %s sent", verb(o.Direction), o.Amount, label), "stop "+o.StopLoss.String()+", request "+o.RequestID)
+		s.orderEvent(wctx, a, o.Direction, "order.sent", domain.SeverityInfo, fmt.Sprintf("%s $%s of %s sent", verb(o.Direction), o.Amount, label), "stop "+o.StopLoss.String()+", request "+o.RequestID)
 		return s.resolveOpen(ctx, a, o)
 	case isNA && na.RateLimited:
 		// eToro may have processed it despite the 429 (U7) and may not dedupe the id (U1):
@@ -423,7 +423,7 @@ func (s *Service) sendOpen(ctx context.Context, a domain.Account, o domain.Order
 		return s.resolveOpen(ctx, a, o)
 	case isNA:
 		o, _ = s.move(wctx, o, domain.OrderRejected, "eToro refused the order: "+na.Reason, nil)
-		s.orderEvent(wctx, a, "order.rejected", domain.SeverityWarning, verb(o.Direction)+" "+label+" refused by eToro", na.Reason)
+		s.orderEvent(wctx, a, o.Direction, "order.rejected", domain.SeverityWarning, verb(o.Direction)+" "+label+" refused by eToro", na.Reason)
 		return o, fmt.Errorf("executor.sendOpen: %w", err)
 	case errors.Is(err, domain.ErrRealModeGated):
 		o, _ = s.move(wctx, o, domain.OrderAbandoned, "refused before sending: real mode is gated", nil)
@@ -432,7 +432,7 @@ func (s *Service) sendOpen(ctx context.Context, a domain.Account, o domain.Order
 		// Outcome unknown (or an error we cannot classify): it may exist at eToro. Only a
 		// lookup can tell; it is never resent (OD2).
 		o, _ = s.move(wctx, o, domain.OrderUnknown, "the answer was lost: "+err.Error(), nil)
-		s.orderEvent(wctx, a, "order.unknown", domain.SeverityWarning, verb(o.Direction)+" "+label+": outcome unknown", "resolving by lookup; entries wait. Request "+o.RequestID)
+		s.orderEvent(wctx, a, o.Direction, "order.unknown", domain.SeverityWarning, verb(o.Direction)+" "+label+": outcome unknown", "resolving by lookup; entries wait. Request "+o.RequestID)
 		return s.resolveOpen(ctx, a, o)
 	}
 }
@@ -512,7 +512,7 @@ func (s *Service) abandon(ctx context.Context, a domain.Account, o domain.Order,
 	if err != nil {
 		return o, fmt.Errorf("executor.abandon: %w", err)
 	}
-	s.orderEvent(ctx, a, "order.abandoned", domain.SeverityWarning, fmt.Sprintf("%s order for %s abandoned", o.Kind, s.instrumentLabel(ctx, o.Instrument)), why+". Request "+o.RequestID)
+	s.orderEvent(ctx, a, o.Direction, "order.abandoned", domain.SeverityWarning, fmt.Sprintf("%s order for %s abandoned", o.Kind, s.instrumentLabel(ctx, o.Instrument)), why+". Request "+o.RequestID)
 	return o, nil
 }
 
@@ -567,9 +567,9 @@ func (s *Service) applyOpenStatus(ctx context.Context, a domain.Account, o domai
 	label := s.instrumentLabel(ctx, o.Instrument)
 	switch o.State {
 	case domain.OrderRejected:
-		s.orderEvent(ctx, a, "order.rejected", domain.SeverityWarning, verb(o.Direction)+" "+label+" rejected by eToro", reason)
+		s.orderEvent(ctx, a, o.Direction, "order.rejected", domain.SeverityWarning, verb(o.Direction)+" "+label+" rejected by eToro", reason)
 	case domain.OrderCancelled:
-		s.orderEvent(ctx, a, "order.cancelled", domain.SeverityInfo, verb(o.Direction)+" "+label+" cancelled", reason)
+		s.orderEvent(ctx, a, o.Direction, "order.cancelled", domain.SeverityInfo, verb(o.Direction)+" "+label+" cancelled", reason)
 	}
 	return o, nil
 }
@@ -624,7 +624,7 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 			continue
 		}
 		added++
-		s.orderEvent(ctx, a, "order.filled", domain.SeverityInfo,
+		s.orderEvent(ctx, a, o.Direction, "order.filled", domain.SeverityInfo,
 			fmt.Sprintf("%s $%s of %s filled", verb(o.Direction), e.Amount, label),
 			fmt.Sprintf("position %d at %s, stop %s", e.PositionID, e.OpenRate, e.StopLossRate))
 		if e.Closed {
@@ -648,7 +648,7 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 	if len(fresh) == 0 {
 		title = "Non-conforming fill of " + label + " (already closed by eToro): blocking the instrument"
 	}
-	s.orderEvent(ctx, a, "order.nonconforming", domain.SeverityDanger, title, why)
+	s.orderEvent(ctx, a, o.Direction, "order.nonconforming", domain.SeverityDanger, title, why)
 	for _, ap := range fresh {
 		if _, err := s.closePosition(ctx, a, ap, "non-conforming fill: "+why, closePolls); err != nil {
 			s.d.Log.ErrorContext(ctx, "closing a non-conforming position failed", "account", a.ID, "position", ap.PositionID, "err", err)
@@ -736,7 +736,7 @@ func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain
 				}
 			}
 			o, _ = s.move(ctx, o, domain.OrderRejected, "eToro refused the close: "+na.Reason, nil)
-			s.orderEvent(ctx, a, "order.rejected", domain.SeverityWarning, "Close of "+label+" refused by eToro", na.Reason)
+			s.orderEvent(ctx, a, o.Direction, "order.rejected", domain.SeverityWarning, "Close of "+label+" refused by eToro", na.Reason)
 			return o, fmt.Errorf("executor.closePosition: %w", err)
 		case errors.Is(err, domain.ErrRealModeGated):
 			o, _ = s.move(ctx, o, domain.OrderAbandoned, "refused before sending: real mode is gated", nil)
@@ -759,7 +759,7 @@ func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain
 				}
 			default:
 				o, _ = s.move(ctx, o, domain.OrderUnknown, "the answer was lost: "+err.Error(), nil)
-				s.orderEvent(ctx, a, "order.unknown", domain.SeverityWarning, "Close of "+label+": outcome unknown", "the supervisor tries again. Request "+o.RequestID)
+				s.orderEvent(ctx, a, o.Direction, "order.unknown", domain.SeverityWarning, "Close of "+label+": outcome unknown", "the supervisor tries again. Request "+o.RequestID)
 				return o, fmt.Errorf("executor.closePosition: %w", err)
 			}
 		}
@@ -841,7 +841,7 @@ func (s *Service) applyCloseStatus(ctx context.Context, a domain.Account, ap dom
 	}
 	label := s.instrumentLabel(ctx, ap.Instrument)
 	if partLeft {
-		s.orderEvent(ctx, a, "order.partial_close", domain.SeverityWarning, "Close of "+label+" only partly filled", fmt.Sprintf("position %d stays open and is closed again. Request %s", ap.PositionID, o.RequestID))
+		s.orderEvent(ctx, a, o.Direction, "order.partial_close", domain.SeverityWarning, "Close of "+label+" only partly filled", fmt.Sprintf("position %d stays open and is closed again. Request %s", ap.PositionID, o.RequestID))
 		return o, nil
 	}
 	if o.State == domain.OrderFilled {
@@ -854,7 +854,7 @@ func (s *Service) applyCloseStatus(ctx context.Context, a domain.Account, ap dom
 		s.markClosed(ctx, a, ap, detail+" — "+o.Reason)
 		return o, nil
 	}
-	s.orderEvent(ctx, a, "order.rejected", domain.SeverityWarning, "Close of "+label+" not executed", st.Reason)
+	s.orderEvent(ctx, a, o.Direction, "order.rejected", domain.SeverityWarning, "Close of "+label+" not executed", st.Reason)
 	return o, nil
 }
 
@@ -864,7 +864,7 @@ func (s *Service) markClosed(ctx context.Context, a domain.Account, ap domain.Ag
 	if err := s.d.Store.AgentPositions().Update(ctx, ap); err != nil {
 		s.d.Log.ErrorContext(ctx, "recording a closed position failed", "account", a.ID, "position", ap.PositionID, "err", err)
 	}
-	s.orderEvent(ctx, a, "position.closed", domain.SeverityInfo, "Position in "+s.instrumentLabel(ctx, ap.Instrument)+" closed", detail)
+	s.orderEvent(ctx, a, ap.Direction, "position.closed", domain.SeverityInfo, "Position in "+s.instrumentLabel(ctx, ap.Instrument)+" closed", detail)
 }
 
 // cancelOrder asks eToro to cancel a pending open order of ours, with its own stored

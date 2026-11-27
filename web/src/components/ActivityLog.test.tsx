@@ -101,6 +101,28 @@ describe("activity lines", () => {
 });
 
 describe("ActivityLog", () => {
+  it("shows long and/or short ideas and orders (R39)", async () => {
+    serve([
+      ev(),
+      ev({ id: "o1", at: "2026-11-24T15:00:05Z", kind: "order.filled", title: "Short $50.00 of TSLA filled", direction: "short" }),
+    ], [decision(), decision({ id: "d2", at: "2026-11-24T15:00:04Z", symbol: "TSLA", direction: "short" })]);
+    render(<ActivityLog account={account} live={live()} />);
+    await waitFor(() => expect(lines()).toHaveLength(4));
+    const sides = screen.getByRole("group", { name: "Show long and/or short" });
+    const long = within(sides).getByRole("button", { name: /Long/ });
+    const short = within(sides).getByRole("button", { name: /Short/ });
+    fireEvent.click(long); // short only
+    expect(long).toHaveAttribute("aria-pressed", "false");
+    expect(lines().map((l) => l.textContent)).toEqual([expect.stringContaining("Short $50.00 of TSLA"), expect.stringContaining("TSLA short idea")]);
+    fireEvent.click(short); // the last side on stays on
+    expect(short).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(long); fireEvent.click(short); // long only
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0]).toHaveTextContent("AAPL long idea");
+    fireEvent.click(short); // both: everything again
+    expect(lines()).toHaveLength(4);
+  });
+
   it("shows the stored history newest first, this account's and system-wide only", async () => {
     serve([
       ev(),
