@@ -10,6 +10,13 @@ import (
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
+// FXMaxAge is how old eToro's exchange rate may be when it converts a cost line (R36). It is
+// not the price limit of the trade itself (that stays the account's maxQuoteAge): eToro stamps
+// a pair's rate with its last change, often a minute back, and the converted lines (the
+// overnight fee, $0 for a position closed the same day) do not need a rate seconds old. An
+// older rate is still a refusal.
+const FXMaxAge = 15 * time.Minute
+
 // fxIDs caches the eToro instrument id of each currency pair (e.g. "AUDUSD") the cost gate
 // converts with, found once by an exact symbol match in eToro's instrument search.
 type fxIDs struct {

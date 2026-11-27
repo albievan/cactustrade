@@ -402,7 +402,7 @@ func (s *Service) decide(ctx context.Context, a domain.Account, l domain.RiskLim
 	bctx := ports.WithAccount(ctx, a)
 	size := min(c.SuggestedSize, sizing)
 	// (4) Costs below the gross gain at the take-profit (OD8).
-	if !s.costGate(bctx, c, size, c.Entry, l, it) {
+	if !s.costGate(bctx, c, size, c.Entry, it) {
 		dl.end(domain.DecisionRejectedCost, lastDetail(it))
 		return ""
 	}
@@ -466,7 +466,7 @@ func (s *Service) decide(ctx context.Context, a domain.Account, l domain.RiskLim
 	}
 	dl.d.Risk = domain.DecisionRisk{Allowed: true, Size: dec.Size, Reason: cmpOr(dec.Reason, fmt.Sprintf("allowed $%s of $%s requested", dec.Size, size))}
 	// The cost gate again when the engine shrank the size: fixed fees weigh more.
-	if dec.Size < size && !s.costGate(bctx, c, dec.Size, entry, l, it) {
+	if dec.Size < size && !s.costGate(bctx, c, dec.Size, entry, it) {
 		dl.end(domain.DecisionRejectedCost, lastDetail(it))
 		return ""
 	}
@@ -588,13 +588,13 @@ func (s *Service) signal(in domain.Instrument, bars []domain.Candle, sizing doma
 
 // costGate runs step (4) for size at entry: eToro's costs must stay below the gross gain at
 // the take-profit; a failed costs call is a refusal (OD8). Cost lines in AUD or GBX/GBP are
-// converted to USD with eToro's own rate, no older than the price limit l.MaxQuoteAge.
-func (s *Service) costGate(bctx context.Context, c domain.Candidate, size domain.Cents, entry domain.Micros, l domain.RiskLimits, it *InstrumentTrace) bool {
+// converted to USD with eToro's own rate, no older than FXMaxAge.
+func (s *Service) costGate(bctx context.Context, c domain.Candidate, size domain.Cents, entry domain.Micros, it *InstrumentTrace) bool {
 	costs, err := s.d.Broker.Costs(bctx, c.Instrument, c.Direction, size)
 	if err != nil {
 		return it.fail(StepCosts, "the costs could not be read: %v", err)
 	}
-	fx, err := s.fxRates(bctx, costs, l.MaxQuoteAge)
+	fx, err := s.fxRates(bctx, costs, FXMaxAge)
 	if err != nil {
 		return it.fail(StepCosts, "a cost line could not be converted to USD: %v", err)
 	}

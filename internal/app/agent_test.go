@@ -751,7 +751,7 @@ func TestAgentConvertsForeignCosts(t *testing.T) {
 	})
 	t.Run("stale rate", func(t *testing.T) {
 		ae := setup(t)
-		ae.m.QuoteAge = time.Hour
+		ae.m.QuoteAge = FXMaxAge + time.Second
 		tr := ae.tick(t)
 		if tr.Entries != 0 || len(tr.Instruments) != 1 {
 			t.Fatalf("trace %+v", tr)
