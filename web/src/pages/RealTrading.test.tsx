@@ -84,6 +84,17 @@ describe("RealTrading", () => {
     expect(screen.getByLabelText("Your password")).toHaveValue(""); // cleared after a refusal
   });
 
+  it("arms when the server allows it (this build is enabled) and says so", async () => {
+    const calls = serve(gate({ enabled: true }), { status: 200, body: { accountId: "r1", state: "armed", evidenceDays: 20, version: 1 } });
+    fireEvent.click(await screen.findByText("Arm real trading…"));
+    expect(screen.queryByText(/not enabled in this build/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Type/), { target: { value: "ENABLE REAL TRADING Live" } });
+    fireEvent.change(screen.getByLabelText("Your password"), { target: { value: "secret password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Arm real trading" }));
+    expect(await screen.findByText("Real trading armed on Live.")).toBeInTheDocument();
+    expect(calls.filter((c) => c.url.endsWith("/api/v1/accounts/r1/real-gate/arm"))).toHaveLength(1);
+  });
+
   it("disarms after a confirmation", async () => {
     const calls = serve(gate({ armed: true, gate: { accountId: "r1", state: "armed", evidenceDays: 20, version: 1, expiresAt: "2026-12-24T00:00:00Z" } }));
     expect(await screen.findByText("ARMED")).toBeInTheDocument();

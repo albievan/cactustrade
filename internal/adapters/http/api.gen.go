@@ -1097,22 +1097,23 @@ type AgentCard struct {
 
 // AgentControls The agent actions the caller may take on this account
 type AgentControls struct {
-	// ForceClose force close (admin, web session, trade access, demo account)
+	// ForceClose force close (admin, web session, trade access, an eToro account)
 	ForceClose bool `json:"forceClose"`
 
-	// ForceCloseBlockedReason Why `forceClose` is false on a real-money account for a caller who could otherwise use it. Absent otherwise.
+	// ForceCloseBlockedReason Kept for older clients; always absent since PLAN 7.21 (force close works on real-money accounts).
 	ForceCloseBlockedReason *string `json:"forceCloseBlockedReason,omitempty"`
 
-	// Gated a real-money account: real trading needs the phase-7 gate
+	// Gated a real-money account on which no entry may be made now (the agent cannot start; startBlockedReason says why)
 	Gated bool `json:"gated"`
 	Kill  bool `json:"kill"`
 	Pause bool `json:"pause"`
 	Reset bool `json:"reset"`
 	Start bool `json:"start"`
 
-	// StartBlockedReason Why `start` is false although the caller could otherwise start the agent: this
-	// process's agent loop is not running (still starting up, or the start-up resume
-	// failed and cactusTrade must be restarted). Absent when nothing blocks it.
+	// StartBlockedReason Why `start` is false although the caller could otherwise start the agent: a
+	// real-money account on which no entry may be made now (`gated`), or this process's
+	// agent loop is not running (still starting up, or the start-up resume failed and
+	// cactusTrade must be restarted). Absent when nothing blocks it.
 	StartBlockedReason *string `json:"startBlockedReason,omitempty"`
 	Stop               bool    `json:"stop"`
 }
@@ -3027,7 +3028,7 @@ type RealGateStatus struct {
 	// DemoCandidates the owner's eToro demo accounts the caller can see
 	DemoCandidates []Account `json:"demoCandidates"`
 
-	// Enabled this build may arm real trading at all (false until the owner's written consent)
+	// Enabled this build may arm real trading at all (true since the owner's written consent, D39)
 	Enabled  bool         `json:"enabled"`
 	Evidence GateEvidence `json:"evidence"`
 	Gate     RealGate     `json:"gate"`
@@ -4156,7 +4157,7 @@ type ServerInterface interface {
 	// GetRealGate The real-trading gate of a real-money account, its checklist and the demo evidence (view access)
 	// (GET /api/v1/accounts/{accountId}/real-gate)
 	GetRealGate(w http.ResponseWriter, r *http.Request, accountId string, params GetRealGateParams)
-	// ArmRealGate Ask to arm real trading (admin who owns the account, web session only, password and phrase) — refused in this build
+	// ArmRealGate Arm real trading (admin who owns the account, web session only, password and phrase)
 	// (POST /api/v1/accounts/{accountId}/real-gate/arm)
 	ArmRealGate(w http.ResponseWriter, r *http.Request, accountId string)
 	// SetRealGateDemoDays Set how many qualifying demo days arming this real account needs (admin who owns it, web session)
@@ -4189,10 +4190,10 @@ type ServerInterface interface {
 	// ForceCloseAgent Force close — close everything cactusTrade opened on the account now and stop its agent (admin, web session only, password)
 	// (POST /api/v1/agent/force-close)
 	ForceCloseAgent(w http.ResponseWriter, r *http.Request, params ForceCloseAgentParams)
-	// ForceCloseAllPreview What a force close of every eToro demo account the caller can trade would do now (admin, web session)
+	// ForceCloseAllPreview What a force close of every eToro account the caller can trade would do now (admin, web session)
 	// (GET /api/v1/agent/force-close-all)
 	ForceCloseAllPreview(w http.ResponseWriter, r *http.Request)
-	// ForceCloseAll Force close every eToro demo account the caller can trade (admin, web session only, password checked once)
+	// ForceCloseAll Force close every eToro account the caller can trade (admin, web session only, password checked once)
 	// (POST /api/v1/agent/force-close-all)
 	ForceCloseAll(w http.ResponseWriter, r *http.Request)
 	// KillAgent Pull the kill switch (operator with trade access; session or API key)

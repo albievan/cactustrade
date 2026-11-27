@@ -264,40 +264,42 @@ func TestForceCloseKeepsAKilledAgentKilled(t *testing.T) {
 	}
 }
 
-func TestForceCloseRealAccountRefused(t *testing.T) {
+// TestForceCloseRealAccount (PLAN 7.21, was TestForceCloseRealAccountRefused): a force close
+// works on a real-money account whatever its gate (here: never armed, the deployment opt-in
+// off): cactusTrade's own position there is closed with an exit permit, nothing is opened, and
+// the all-accounts variant covers the real account too.
+func TestForceCloseRealAccount(t *testing.T) {
 	ae := newAgentEnv(t)
 	realAcct := ae.account(t, "Real", domain.ModeReal)
-	if err := ae.store.AgentPositions().Add(ae.ctx, domain.AgentPosition{
-		AccountID: realAcct.ID, PositionID: 9001, OpenRequestID: "r-1", Instrument: instNYSE, Direction: domain.Long, OpenedAt: ae.clock.Now(),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	ap := realPosition(t, ae.execEnv, realAcct, 9001)
 	cb := &callCounter{Broker: ae.b}
 	ae.svc.d.Broker = cb
-	if _, err := ae.svc.ForceClose(ae.ctx, ae.admin, realAcct.ID, adminPassword); !errors.Is(err, domain.ErrRealModeGated) {
-		t.Fatalf("err = %v, want real mode gated", err)
-	}
-	if _, err := ae.svc.ForceClosePreview(ae.ctx, ae.admin, realAcct.ID); !errors.Is(err, domain.ErrRealModeGated) {
-		t.Fatalf("preview err = %v", err)
-	}
-	if cb.calls() != 0 {
-		t.Fatalf("%d broker calls for a real account", cb.calls())
-	}
 	v, err := ae.svc.AgentStatusView(ae.ctx, ae.admin, realAcct.ID)
-	if err != nil || v.Controls.ForceClose || !strings.Contains(v.Controls.ForceCloseBlocked, "phase-7") {
+	if err != nil || !v.Controls.ForceClose || v.Controls.ForceCloseBlocked != "" || !v.Controls.Gated || v.Controls.Start {
 		t.Fatalf("controls = %+v %v", v.Controls, err)
 	}
-	// the all-accounts variant leaves the real account out
+	if pl, err := ae.svc.ForceClosePreview(ae.ctx, ae.admin, realAcct.ID); err != nil || pl.Positions != 1 {
+		t.Fatalf("preview = %+v %v", pl, err)
+	}
+	rep, err := ae.svc.ForceClose(ae.ctx, ae.admin, realAcct.ID, adminPassword)
+	if err != nil || rep.Closing != 1 || len(rep.Errors) != 0 {
+		t.Fatalf("force close = %+v %v", rep, err)
+	}
+	if got, _ := ae.store.AgentPositions().Get(ae.ctx, realAcct.ID, ap.PositionID); got.CloseRequestID == "" {
+		t.Fatalf("the real position was not closed: %+v", got)
+	}
+	if ae.b.Opens != 0 || ae.b.Closes != 1 {
+		t.Fatalf("opens %d, closes %d", ae.b.Opens, ae.b.Closes)
+	}
+	noViolations(t, ae.b)
+	// the all-accounts variant covers the real account as well
 	plans, err := ae.svc.ForceCloseAllPreview(ae.ctx, ae.admin)
-	if err != nil || len(plans) != 1 || plans[0].AccountID != ae.a.ID {
+	if err != nil || len(plans) != 2 {
 		t.Fatalf("all preview = %+v %v", plans, err)
 	}
 	reps, err := ae.svc.ForceCloseAll(ae.ctx, ae.admin, adminPassword)
-	if err != nil || len(reps) != 1 || reps[0].AccountID != ae.a.ID {
+	if err != nil || len(reps) != 2 {
 		t.Fatalf("all = %+v %v", reps, err)
-	}
-	if ap, _ := ae.store.AgentPositions().Get(ae.ctx, realAcct.ID, 9001); !ap.Open() || ap.CloseRequestID != "" {
-		t.Fatalf("the real position was touched: %+v", ap)
 	}
 }
 

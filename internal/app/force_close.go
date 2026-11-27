@@ -13,11 +13,8 @@ import (
 // never the owner's own), and the agent is stopped so it does not enter again. It needs the
 // agent.force_close permission (admin), a web session, trade access and the caller's
 // password, checked by the same hasher as a sign-in (bounded, D29; the HTTP adapter counts
-// it with the sign-in limiter, D28). A real-money account is refused before anything is
-// read or sent: exits there stay refused until PLAN 7.21.
-
-// msgForceCloseGated explains why a real-money account has no force close.
-const msgForceCloseGated = "Real trading needs the phase-7 gate: cactusTrade cannot close positions on a real-money account yet (PLAN 7.21)"
+// it with the sign-in limiter, D28). Real-money accounts are force-closed too, whatever their
+// gate's state (PLAN 7.21: exits always work).
 
 // ForceClosePlan is what a force close of one account would do now (for the confirmation).
 type ForceClosePlan struct {
@@ -56,7 +53,7 @@ func (s *Service) forceCloser(p Principal) error {
 }
 
 // forceClosable resolves an account the caller may force-close: forceCloser's rights, trade
-// access, and a demo account (a real one is refused before any read: ErrRealModeGated).
+// access, and an eToro account, demo or real-money (PLAN 7.21).
 func (s *Service) forceClosable(ctx context.Context, p Principal, accountID string) (domain.AccountView, error) {
 	if err := s.forceCloser(p); err != nil {
 		return domain.AccountView{}, err
@@ -65,14 +62,14 @@ func (s *Service) forceClosable(ctx context.Context, p Principal, accountID stri
 	if err != nil {
 		return domain.AccountView{}, err
 	}
-	if v.Mode != domain.ModeDemo {
-		return domain.AccountView{}, fmt.Errorf("%s: %w", v.Name, domain.ErrRealModeGated)
+	if !v.Tradable() {
+		return domain.AccountView{}, fmt.Errorf("%s: %w", v.Name, domain.ErrViewOnly)
 	}
 	return v, nil
 }
 
-// forceClosableAll lists the accounts a force close of all accounts covers: every eToro demo
-// account the caller can trade.
+// forceClosableAll lists the accounts a force close of all accounts covers: every eToro
+// account, demo or real-money, the caller can trade.
 func (s *Service) forceClosableAll(ctx context.Context, p Principal) ([]domain.AccountView, error) {
 	if err := s.forceCloser(p); err != nil {
 		return nil, err
@@ -83,7 +80,7 @@ func (s *Service) forceClosableAll(ctx context.Context, p Principal) ([]domain.A
 	}
 	out := make([]domain.AccountView, 0, len(vs))
 	for _, v := range vs {
-		if v.Tradable() && v.Mode == domain.ModeDemo && v.Access.AtLeast(domain.AccessTrade) {
+		if v.Tradable() && v.Access.AtLeast(domain.AccessTrade) {
 			out = append(out, v)
 		}
 	}
@@ -120,8 +117,7 @@ func (s *Service) ForceClosePreview(ctx context.Context, p Principal, accountID 
 	return s.forceClosePlan(ctx, v)
 }
 
-// ForceCloseAllPreview is ForceClosePreview for every eToro demo account the caller can
-// trade.
+// ForceCloseAllPreview is ForceClosePreview for every eToro account the caller can trade.
 func (s *Service) ForceCloseAllPreview(ctx context.Context, p Principal) ([]ForceClosePlan, error) {
 	vs, err := s.forceClosableAll(ctx, p)
 	if err != nil {
@@ -172,7 +168,7 @@ func forceCloseSummary(name string, positions, orders int) string {
 }
 
 // ForceClose closes everything cactusTrade opened on an account now and stops its agent
-// (R24): admin (agent.force_close), web session, trade access, a demo account, and the
+// (R24): admin (agent.force_close), web session, trade access, an eToro account, and the
 // caller's password (domain.ErrWrongPassword when wrong; nothing is read from eToro or sent
 // before it is checked). accountID "" is the caller's current account. The cancels and
 // closes are sent once each, paced by the eToro client's execution limiter, and are not
@@ -193,9 +189,9 @@ func (s *Service) ForceClose(ctx context.Context, p Principal, accountID, passwo
 	return rep, nil
 }
 
-// ForceCloseAll force-closes every eToro demo account the caller can trade, checking the
-// password once. Real-money accounts are left out (refused until PLAN 7.21). One report per
-// account; the error is the first account's whose agent could not be stopped.
+// ForceCloseAll force-closes every eToro account (demo and real-money) the caller can trade,
+// checking the password once. One report per account; the error is the first account's
+// whose agent could not be stopped.
 func (s *Service) ForceCloseAll(ctx context.Context, p Principal, password string) ([]ForceCloseReport, error) {
 	vs, err := s.forceClosableAll(ctx, p)
 	if err != nil {

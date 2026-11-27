@@ -197,6 +197,51 @@ func TestSimBrokerClose(t *testing.T) {
 	}
 }
 
+// TestSimBrokerRealPermits (PLAN 7.20, S4): the simulated broker mirrors the eToro client: a
+// real-money open needs an entry permit for the account valid at its clock; a close or cancel
+// an exit or entry permit for the account.
+func TestSimBrokerRealPermits(t *testing.T) {
+	now := simT0
+	acct := domain.Account{ID: "r", Name: "Live", Mode: domain.ModeReal}
+	b := &SimBroker{Now: func() time.Time { return now }, Cash: 1_000_00}
+	gate := domain.LockedGate("r").Arm("d", "u", domain.GateEvidence{}, now.Add(-time.Hour))
+	entry, err := domain.PermitEntry(gate, acct, now, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit, err := domain.PermitExit(acct, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := domain.PermitExit(domain.Account{ID: "r2", Mode: domain.ModeReal}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := func(p domain.RealPermit) context.Context {
+		return ports.WithPermit(ports.WithAccount(context.Background(), acct), p)
+	}
+	if _, err := b.Open(ctx(exit), longIntent("x1")); !errors.Is(err, domain.ErrRealModeGated) {
+		t.Fatalf("open with an exit permit: %v", err)
+	}
+	if _, err := b.Close(ctx(other), 1, 1, "c0"); !errors.Is(err, domain.ErrRealModeGated) {
+		t.Fatalf("close with another account's permit: %v", err)
+	}
+	st, err := b.Open(ctx(entry), longIntent("r1"))
+	if err != nil || st.OrderID == 0 {
+		t.Fatalf("open with an entry permit: %+v %v", st, err)
+	}
+	if err := b.Cancel(ctx(exit), st.OrderID, "c1"); err != nil {
+		t.Fatalf("cancel with an exit permit: %v", err)
+	}
+	now = now.Add(domain.RealPermitTTL + time.Second)
+	if _, err := b.Open(ctx(entry), longIntent("r2")); !errors.Is(err, domain.ErrRealModeGated) {
+		t.Fatalf("open with an expired entry permit: %v", err)
+	}
+	if len(b.Violations) != 3 {
+		t.Fatalf("violations %v", b.Violations)
+	}
+}
+
 func TestSimBrokerGatesAndReads(t *testing.T) {
 	b := &SimBroker{}
 	realCtx := ports.WithAccount(context.Background(), domain.Account{ID: "r", Mode: domain.ModeReal})
@@ -219,8 +264,12 @@ func TestSimBrokerGatesAndReads(t *testing.T) {
 	if _, err := b.Lookup(t212, "x", 0); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatal("trading 212 account")
 	}
-	if len(b.Violations) != 6 || b.Opens != 2 {
+	if len(b.Violations) != 5 || b.Opens != 2 {
 		t.Fatalf("violations %v", b.Violations)
+	}
+	noMode := ports.WithAccount(context.Background(), domain.Account{ID: "n"})
+	if _, err := b.Portfolio(noMode); err != nil || len(b.Violations) != 6 {
+		t.Fatalf("an account without a mode: %v %v", err, b.Violations)
 	}
 	if _, err := b.Open(demoCtx(), domain.OrderIntent{RequestID: "bad", Direction: domain.Long, Instrument: 1, Amount: 1}); !errors.Is(err, domain.ErrNotAccepted) {
 		t.Fatal("an order without a stop must be refused")

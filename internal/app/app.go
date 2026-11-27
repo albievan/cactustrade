@@ -107,6 +107,10 @@ type Config struct {
 	// LeaseHolder names this process for the single-writer lease (D22); "" = a random id
 	// chosen on first use. Two processes must never share one.
 	LeaseHolder string
+	// RealTrading is the deployment's opt-in to real-money entries (OD28, the second key:
+	// CACTUSTRADE_REAL_TRADING=on; false by default). Without it no real-money entry is ever
+	// made, however the account's gate stands. Exits on real accounts never depend on it.
+	RealTrading bool
 }
 
 // Service implements the use cases.
@@ -131,6 +135,9 @@ type Service struct {
 	health *healthLog
 	// gates latches the disarms asked for in this process (PLAN 7.13).
 	gates *gateLatch
+	// consentFor is the owner's written consent for a real account (domain.RealConsentFor;
+	// tests replace it for their generated account ids).
+	consentFor func(accountID string) (string, bool)
 	// research serialises web research's stored state and marks running runs (PLAN R29).
 	research *researchLocks
 	// fx caches the eToro instruments of the currency pairs costs are converted with.
@@ -155,7 +162,7 @@ func New(d Deps, cfg Config) (*Service, error) {
 	if d.Sleep == nil {
 		d.Sleep = sleepCtx
 	}
-	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch(), research: newResearchLocks(), fx: newFXIDs()}, nil
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch(), consentFor: domain.RealConsentFor, research: newResearchLocks(), fx: newFXIDs()}, nil
 }
 
 // sleepCtx waits for d with a real timer, or until ctx ends.

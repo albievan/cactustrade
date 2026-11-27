@@ -9,15 +9,19 @@ import (
 	"time"
 )
 
-// TestRealTradingDisabledInThisBuild: real trading cannot be armed in this build. Changing
-// RealTradingEnabled changes this test: a visible, reviewed edit that needs the owner's
-// written consent (PLAN 7.18).
-func TestRealTradingDisabledInThisBuild(t *testing.T) {
-	if RealTradingEnabled {
-		t.Fatal("RealTradingEnabled must stay false until the owner's written consent (PLAN 7.18)")
+// TestRealTradingEnabledByOwnerConsent: this build may arm real trading, since the owner's
+// written consent (D39, 2026-11-27; it was TestRealTradingDisabledInThisBuild until then).
+// Changing RealTradingEnabled changes this test: a visible, reviewed edit. A build without the
+// consent refuses with ErrRealTradingDisabled, which still matches ErrRealModeGated.
+func TestRealTradingEnabledByOwnerConsent(t *testing.T) {
+	if !RealTradingEnabled {
+		t.Fatal("RealTradingEnabled is true since the owner's written consent (D39); turning it off is a reviewed edit")
 	}
 	if !errors.Is(ErrRealTradingDisabled, ErrRealModeGated) || !errors.Is(ErrRealTradingDisabled, ErrForbidden) {
 		t.Fatal("ErrRealTradingDisabled must match ErrRealModeGated and ErrForbidden")
+	}
+	if !errors.Is(ErrNoRealPermit, ErrRealModeGated) || !errors.Is(ErrNoRealPermit, ErrForbidden) {
+		t.Fatal("ErrNoRealPermit must match ErrRealModeGated and ErrForbidden")
 	}
 }
 
@@ -191,6 +195,7 @@ func gateInput() GateInput {
 		Evidence: QualifyingDays(qualifyingRun(today, 20, 1), today, rule20),
 		Today:    today, Rule: rule20,
 		User: GateUser{ID: "u-admin", Role: RoleAdmin, Session: true}, Confirm: "  ENABLE REAL TRADING Live ISA ",
+		Consent: "D39",
 	}
 }
 
@@ -203,12 +208,12 @@ func TestGateChecks(t *testing.T) {
 		}
 		names = append(names, c.Name)
 	}
-	want := []string{CheckRealAccount, CheckRealKeys, CheckReconciled, CheckNotKilled, CheckAgentStopped, CheckRealLimits, CheckDemoAccount, CheckEvidence, CheckArmingUser, CheckPhrase}
+	want := []string{CheckRealAccount, CheckRealKeys, CheckReconciled, CheckNotKilled, CheckAgentStopped, CheckRealLimits, CheckDemoAccount, CheckEvidence, CheckArmingUser, CheckConsent, CheckPhrase}
 	if !slices.Equal(names, want) {
 		t.Fatalf("checks %v, want %v", names, want)
 	}
-	// Every check passing still refuses in this build.
-	if err := CanArm(base); !errors.Is(err, ErrRealTradingDisabled) || !errors.Is(err, ErrRealModeGated) {
+	// Every check passing arms (D39); one failing check refuses (below).
+	if err := CanArm(base); err != nil {
 		t.Fatalf("CanArm(all pass) = %v", err)
 	}
 	demo := func(f func(*Account)) func(*GateInput) {
@@ -275,7 +280,7 @@ func TestGateChecks(t *testing.T) {
 	}
 }
 
-// TestGateProperties: whatever the input, CanArm never allows arming in this build, and it
+// TestGateProperties: CanArm allows arming exactly when every check passes (D39), and it
 // refuses with the failing checks whenever one fails.
 func TestGateProperties(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 18))
@@ -311,10 +316,10 @@ func TestGateProperties(t *testing.T) {
 		}
 		checks := GateChecks(in)
 		err := CanArm(checks)
-		if err == nil || !errors.Is(err, ErrRealModeGated) {
-			t.Fatalf("CanArm allowed arming: %+v", in)
-		}
 		anyFail := slices.ContainsFunc(checks, func(c GateCheck) bool { return !c.Pass })
+		if (err == nil) == anyFail || (err != nil && !errors.Is(err, ErrRealModeGated)) {
+			t.Fatalf("CanArm = %v with failing checks %v: %+v", err, anyFail, in)
+		}
 		if _, refused := errors.AsType[*GateRefusal](err); refused != anyFail {
 			t.Fatalf("refusal %v with failing checks %v: %v", refused, anyFail, err)
 		}
@@ -390,5 +395,26 @@ func TestEvidenceRuleWithMinDays(t *testing.T) {
 		if r, err := DefaultEvidenceRule.WithMinDays(n); err == nil || r.MinDays != DefaultEvidenceRule.MinDays {
 			t.Errorf("%d accepted: %+v", n, r)
 		}
+	}
+}
+
+// TestRealConsents pins the real accounts the owner's written consent covers (D39: Real Money
+// Maker only). Adding one needs a new written decision; this test changes with it.
+func TestRealConsents(t *testing.T) {
+	if d, ok := RealConsentFor("c0a9096b-d7af-4360-97e0-8fb2f691cb50"); !ok || d != "D39" {
+		t.Fatalf("Real Money Maker: %q %v", d, ok)
+	}
+	if len(realConsents) != 1 {
+		t.Fatalf("%d consented real accounts; D39 covers exactly one", len(realConsents))
+	}
+	for _, id := range []string{"", "real", "93b46c9a-0f9a-4794-9ee8-37b14ba18466"} {
+		if _, ok := RealConsentFor(id); ok {
+			t.Errorf("%q is consented", id)
+		}
+	}
+	in := gateInput()
+	in.Consent = ""
+	if err := CanArm(GateChecks(in)); err == nil || !strings.Contains(err.Error(), CheckConsent) {
+		t.Fatalf("arming without consent: %v", err)
 	}
 }

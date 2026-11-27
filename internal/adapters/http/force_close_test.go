@@ -117,24 +117,28 @@ func TestForceCloseWrongPasswordsAreLimited(t *testing.T) {
 }
 
 func TestForceCloseRefusalsDoNotCount(t *testing.T) {
-	// refusals that are not a wrong password are refunded: six real-account refusals in a row
-	// do not lock the admin out
+	// refusals that are not a wrong password are refunded: six refusals of an unknown account
+	// in a row do not lock the admin out
 	x := newAgentTC(t)
+	for range 6 {
+		if code, m, _ := x.do("POST", "/api/v1/agent/force-close?accountId=nope", forceBody, x.csrfHdr()...); code != 404 {
+			t.Fatalf("unknown account %d %v", code, m)
+		}
+	}
+	// A real-money account is force-closable since PLAN 7.21 (exits always work): with
+	// nothing of ours there, nothing is sent.
 	code, m, _ := x.do("POST", "/api/v1/accounts", `{"name":"Real","mode":"real"}`, x.csrfHdr()...)
 	if code != 201 {
 		t.Fatalf("create real %d %v", code, m)
 	}
 	realID := m["id"].(string)
 	x.keys(t, realID)
-	for range 6 {
-		if code, m, _ := x.do("POST", "/api/v1/agent/force-close?accountId="+realID, forceBody, x.csrfHdr()...); code != 403 ||
-			m["title"] != "Real trading needs the phase-7 gate" {
-			t.Fatalf("real %d %v", code, m)
-		}
-	}
 	if code, m, _ := x.do("GET", "/api/v1/agent?accountId="+realID, ""); code != 200 ||
-		m["controls"].(map[string]any)["forceClose"] != false || m["controls"].(map[string]any)["forceCloseBlockedReason"] == nil {
+		m["controls"].(map[string]any)["forceClose"] != true || m["controls"].(map[string]any)["forceCloseBlockedReason"] != nil {
 		t.Fatalf("real controls %d %v", code, m)
+	}
+	if code, m, _ := x.do("POST", "/api/v1/agent/force-close?accountId="+realID, forceBody, x.csrfHdr()...); code != 200 || m["closing"] != 0.0 {
+		t.Fatalf("real %d %v", code, m)
 	}
 	if code, m, _ := x.do("POST", "/api/v1/agent/force-close", forceBody, x.csrfHdr()...); code != 200 {
 		t.Fatalf("demo after the refusals %d %v", code, m)

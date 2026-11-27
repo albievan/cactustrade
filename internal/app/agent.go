@@ -102,7 +102,8 @@ type AgentTrace struct {
 	Errors []string
 }
 
-// AgentLoop runs the agent of every eToro demo account whose agent is running, at each bar
+// AgentLoop runs the agent of every eToro account whose agent is running (a real-money one
+// only while real entries may be made there, PLAN 7.22), at each bar
 // close plus AgentDecisionDelay, until ctx ends. Each account ticks in its own goroutine with
 // a timeout; an account whose previous tick still runs is skipped. It returns when ctx ends
 // and every tick has finished.
@@ -118,7 +119,9 @@ func (s *Service) AgentLoop(ctx context.Context) {
 	}
 }
 
-// agentTickAll starts one tick per running demo account that is not still ticking.
+// agentTickAll starts one tick per running account that is not still ticking: every demo
+// account, and a real-money one only while realEntryBlocked says nothing (S9, PLAN 7.22;
+// AgentTick checks it again, and each entry takes a fresh permit).
 func (s *Service) agentTickAll(ctx context.Context, wg *sync.WaitGroup) {
 	as, err := s.d.Store.Accounts().List(ctx)
 	if err != nil {
@@ -128,7 +131,12 @@ func (s *Service) agentTickAll(ctx context.Context, wg *sync.WaitGroup) {
 	// Full autonomy starts stopped demo agents at the first market open of a day (R28).
 	s.autoStartAll(ctx, as)
 	for _, a := range as {
-		if !a.Tradable() || a.Mode != domain.ModeDemo || s.agentState(ctx, a.ID) != domain.AgentRunning || !s.rt.claimTick(a.ID) {
+		switch {
+		case !a.Tradable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:
+			continue
+		case a.Mode == domain.ModeReal && (!s.rt.realStartedHere(a.ID) || s.realEntryBlocked(ctx, a) != ""):
+			continue
+		case s.agentState(ctx, a.ID) != domain.AgentRunning || !s.rt.claimTick(a.ID):
 			continue
 		}
 		wg.Go(func() {
@@ -164,7 +172,8 @@ func (r *runtimeState) releaseTick(accountID string) {
 }
 
 // AgentTick runs one decision round of an account's agent. It does nothing unless the
-// account is an eToro demo account whose agent is running, not killed, reconciled, with a
+// account is an eToro demo account, or a real-money one on which real entries may be made
+// (agentGate), whose agent is running, not killed, reconciled, with a
 // market calendar (D25), a trading budget and this process holding its lease. One tick runs
 // at a time per account; Kill cancels a running one. The trace says what each step decided.
 func (s *Service) AgentTick(ctx context.Context, accountID string) (AgentTrace, error) {
@@ -278,11 +287,20 @@ func (s *Service) agentGate(ctx context.Context, a domain.Account) string {
 	switch {
 	case !a.Tradable():
 		return "view-only account"
-	case a.Mode != domain.ModeDemo:
-		return "real mode is gated (phase 7): only demo accounts trade"
+	case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:
+		return "real mode is gated (phase 7): the account has no trading mode"
 	case s.d.Broker == nil || s.d.Market == nil:
 		return "the eToro client is not configured"
-	case s.d.Calendar == nil:
+	}
+	if a.Mode == domain.ModeReal {
+		if why := s.realEntryBlocked(ctx, a); why != "" { // read once (review m2)
+			return "real mode is gated (phase 7): " + why
+		}
+		if !s.rt.realStartedHere(a.ID) {
+			return "real mode: the agent was not started by a person since this process started (OD26)"
+		}
+	}
+	if s.d.Calendar == nil {
 		return "no market calendar: entries need one (D25)"
 	}
 	if st := s.agentState(ctx, a.ID); st != domain.AgentRunning {
@@ -448,8 +466,18 @@ func (s *Service) decide(ctx context.Context, a domain.Account, l domain.RiskLim
 		dl.end(domain.DecisionRejectedRisk, lastDetail(it))
 		return ""
 	}
+	// A real-money entry is assessed with a permit taken now (PLAN 7.22); the executor takes
+	// another, fresh one right before the send.
+	var permit domain.RealPermit
+	if a.Mode == domain.ModeReal {
+		if permit, err = s.realEntryPermit(ctx, a, now); err != nil {
+			it.fail(StepRisk, "%v", err)
+			dl.end(domain.DecisionRejectedRisk, lastDetail(it))
+			return ""
+		}
+	}
 	rin := res.Apply(domain.RiskInput{
-		Now: now, Mode: a.Mode, SessionOpen: sess.Open, SessionClose: sess.Close, Trading: sess.Trading,
+		Now: now, Mode: a.Mode, AccountID: a.ID, Permit: permit, SessionOpen: sess.Open, SessionClose: sess.Close, Trading: sess.Trading,
 		Portfolio: fresh, Instrument: in.ID, Direction: c.Direction, Eligibility: el,
 		Entry: entry, QuoteAt: q.At, StopLoss: c.StopLossRate, Requested: size, Limits: l, State: rs.State,
 		Reconciled: s.Reconciled(a.ID).OK, Blocked: blocked,

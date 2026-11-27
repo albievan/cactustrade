@@ -35,11 +35,23 @@ func newRealGateTC(t *testing.T, log *slog.Logger) *realGateTC {
 func newRealGateTCConfig(t *testing.T, log *slog.Logger, cfg Config) *realGateTC {
 	t.Helper()
 	x := newAgentTCServer(t, func(*app.Deps) {}, cfg, log)
-	code, m, _ := x.do("POST", "/api/v1/accounts", `{"name":"Live","mode":"real"}`, x.csrfHdr()...)
-	if code != 201 {
-		t.Fatalf("create real %d %v", code, m)
+	// The real account is the one the owner's written consent covers (D39, Real Money
+	// Maker's id): created in the store, since the API gives a new account a random id.
+	demo, err := x.store.Accounts().Get(context.Background(), x.acct)
+	if err != nil {
+		t.Fatal(err)
 	}
-	g := &realGateTC{agentTC: x, real: m["id"].(string)}
+	const consentedID = "c0a9096b-d7af-4360-97e0-8fb2f691cb50"
+	if _, ok := domain.RealConsentFor(consentedID); !ok {
+		t.Fatal("the test's real account is not the consented one")
+	}
+	now := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
+	if err := x.store.Accounts().Create(context.Background(), domain.Account{
+		ID: consentedID, Name: "Live", OwnerID: demo.OwnerID, Mode: domain.ModeReal, Platform: domain.PlatformEtoro, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	g := &realGateTC{agentTC: x, real: consentedID}
 	x.keys(t, g.real)
 	for _, s := range []agentStep{
 		{"current: real", "PUT", "/api/v1/accounts/current", `{"accountId":"` + g.real + `"}`, x.csrfHdr(), 200, ""},
@@ -96,9 +108,9 @@ func armBody(demo, confirm, password string) string {
 	return fmt.Sprintf(`{"demoAccountId":%q,"confirm":%q,"password":%q}`, demo, confirm, password)
 }
 
-// TestRealGateEndpoints (PLAN 7.14): the status, every refusal of the arm (CSRF 403, wrong
-// password 403, wrong phrase 422, a failing check 409, and with every check passing 403
-// "Real trading is not enabled in this build"), the disarm, and no password in any log.
+// TestRealGateEndpoints (PLAN 7.14, 7.19): the status, every refusal of the arm (CSRF 403,
+// wrong password 403, wrong phrase 422, a failing check 409), the arm with every check
+// passing (200, armed, in the banner; D39), the disarm, and no password in any log.
 func TestRealGateEndpoints(t *testing.T) {
 	logs := &lockedBuffer{}
 	g := newRealGateTC(t, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -108,7 +120,7 @@ func TestRealGateEndpoints(t *testing.T) {
 
 	g.seedEvidenceDays(t, 0, 4) // one day short of the default 5 (D37) (review minor 5: the step's name is what it tests)
 	code, m, _ := g.do("GET", base, "")
-	if code != 200 || m["enabled"] != false || m["armed"] != false || m["phrase"] != "ENABLE REAL TRADING Live" || m["canArm"] != true ||
+	if code != 200 || m["enabled"] != true || m["armed"] != false || m["phrase"] != "ENABLE REAL TRADING Live" || m["canArm"] != true ||
 		m["canDisarm"] != true || m["demoAccountId"] != g.acct || m["gate"].(map[string]any)["state"] != "locked" {
 		t.Fatalf("status %d %v", code, m)
 	}
@@ -144,26 +156,34 @@ func TestRealGateEndpoints(t *testing.T) {
 		}
 	}
 	g.seedEvidenceDays(t, 4, 1) // the 5th day
-	code, m, _ = g.do("POST", base+"/arm", armBody(g.acct, " ENABLE REAL TRADING Live ", pw), csrf...)
-	if code != 403 || m["title"] != "Real trading is not enabled in this build" {
-		t.Fatalf("every check passing: %d %v", code, m)
-	}
 	code, m, _ = g.do("GET", base, "")
 	if code != 200 || m["armed"] != false || m["gate"].(map[string]any)["state"] != "locked" || m["evidence"].(map[string]any)["count"] != 5.0 {
-		t.Fatalf("status after %d %v", code, m)
+		t.Fatalf("status before arming %d %v", code, m)
 	}
 	for _, c := range m["checks"].([]any) {
 		if c.(map[string]any)["pass"] != true {
 			t.Fatalf("check %v", c)
 		}
 	}
+	code, m, _ = g.do("POST", base+"/arm", armBody(g.acct, " ENABLE REAL TRADING Live ", pw), csrf...)
+	if code != 200 || m["state"] != "armed" || m["demoAccountId"] != g.acct || m["evidenceDays"] != 5.0 {
+		t.Fatalf("every check passing: %d %v", code, m)
+	}
+	code, m, _ = g.do("GET", base, "")
+	if code != 200 || m["armed"] != true || m["gate"].(map[string]any)["state"] != "armed" {
+		t.Fatalf("status after arming %d %v", code, m)
+	}
+	if code, m, _ := g.do("GET", "/api/v1/system/status", ""); code != 200 || len(m["realArmed"].([]any)) != 1 {
+		t.Fatalf("system status while armed %d %v", code, m)
+	}
 	// D36: the account's admin lowers the days needed; the status follows.
 	code, m, _ = g.do("PUT", base+"/demo-days", `{"minDays":12}`, csrf...)
 	if code != 200 || m["rule"].(map[string]any)["minDays"] != 12.0 {
 		t.Fatalf("demo days %d %v", code, m)
 	}
+	// (Changing the days disarmed the gate, D36; the disarm is idempotent.)
 	code, m, _ = g.do("POST", base+"/disarm", `{"reason":"drill"}`, csrf...)
-	if code != 200 || m["state"] != "locked" || m["version"] != 0.0 {
+	if code != 200 || m["state"] != "locked" || m["version"] != 2.0 {
 		t.Fatalf("disarm %d %v", code, m)
 	}
 	if code, m, _ := g.do("GET", "/api/v1/system/status", ""); code != 200 || m["realArmed"] == nil || len(m["realArmed"].([]any)) != 0 {
@@ -172,8 +192,8 @@ func TestRealGateEndpoints(t *testing.T) {
 	if strings.Contains(logs.String(), pw) || strings.Contains(logs.String(), "not it") {
 		t.Fatalf("a password reached the log:\n%s", logs.String())
 	}
-	if n, err := g.store.RealGates().Get(context.Background(), g.real); err == nil {
-		t.Fatalf("a gate row was stored: %+v", n)
+	if n, err := g.store.RealGates().Get(context.Background(), g.real); err != nil || n.State != domain.GateLocked || n.DisarmReason != domain.DisarmDays {
+		t.Fatalf("the stored gate: %+v %v", n, err)
 	}
 }
 
@@ -265,11 +285,14 @@ func TestRateLimitNeverThrottlesDisarm(t *testing.T) {
 	}
 }
 
-// TestRealRefusalHTTP (PLAN 7.17, S11): with a gate stored armed on a reconciled real account
-// with keys, real limits and its agent forced to running, the banner shows it, and the API
-// still refuses to start, force close or show a start control; nothing reaches the broker.
+// TestRealRefusalHTTP (PLAN 7.17, converted by 7.22, S11): with a gate stored armed on a
+// reconciled real account with keys, real limits and its agent forced to running, but the
+// deployment opt-in off (the environment variable alone changes nothing: only the server's
+// configuration counts), the banner shows the gate, and the API refuses to start the agent
+// (403 with the reason) and shows no start control; the kill switch and force close stay
+// available (exits always work). Nothing is opened.
 func TestRealRefusalHTTP(t *testing.T) {
-	t.Setenv("CACTUSTRADE_REAL_TRADING", "on") // OD28's opt-in (7.23): nothing reads it yet
+	t.Setenv("CACTUSTRADE_REAL_TRADING", "on") // read by cmd/cactustrade only, never by the server
 	g := newRealGateTC(t, slog.New(slog.DiscardHandler))
 	ctx := context.Background()
 	now := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
@@ -289,24 +312,22 @@ func TestRealRefusalHTTP(t *testing.T) {
 		t.Fatalf("gate %d %v", code, m)
 	}
 	code, m, _ = g.do("GET", "/api/v1/agent?accountId="+g.real, "")
-	if ctl, _ := m["controls"].(map[string]any); code != 200 || ctl["gated"] != true || ctl["start"] != false || ctl["forceClose"] != false {
+	if ctl, _ := m["controls"].(map[string]any); code != 200 || ctl["gated"] != true || ctl["start"] != false || ctl["forceClose"] != true ||
+		ctl["kill"] != true || !strings.Contains(fmt.Sprint(ctl["startBlockedReason"]), "CACTUSTRADE_REAL_TRADING") {
 		t.Fatalf("agent %d %v", code, m)
 	}
 	if err := g.store.Settings().Set(ctx, "agent.state."+g.real, "stopped", now); err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []agentStep{
-		{"start", "POST", "/api/v1/agent/start?accountId=" + g.real, "", g.csrfHdr(), 403, "Real trading needs the phase-7 gate"},
-		{"force close", "POST", "/api/v1/agent/force-close?accountId=" + g.real, forceBody, g.csrfHdr(), 403, "Real trading needs the phase-7 gate"},
-		{"force close preview", "GET", "/api/v1/agent/force-close?accountId=" + g.real, "", nil, 403, ""},
-	} {
-		code, m, _ := g.do(s.method, s.path, s.body, s.hdr...)
-		if code != s.code || (s.state != "" && m["title"] != s.state) {
-			t.Fatalf("%s: %d %v", s.name, code, m)
-		}
+	if code, m, _ := g.do("POST", "/api/v1/agent/start?accountId="+g.real, "", g.csrfHdr()...); code != 403 || m["title"] != "Real trading needs the phase-7 gate" ||
+		!strings.Contains(fmt.Sprint(m["detail"]), "CACTUSTRADE_REAL_TRADING") {
+		t.Fatalf("start: %d %v", code, m)
 	}
-	if g.b.Opens+g.b.Closes+g.b.Cancels != 0 {
-		t.Fatalf("the broker saw %d opens, %d closes, %d cancels", g.b.Opens, g.b.Closes, g.b.Cancels)
+	if code, m, _ := g.do("GET", "/api/v1/agent/force-close?accountId="+g.real, "", nil...); code != 200 {
+		t.Fatalf("force close preview: %d %v", code, m)
+	}
+	if g.b.Opens != 0 {
+		t.Fatalf("the broker saw %d opens", g.b.Opens)
 	}
 	// Disarming it works and the banner goes.
 	if code, m, _ := g.do("POST", "/api/v1/accounts/"+g.real+"/real-gate/disarm", `{"reason":"matrix"}`, g.csrfHdr()...); code != 200 || m["state"] != "locked" {

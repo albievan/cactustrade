@@ -61,7 +61,8 @@ const SimRetryAfter = 5 * time.Second
 
 // SimBroker is a simulated eToro demo account for executor tests: a ports.Broker that
 // accepts, fills, rejects or loses orders as scripted, keeps cash and positions, and records
-// every request. It refuses accounts in real mode like the eToro client (ErrRealModeGated).
+// every request. It refuses a real-money account change without a valid permit like the eToro
+// client (ErrRealModeGated).
 // Set the exported fields before use; read the records under no concurrent calls.
 type SimBroker struct {
 	mu sync.Mutex
@@ -166,18 +167,37 @@ func (b *SimBroker) init() {
 	}
 }
 
-// gate refuses like the eToro client: no account, not eToro, or not demo.
+// gate refuses like the eToro client (S4, PLAN 7.20): no account or not eToro; an account
+// without a mode; a real-money account change ("open", "close", "cancel") without a permit in
+// ctx for the account and the operation (open: an entry permit valid at b's now; close and
+// cancel: an exit or entry permit). Reads of a real-money account are allowed.
 func (b *SimBroker) gate(ctx context.Context, op string) error {
 	a, ok := ports.AccountFrom(ctx)
 	switch {
 	case !ok || a.ID == "" || !a.Tradable():
 		b.Violations = append(b.Violations, op+" without an eToro account")
 		return domain.ErrUnavailable
-	case a.Mode != domain.ModeDemo:
-		b.Violations = append(b.Violations, op+" for a real-money account")
+	case a.Mode == domain.ModeDemo:
+		return nil
+	case a.Mode != domain.ModeReal:
+		b.Violations = append(b.Violations, op+" for an account without a mode")
 		return domain.ErrRealModeGated
 	}
-	return nil
+	p, _ := ports.PermitFrom(ctx)
+	switch op {
+	case "open":
+		if p.AllowsEntry(a.ID, b.now()) {
+			return nil
+		}
+	case "close", "cancel":
+		if p.AllowsExit(a.ID) {
+			return nil
+		}
+	default:
+		return nil // a read
+	}
+	b.Violations = append(b.Violations, op+" for a real-money account without a valid permit")
+	return domain.ErrNoRealPermit
 }
 
 func (b *SimBroker) nextOutcome(script *[]SimOutcome) SimOutcome {

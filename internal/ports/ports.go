@@ -458,9 +458,11 @@ type Broker interface {
 	// The operations below change the account. Each sends exactly one request with
 	// x-request-id = the given request id (which the caller persisted first, CLAUDE.md §2.7)
 	// and never retries by itself. Errors: domain.ErrRealModeGated for a real-money account
-	// (refused before any I/O); *domain.NotAcceptedError (domain.ErrNotAccepted) when the
-	// broker refused it, RateLimited for a 429; domain.ErrOutcomeUnknown when it was sent but
-	// the answer was lost (network error, timeout, 5xx) — resolve with Lookup / CloseOrder.
+	// without a valid permit in ctx (WithPermit: an entry permit to open, an exit or entry
+	// permit to close or cancel; refused before any I/O); *domain.NotAcceptedError
+	// (domain.ErrNotAccepted) when the broker refused it, RateLimited for a 429;
+	// domain.ErrOutcomeUnknown when it was sent but the answer was lost (network error,
+	// timeout, 5xx) — resolve with Lookup / CloseOrder.
 
 	// Open sends a market order to open a position; the intent's direction picks one of the
 	// two constant order shapes. The answer means accepted, not filled: poll Lookup.

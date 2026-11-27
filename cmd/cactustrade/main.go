@@ -168,6 +168,15 @@ func restartSelf(container bool, args []string) error {
 	return cmd.Process.Release()
 }
 
+// appConfig is the use cases' configuration from the deployment's: the lease holder of this
+// process and the real-trading opt-in (OD28, off unless CACTUSTRADE_REAL_TRADING=on).
+func appConfig(cfg config, host string) app.Config {
+	return app.Config{
+		Version: version, Build: build, PublicURL: cfg.PublicURL, LeaseHolder: leaseHolderID(host, system.Random{}),
+		RealTrading: cfg.RealTrading,
+	}
+}
+
 func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	log := newLogger(cfg.LogLevel)
 	ctx, cancelServe := context.WithCancel(ctx)
@@ -307,9 +316,13 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 				cancelServe()
 			}()
 		},
-	}, app.Config{Version: version, Build: build, PublicURL: cfg.PublicURL, LeaseHolder: leaseHolderID(host, system.Random{})})
+	}, appConfig(cfg, host))
 	if err != nil {
 		return err
+	}
+	if cfg.RealTrading {
+		log.Warn("REAL-MONEY trading is allowed in this deployment (CACTUSTRADE_REAL_TRADING=on): " +
+			"an entry on a real-money account still needs its armed gate, a reconciliation and a fresh permit")
 	}
 	for _, m := range domain.Markets {
 		if y := time.Now().Year(); !slices.Contains(cal.Years(m), y) {
@@ -331,6 +344,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	} else if created {
 		log.Info("created the eToro account \"Demo (environment)\" from the environment's demo keys")
 	}
+	svc.AnnounceRealTrading(ctx) // a system event while CACTUSTRADE_REAL_TRADING=on (OD28)
 
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		prometheus.NewCounterFunc(prometheus.CounterOpts{

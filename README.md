@@ -219,15 +219,21 @@ run `--restore` there.
 
 ## Real money
 
-> **Real trading is not enabled in this build.** A real-money account can be added and shown,
-> and its *Real trading* page (Setup) shows the checklist the server would apply before arming
-> it: 20 qualifying demo trading days in the last 60 on a linked demo account, an admin who
-> owns the account, the password, the phrase `ENABLE REAL TRADING <account name>`, limits
-> within the real-money ceilings. Every arming is refused until the owner's written consent
-> (PLAN 7.18); cactusTrade never sends an order, a close or a cancel for a real-money account.
-> Anyone with trade access can **disarm** at any time (also with an API key); a kill-switch
-> trip, a key change, raising a limit, a restore and 30 days each disarm by themselves. Trading
-> real money can lose it; demo results describe the past and do not predict real ones.
+> **Real money is behind two keys** (the owner's written consent, D39, enabled the build:
+> PLAN 7.19–7.23). An entry on a real-money eToro account is made only while **all** of these
+> hold: (1) the account's real-trading gate is **armed** on its *Real trading* page (Setup) by
+> an admin who owns it, with the password and the phrase `ENABLE REAL TRADING <account name>`,
+> after the qualifying demo trading days on a linked demo account (the admin's number, 1–60,
+> default 5, in the last 60 risk days) and with limits within the real-money ceilings; (2) the
+> deployment allows it: **`CACTUSTRADE_REAL_TRADING=on`** (off by default; `.env` keeps it off,
+> `deploy.sh` never sets it — put it in `.env.local` or the environment yourself); (3) the
+> account is reconciled, its agent was started by hand (a real agent never resumes by itself
+> after a restart), and each entry takes a fresh permit. Exits — closing what cactusTrade
+> opened before the session ends, the kill switch, force close — work on a real account
+> whatever the gate. Anyone with trade access can **disarm** at any time (also with an API
+> key); a kill-switch trip, a key change, raising a limit, a restore and 30 days each disarm by
+> themselves. Trading real money can lose it; demo results describe the past and do not
+> predict real ones.
 
 ## eToro API keys
 
@@ -244,8 +250,9 @@ run `--restore` there.
      variants that name a file. Credentials set this way are read-only in the UI.
 
 Even if a key allows more (transfers, copy trading…), cactusTrade cannot use those endpoints:
-the client contains only the allowlisted paths. Real-money keys are used for reads only; orders
-stay refused until the real-mode gate can be armed (see *Real money* above).
+the client contains only the allowlisted paths. A real-money key sends orders only under the
+two keys of *Real money* above (entries) or to close and cancel what cactusTrade opened (exits);
+it needs eToro's **Write** permission for that.
 
 ## Trading 212 accounts (view-only)
 

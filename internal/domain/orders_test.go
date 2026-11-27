@@ -163,13 +163,13 @@ func TestNewOrder(t *testing.T) {
 
 func TestIntentFor(t *testing.T) {
 	o := openOrder(t)
-	in, err := IntentFor(o)
+	in, err := IntentFor(o, RealPermit{})
 	want := OrderIntent{RequestID: o.RequestID, Direction: Long, Instrument: 1001, Amount: 50_000, StopLossRate: 98_000_000, TakeProfitRate: 104_000_000}
 	if err != nil || in != want {
 		t.Fatalf("IntentFor = %+v %v", in, err)
 	}
 	sent, _ := o.Transition(OrderSent, t0, "")
-	if in, err := IntentFor(sent); err != nil || in.RequestID != o.RequestID {
+	if in, err := IntentFor(sent, RealPermit{}); err != nil || in.RequestID != o.RequestID {
 		t.Fatal("a resend must reuse the request id")
 	}
 	tests := []struct {
@@ -190,7 +190,7 @@ func TestIntentFor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			o := openOrder(t)
 			tt.change(&o)
-			if in, err := IntentFor(o); !errors.Is(err, tt.is) || in != (OrderIntent{}) {
+			if in, err := IntentFor(o, RealPermit{}); !errors.Is(err, tt.is) || in != (OrderIntent{}) {
 				t.Fatalf("IntentFor = %+v %v, want %v", in, err, tt.is)
 			}
 		})

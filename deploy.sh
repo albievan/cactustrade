@@ -114,6 +114,20 @@ load_env() {
   # --backup-dir / --backup-keep win over the files for this run
   [[ -z "$OPT_BACKUP_DIR" ]] || export BACKUP_DIR="$OPT_BACKUP_DIR"
   [[ -z "$OPT_BACKUP_KEEP" ]] || export BACKUP_KEEP="$OPT_BACKUP_KEEP"
+  real_trading_env
+}
+# real_trading_env checks CACTUSTRADE_REAL_TRADING (OD28, the deployment's second key for
+# real-money entries). deploy.sh never sets it: it is off in .env, and only the owner turns it
+# on, in .env.local or the environment. It is passed through as given, and said out loud.
+real_trading_env() {
+  export CACTUSTRADE_REAL_TRADING="${CACTUSTRADE_REAL_TRADING:-off}"
+  case "$CACTUSTRADE_REAL_TRADING" in
+    off) ;;
+    on)
+      warn "CACTUSTRADE_REAL_TRADING=on: this deployment ALLOWS REAL-MONEY ENTRIES on real-money accounts whose"
+      warn "real-trading gate is armed (Real trading page). Remove it from .env.local to switch them off." ;;
+    *) die "CACTUSTRADE_REAL_TRADING must be on or off (got '$CACTUSTRADE_REAL_TRADING'); .env keeps it off" ;;
+  esac
 }
 read_env_file() {
   local line key val

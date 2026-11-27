@@ -20,15 +20,31 @@ const agentViewTimeout = 10 * time.Second
 
 // AgentControls says which agent actions the caller may take on the account, as the use
 // cases themselves decide (OD11): the web UI shows only these. Gated is set for a real-money
-// account: nothing may be started there until the phase-7 gate.
+// account on which no entry may be made now (S10, PLAN 7.22: not armed, the deployment
+// opt-in off, not reconciled, limits over the real ceilings): the agent cannot be started
+// there, while pause, stop, the kill switch and force close still work (exits always do).
 type AgentControls struct {
 	Start, Pause, Stop, Kill, Reset bool
 	Gated                           bool
-	// ForceClose follows ForceClose's rules (R24): admin, web session, trade access, a demo
-	// account. ForceCloseBlocked says why it is false on a real-money account for a caller
-	// who could otherwise use it ("" otherwise).
+	// ForceClose follows ForceClose's rules (R24): admin, web session, trade access, an eToro
+	// account (demo or real-money, PLAN 7.21). ForceCloseBlocked is kept for the API and is
+	// always "" now.
 	ForceClose        bool
 	ForceCloseBlocked string
+	// gatedWhy says why a real-money account is Gated ("" when it is not).
+	gatedWhy string
+}
+
+// startBlocked says why Start is false for a caller who could otherwise start the agent: the
+// agent loop is not running (loopWhy), or the real-money account is gated ("" = neither).
+func (c AgentControls) startBlocked(loopWhy string, couldStart bool) string {
+	switch {
+	case !couldStart:
+		return ""
+	case c.gatedWhy != "":
+		return c.gatedWhy
+	}
+	return loopWhy
 }
 
 // FlattenTime is when the supervisor closes the positions of one market today.
@@ -115,11 +131,12 @@ func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID st
 	out := AgentView{
 		Account: v, State: s.agentState(ctx, v.ID), StateSince: s.agentSince(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
 		Limits: s.riskLimits(ctx, v.ID), Today: domain.RiskDay(now), ResetPhrase: ResetPhrase(v.Name),
-		Controls: s.controlsFor(p, v),
+		Controls: s.controlsFor(ctx, p, v),
 	}
 	if why := s.agentLoopBlocked(); why != "" && out.Controls.Start {
-		out.Controls.Start, out.StartBlocked = false, why
+		out.Controls.Start = false
 	}
+	out.StartBlocked = out.Controls.startBlocked(s.agentLoopBlocked(), s.couldStart(p, v))
 	switch rs, err := s.d.Store.RiskStates().Get(ctx, v.ID); {
 	case err == nil:
 		out.Risk = rs
@@ -183,15 +200,16 @@ func (s *Service) AgentCards(ctx context.Context, p Principal) ([]AgentCard, err
 		}
 		c := AgentCard{
 			Account: v, Current: v.ID == cur, State: s.agentState(ctx, v.ID), StateSince: s.agentSince(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
-			LimitsBlocked: s.limitsEditBlocked(ctx, p, v), Controls: s.controlsFor(p, v),
+			LimitsBlocked: s.limitsEditBlocked(ctx, p, v), Controls: s.controlsFor(ctx, p, v),
 		}
 		c.LimitsEditable = c.LimitsBlocked == ""
 		if killed, err := s.isKilled(ctx, v.ID); killed && err == nil {
 			c.Killed = true
 		}
 		if why != "" && c.Controls.Start {
-			c.Controls.Start, c.StartBlocked = false, why
+			c.Controls.Start = false
 		}
+		c.StartBlocked = c.Controls.startBlocked(why, s.couldStart(p, v))
 		if ps, err := s.d.Store.AgentPositions().ListOpen(ctx, v.ID); err == nil {
 			c.OpenPositions = len(ps)
 		}
@@ -268,9 +286,9 @@ func (s *Service) canFix(p Principal, v domain.AccountView, what domain.Missing)
 	case domain.MissingTradingBudget, domain.MissingAccountKeys:
 		return session && v.Access == domain.AccessOwner
 	case domain.MissingReconcile:
-		return s.controlsFor(p, v).Pause
+		return s.agentControl(p, v)
 	case domain.MissingKillReset:
-		return s.controlsFor(p, v).Reset
+		return s.killer(p, v) && p.Via == ViaSession && p.Role == domain.RoleAdmin
 	case domain.MissingWatchlist:
 		return v.Access.AtLeast(domain.AccessTrade)
 	case domain.MissingLLMProfile, domain.MissingEmailServer:
@@ -291,22 +309,42 @@ func (s *Service) fixable(p Principal, v domain.AccountView, err error) error {
 	return err
 }
 
-// controlsFor applies the same rules as the control use cases, without running them.
-func (s *Service) controlsFor(p Principal, v domain.AccountView) AgentControls {
+// agentControl: the caller may pause, stop and reconcile the account's agent (agent.control
+// and trade access). killer: the caller may use the kill switch (agent.kill and trade access).
+func (s *Service) agentControl(p Principal, v domain.AccountView) bool {
+	return v.Access.AtLeast(domain.AccessTrade) && p.Can(domain.PermAgentControl)
+}
+
+func (s *Service) killer(p Principal, v domain.AccountView) bool {
+	return v.Access.AtLeast(domain.AccessTrade) && p.Can(domain.PermKillSwitch)
+}
+
+// couldStart: the caller has the rights to start the account's agent (agent.control, trade
+// access, a web session), whatever else blocks it.
+func (s *Service) couldStart(p Principal, v domain.AccountView) bool {
+	return s.agentControl(p, v) && p.Via == ViaSession
+}
+
+// controlsFor applies the same rules as the control use cases, without running them. A
+// real-money account is Gated while realEntryBlocked says why (S10, PLAN 7.22).
+func (s *Service) controlsFor(ctx context.Context, p Principal, v domain.AccountView) AgentControls {
 	trade := v.Access.AtLeast(domain.AccessTrade)
 	session := p.Via == ViaSession
-	c := AgentControls{Gated: v.Mode != domain.ModeDemo}
-	ctl := trade && p.Can(domain.PermAgentControl)
-	c.Pause, c.Stop = ctl, ctl
-	c.Start = ctl && session && !c.Gated
-	c.Kill = trade && p.Can(domain.PermKillSwitch)
-	c.Reset = c.Kill && session && p.Role == domain.RoleAdmin
-	if trade && session && p.Can(domain.PermForceClose) {
-		c.ForceClose = !c.Gated
-		if c.Gated {
-			c.ForceCloseBlocked = msgForceCloseGated
-		}
+	var c AgentControls
+	switch v.Mode {
+	case domain.ModeDemo:
+	case domain.ModeReal:
+		c.gatedWhy = s.realEntryBlocked(ctx, v.Account)
+	default:
+		c.gatedWhy = "the account has no trading mode"
 	}
+	c.Gated = c.gatedWhy != ""
+	ctl := s.agentControl(p, v)
+	c.Pause, c.Stop = ctl, ctl
+	c.Start = s.couldStart(p, v) && !c.Gated
+	c.Kill = s.killer(p, v)
+	c.Reset = c.Kill && session && p.Role == domain.RoleAdmin
+	c.ForceClose = trade && session && p.Can(domain.PermForceClose) && v.Tradable()
 	return c
 }
 

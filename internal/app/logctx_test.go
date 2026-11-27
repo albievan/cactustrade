@@ -123,7 +123,7 @@ func TestLogLinesNameAccountAndMode(t *testing.T) {
 			if x.b.Opens != 0 {
 				t.Fatal("broker called")
 			}
-			return "account change refused: real mode is gated", real.ID, domain.ModeReal
+			return "real-money entry refused", real.ID, domain.ModeReal
 		}},
 		{"supervisor: demo pass skipped", func(t *testing.T, x *execEnv) (string, string, domain.TradingMode) {
 			x.svc.d.Broker = nil
@@ -142,7 +142,7 @@ func TestLogLinesNameAccountAndMode(t *testing.T) {
 			}
 			return "order", x.a.ID, domain.ModeDemo
 		}},
-		{"supervisor: real pass skipped", func(t *testing.T, x *execEnv) (string, string, domain.TradingMode) {
+		{"supervisor: real pass skipped (not armed, nothing of ours)", func(t *testing.T, x *execEnv) (string, string, domain.TradingMode) {
 			real := x.account(t, "Real", domain.ModeReal)
 			if rep, err := x.svc.Supervise(x.ctx, real.ID); err != nil || rep.Skipped == "" {
 				t.Fatalf("real: %+v %v", rep, err)

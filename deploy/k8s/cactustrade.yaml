@@ -30,6 +30,8 @@ data:
   CACTUSTRADE_ADDR: ":8080"
   CACTUSTRADE_LOG_LEVEL: "${CACTUSTRADE_LOG_LEVEL}"
   CACTUSTRADE_COOKIE_SECURE: "${CACTUSTRADE_COOKIE_SECURE}"
+  # Real-money entries (OD28): off unless the owner put "on" in .env.local (.env, README).
+  CACTUSTRADE_REAL_TRADING: "${CACTUSTRADE_REAL_TRADING}"
   # Who may set X-Forwarded-For: the ingress controller's pod addresses only (PLAN 7.1.16;
   # K8S_TRUSTED_PROXIES in .env, empty = nobody: every client then counts as the ingress
   # controller's address for the sign-in and API rate limits). docs/RUNBOOK.md says how to

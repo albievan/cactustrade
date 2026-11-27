@@ -53,9 +53,10 @@ var (
 	// including 429). Use errors.AsType[*NotAcceptedError] for the details. It wraps
 	// ErrUnavailable.
 	ErrNotAccepted = fmt.Errorf("not accepted by the broker: %w", ErrUnavailable)
-	// ErrRealModeGated means an order for a real-money account was refused: real trading is
-	// behind the phase-7 gate. It wraps ErrForbidden.
-	ErrRealModeGated = fmt.Errorf("real mode is gated (phase 7): only demo accounts trade: %w", ErrForbidden)
+	// ErrRealModeGated means a real-money account change was refused: real trading is behind
+	// the phase-7 gate (an armed gate, the deployment opt-in and a permit per change). It
+	// wraps ErrForbidden.
+	ErrRealModeGated = fmt.Errorf("real mode is gated (phase 7): %w", ErrForbidden)
 	// ErrWrongPassword means a password re-entered to confirm an action (force close, R24)
 	// is not the caller's: nothing was done. It wraps ErrForbidden (403), and the HTTP
 	// adapter counts it as a failed sign-in attempt.

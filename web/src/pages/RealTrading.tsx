@@ -6,8 +6,9 @@ import { ProblemAlert } from "../components/ProblemAlert";
 
 // Real trading (PLAN 7.15): one card per real-money account with the server's checklist, the
 // demo evidence, the demo account to link, the arm dialog (typed phrase + password) and
-// Disarm. Every rule is the server's: the page shows its checks, its canArm / canDisarm and
-// its refusals ("not enabled in this build" while real trading needs the owner's consent).
+// Disarm. Every rule is the server's: the page shows its checks, its canArm / canDisarm, its
+// `enabled` (whether this build may arm at all; true since the owner's consent, D39) and its
+// refusals.
 export function RealTrading() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -133,8 +134,8 @@ function GateCard({ account }: { account: Account }) {
   );
 }
 
-// ArmDialog asks for the phrase and the password. The server checks both and everything else,
-// and in this build refuses; its refusal stays in the dialog.
+// ArmDialog asks for the phrase and the password. The server checks both and everything else;
+// its refusal stays in the dialog.
 function ArmDialog({ status, onCancel, onDone }: { status: RealGateStatus; onCancel: () => void; onDone: () => Promise<void> }) {
   const [confirm, setConfirm] = useState("");
   const [password, setPassword] = useState("");
@@ -153,7 +154,8 @@ function ArmDialog({ status, onCancel, onDone }: { status: RealGateStatus; onCan
     <ConfirmDialog title={"Arm real trading on " + status.account.name + "?"} confirmLabel="Arm real trading" busyLabel="Checking…"
       icon="unlock" confirmDisabled={!confirm || !password} onCancel={onCancel} onConfirm={arm}>
       <p>Once armed, the agent may trade this account with <strong>real money</strong>, within its limits, until someone disarms it or
-        30 days pass. Losses are real.</p>
+        30 days pass. Losses are real. It trades only once its agent is started and only where the deployment allows real trading
+        (<code>CACTUSTRADE_REAL_TRADING=on</code>).</p>
       <ProblemAlert error={error} className="py-2 small" />
       <label className="form-label" htmlFor="arm-confirm">Type <code>{status.phrase}</code></label>
       <input id="arm-confirm" className="form-control mb-2" autoComplete="off" maxLength={200} value={confirm} onChange={(e) => setConfirm(e.target.value)} />

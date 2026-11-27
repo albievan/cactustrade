@@ -126,11 +126,13 @@ describe("AgentPanel", () => {
     expect(screen.queryByLabelText("Reset the kill switch")).not.toBeInTheDocument();
   });
 
-  it("disables the controls on a real account: real trading needs the phase-7 gate", async () => {
-    serve(panel({ state: "stopped", controls: { ...all, start: false, gated: true } }));
-    expect(await screen.findByText(/Real trading needs the phase-7 gate/)).toBeInTheDocument();
-    for (const l of ["Start the agent", "Pause the agent", "Stop the agent", "Kill switch"]) {
-      expect(screen.getByLabelText(l)).toBeDisabled();
+  it("on a gated real account only start is off: pause, stop and the kill switch still work (PLAN 7.21)", async () => {
+    serve(panel({ state: "running", controls: { ...all, start: false, gated: true, startBlockedReason: "real trading is not armed on Live" } }));
+    expect(await screen.findByText(/Real money: no new entries on this account now/)).toBeInTheDocument();
+    expect(screen.getByText(/The agent cannot be started: real trading is not armed on Live/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Start the agent")).toBeDisabled();
+    for (const l of ["Pause the agent", "Stop the agent", "Kill switch"]) {
+      expect(screen.getByLabelText(l)).toBeEnabled();
     }
   });
 
@@ -295,12 +297,9 @@ describe("AgentPanel force close (R24)", () => {
     ]);
   });
 
-  it("says why there is no force close on a real account", async () => {
-    serveForce(panel({
-      state: "stopped",
-      controls: { ...all, start: false, gated: true, forceCloseBlockedReason: "Real trading needs the phase-7 gate: no closes yet" },
-    }));
-    expect(await screen.findByText(/No force close here: Real trading needs the phase-7 gate: no closes yet/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Force close")).not.toBeInTheDocument();
+  it("offers force close on a gated real account too (exits always work, PLAN 7.21)", async () => {
+    serveForce(panel({ state: "stopped", controls: { ...all, start: false, gated: true, forceClose: true } }));
+    expect(await screen.findByLabelText("Force close")).toBeEnabled();
+    expect(screen.queryByText(/No force close here/)).not.toBeInTheDocument();
   });
 });

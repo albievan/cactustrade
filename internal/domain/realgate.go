@@ -7,15 +7,20 @@ import (
 	"time"
 )
 
-// The real-mode gate (PLAN 7.10). Real trading needs an armed gate per real-money account,
-// and arming needs evidence from a linked demo account, an admin who owns the account, a
-// typed phrase and the password. This build can show the checklist but can never arm:
-// RealTradingEnabled is false until the owner's written consent (PLAN 7.18).
+// The real-mode gate (PLAN 7.10, lifted in 7.19). Real trading needs an armed gate per
+// real-money account, and arming needs evidence from a linked demo account, an admin who owns
+// the account, a typed phrase and the password. Even with the gate armed, every real entry
+// needs a RealPermit built from the gate at the moment of the entry (PermitEntry), and every
+// real exit one that names the account (PermitExit).
 
-// RealTradingEnabled says whether this build may arm real trading at all. It stays false:
-// it needs the owner's written consent, PLAN 7.18. Changing it changes
-// TestRealTradingDisabledInThisBuild (a visible, reviewed edit).
-const RealTradingEnabled = false
+// RealTradingEnabled says whether this build may arm real trading at all. It is true since
+// the owner's written consent, D39 (2026-11-27): "I give written consent to enable real-money
+// trading on Real Money Maker. I accept the OD19–OD28 defaults and the real-money limit
+// ceilings as they are in the plan. I accept the open 4.17 items. I understand losses are
+// real." Changing it changes TestRealTradingEnabledByOwnerConsent (a visible, reviewed edit).
+// Arming still needs every gate check (GateChecks), and trading on an armed account still
+// needs the deployment opt-in (OD28) and a permit per entry.
+const RealTradingEnabled = true
 
 // EvidenceRule is how much demo history arming needs (OD20): MinDays qualifying risk days
 // within the WindowDays completed risk days before today, the latest at most MaxAgeDays old.
@@ -203,6 +208,24 @@ type GateInput struct {
 	Rule     EvidenceRule
 	User     GateUser
 	Confirm  string // the phrase typed
+	// Consent is the owner's written decision covering this real account ("" = none):
+	// RealConsentFor. Without one the account cannot be armed.
+	Consent string
+}
+
+// realConsents are the real-money accounts the owner's written consent covers, by account id
+// (CLAUDE.md §2: real trading only with the owner's written consent). D39, 2026-11-27: "I
+// give written consent to enable real-money trading on Real Money Maker". Another real
+// account needs a new written decision and a reviewed edit here (TestRealConsents pins it).
+var realConsents = map[string]string{
+	"c0a9096b-d7af-4360-97e0-8fb2f691cb50": "D39", // Real Money Maker
+}
+
+// RealConsentFor is the owner's written decision covering the real account accountID, and
+// whether there is one.
+func RealConsentFor(accountID string) (decision string, ok bool) {
+	d, ok := realConsents[accountID]
+	return d, ok && accountID != ""
 }
 
 // Gate check names, in checklist order.
@@ -217,6 +240,7 @@ const (
 	CheckEvidence     = "demo_evidence"
 	CheckArmingUser   = "arming_user"
 	CheckPhrase       = "confirm_phrase"
+	CheckConsent      = "owner_consent"
 )
 
 // GateCheck is one line of the arming checklist.
@@ -280,6 +304,9 @@ func GateChecks(in GateInput) []GateCheck {
 	default:
 		out = append(out, GateCheck{Name: CheckArmingUser, Pass: true, Detail: "an admin who owns the account, in a web session"})
 	}
+	out = append(out, c(CheckConsent, in.Consent != "",
+		"covered by the owner's written consent ("+in.Consent+")",
+		"the owner's written consent does not cover "+in.Real.Name+": real trading on it needs a new written consent"))
 	out = append(out, c(CheckPhrase, strings.TrimSpace(in.Confirm) == ArmPhrase(in.Real.Name),
 		"the phrase was typed", fmt.Sprintf("type %q", ArmPhrase(in.Real.Name))))
 	return out
@@ -303,13 +330,13 @@ func (e *GateRefusal) Error() string {
 func (e *GateRefusal) Unwrap() []error { return []error{ErrRealModeGated, ErrConflict} }
 
 // ErrRealTradingDisabled means every check passed but this build cannot arm real trading
-// (RealTradingEnabled is false until the owner's written consent, PLAN 7.18). It wraps
-// ErrRealModeGated.
+// (RealTradingEnabled false: a build without the owner's consent). It wraps ErrRealModeGated.
 var ErrRealTradingDisabled = fmt.Errorf("real trading is not enabled in this build: %w", ErrRealModeGated)
 
 // CanArm says whether the gate may be armed: every check passes and this build allows real
-// trading. A failing check gives a *GateRefusal; all passing gives ErrRealTradingDisabled
-// while RealTradingEnabled is false. Both match ErrRealModeGated.
+// trading. A failing check (or no checks at all) gives a *GateRefusal; all passing gives nil
+// (ErrRealTradingDisabled in a build with RealTradingEnabled false). Both refusals match
+// ErrRealModeGated.
 func CanArm(checks []GateCheck) error {
 	var failed []GateCheck
 	for _, c := range checks {
@@ -438,4 +465,88 @@ func clipUTF8(s string, n int) string {
 		n--
 	}
 	return s[:n]
+}
+
+// RealPermitTTL is how long an entry permit is good for (PLAN 7.19): it is built from the gate
+// right before the entry it is for, never kept for later.
+const RealPermitTTL = 60 * time.Second
+
+// permitKind is what a RealPermit allows.
+type permitKind uint8
+
+const (
+	permitNone permitKind = iota
+	permitEntry
+	permitExit
+)
+
+// RealPermit allows one real-money account change (PLAN 7.19). Its fields are unexported: a
+// permit is built only by PermitEntry (an armed, live gate of that account, good for
+// RealPermitTTL) or PermitExit (closing or cancelling what cactusTrade itself opened on the
+// account, whatever the gate). The zero value allows nothing. Demo accounts need no permit.
+type RealPermit struct {
+	kind      permitKind
+	accountID string
+	issuedAt  time.Time
+	// gateExpires is the armed gate's expiry (entry permits only).
+	gateExpires time.Time
+}
+
+// ErrNoRealPermit means a real-money account change had no valid permit (missing, for
+// another account, expired, or only an exit permit for an entry). It wraps ErrRealModeGated.
+var ErrNoRealPermit = fmt.Errorf("no valid real-trading permit: %w", ErrRealModeGated)
+
+// PermitEntry builds the permit for one entry on the real-money account a at now: the gate
+// is a's, armed and in force at now (RealGate.Live with the latest restore, restoredAt; zero
+// = never restored), and a is a tradable real-money account. It refuses with ErrNoRealPermit
+// otherwise. The permit is good for RealPermitTTL after now, and never past the gate's expiry.
+func PermitEntry(g RealGate, a Account, now, restoredAt time.Time) (RealPermit, error) {
+	switch {
+	case !a.Tradable() || a.Mode != ModeReal || a.ID == "":
+		return RealPermit{}, fmt.Errorf("%s is not an eToro real-money account: %w", a.Name, ErrNoRealPermit)
+	case g.AccountID != a.ID:
+		return RealPermit{}, fmt.Errorf("the gate is not %s's: %w", a.Name, ErrNoRealPermit)
+	case now.IsZero():
+		return RealPermit{}, fmt.Errorf("no time for the permit: %w", ErrNoRealPermit)
+	}
+	if live, why := g.Live(now, restoredAt); !live {
+		if why == "" {
+			why = "real trading is not armed"
+		}
+		return RealPermit{}, fmt.Errorf("%s: %s: %w", a.Name, why, ErrNoRealPermit)
+	}
+	return RealPermit{kind: permitEntry, accountID: a.ID, issuedAt: now, gateExpires: g.ExpiresAt}, nil
+}
+
+// PermitExit builds the permit to close a position or cancel an order of cactusTrade's own
+// (ours) on the real-money account a, whatever its gate's state (CLAUDE.md §2.6: exits still
+// work). Anything not ours is refused (OD1).
+func PermitExit(a Account, ours bool) (RealPermit, error) {
+	switch {
+	case !a.Tradable() || a.Mode != ModeReal || a.ID == "":
+		return RealPermit{}, fmt.Errorf("%s is not an eToro real-money account: %w", a.Name, ErrNoRealPermit)
+	case !ours:
+		return RealPermit{}, fmt.Errorf("%s: only what cactusTrade opened is closed or cancelled: %w", a.Name, ErrNoRealPermit)
+	}
+	return RealPermit{kind: permitExit, accountID: a.ID}, nil
+}
+
+// AccountID is the account the permit is for ("" for the zero value).
+func (p RealPermit) AccountID() string { return p.accountID }
+
+// IsEntry reports whether p is an entry permit (it then allows exits as well).
+func (p RealPermit) IsEntry() bool { return p.kind == permitEntry }
+
+// AllowsEntry reports whether p allows an entry on accountID at at: an entry permit for that
+// account, at or after it was issued, at most RealPermitTTL later and before the gate expires.
+func (p RealPermit) AllowsEntry(accountID string, at time.Time) bool {
+	return p.kind == permitEntry && accountID != "" && p.accountID == accountID &&
+		!at.Before(p.issuedAt) && at.Sub(p.issuedAt) <= RealPermitTTL && at.Before(p.gateExpires)
+}
+
+// AllowsExit reports whether p allows closing or cancelling something of cactusTrade's on
+// accountID: an exit or an entry permit for that account. Exits do not expire (a close
+// retried after a 429 is still the same exit).
+func (p RealPermit) AllowsExit(accountID string) bool {
+	return (p.kind == permitExit || p.kind == permitEntry) && accountID != "" && p.accountID == accountID
 }

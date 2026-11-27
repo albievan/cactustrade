@@ -25,6 +25,9 @@ func newGateEnv(t *testing.T) *gateEnv {
 	x := newExecEnv(t)
 	x.svc.d.Market = &agentMarket{clock: x.clock}
 	g := &gateEnv{execEnv: x, real: x.account(t, "Live", domain.ModeReal)}
+	// The test's real account stands in for the one the owner's consent covers (D39).
+	consented := g.real.ID
+	x.svc.consentFor = func(id string) (string, bool) { return "D39", id == consented }
 	if r, err := x.svc.Reconcile(x.ctx, g.real.ID); err != nil || !r.OK {
 		t.Fatalf("reconcile real = %+v %v", r, err)
 	}
@@ -134,14 +137,14 @@ func (g *gateEnv) shareReal(t *testing.T, name string, role domain.Role, access 
 }
 
 // TestArmRealRoleViaOwnerMatrix: only an admin who owns the real account, in a web session,
-// gets as far as the checklist; there, with everything in order, this build still refuses.
+// gets as far as the checklist; there, with everything in order, the gate is armed (D39).
 func TestArmRealRoleViaOwnerMatrix(t *testing.T) {
 	tests := []struct {
 		name string
 		who  func(t *testing.T, g *gateEnv) Principal
 		want error
 	}{
-		{"owner admin, web session", func(_ *testing.T, g *gateEnv) Principal { return g.admin }, domain.ErrRealTradingDisabled},
+		{"owner admin, web session", func(_ *testing.T, g *gateEnv) Principal { return g.admin }, nil},
 		{"owner admin, API key", func(_ *testing.T, g *gateEnv) Principal { return apiKey(g.admin) }, domain.ErrForbidden},
 		{"another admin with trade access", func(t *testing.T, g *gateEnv) Principal {
 			return g.shareReal(t, "ad", domain.RoleAdmin, domain.AccessTrade)
@@ -160,8 +163,14 @@ func TestArmRealRoleViaOwnerMatrix(t *testing.T) {
 			g := newGateEnv(t)
 			g.seedEvidence(t, g.a.ID, 20, 1)
 			p := tt.who(t, g)
-			_, err := g.svc.ArmReal(g.ctx, p, g.real.ID, g.a.ID, domain.ArmPhrase(g.real.Name), passwordOf(p))
-			if !errors.Is(err, tt.want) || !errors.Is(err, domain.ErrRealModeGated) && errors.Is(tt.want, domain.ErrRealModeGated) {
+			gate, err := g.svc.ArmReal(g.ctx, p, g.real.ID, g.a.ID, domain.ArmPhrase(g.real.Name), passwordOf(p))
+			if tt.want == nil {
+				if err != nil || gate.State != domain.GateArmed || !g.svc.realGateArmed(g.ctx, g.real) {
+					t.Fatalf("arming = %+v %v", gate, err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.want) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
 			}
 			if _, err := g.store.RealGates().Get(g.ctx, g.real.ID); !errors.Is(err, domain.ErrNotFound) {
@@ -247,10 +256,6 @@ func TestArmRealRefusals(t *testing.T) {
 			}
 			return g.a.ID, domain.ArmPhrase(g.real.Name), adminPassword
 		}, domain.ErrConflict, domain.CheckRealLimits, "real_limits"},
-		{"every check passes: not enabled in this build", func(t *testing.T, g *gateEnv) (string, string, string) {
-			g.seedEvidence(t, g.a.ID, 20, 1)
-			return g.a.ID, "  " + domain.ArmPhrase(g.real.Name) + " ", adminPassword
-		}, domain.ErrRealTradingDisabled, "", "not enabled in this build"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -288,6 +293,38 @@ func TestArmRealRefusals(t *testing.T) {
 	}
 }
 
+// TestArmRealArms (PLAN 7.19, D39): with every check passing, ArmReal stores the gate armed
+// with the demo evidence, audits real.arm, raises the danger event, and the gate is in force.
+// Nothing is sent to the broker: arming is not trading.
+func TestArmRealArms(t *testing.T) {
+	g := newGateEnv(t)
+	g.seedEvidence(t, g.a.ID, 20, 1)
+	gate, err := g.svc.ArmReal(g.ctx, g.admin, g.real.ID, g.a.ID, "  "+domain.ArmPhrase(g.real.Name)+" ", adminPassword)
+	if err != nil || gate.State != domain.GateArmed || gate.DemoAccountID != g.a.ID || gate.ArmedBy != g.admin.UserID || gate.Evidence.Count != 20 {
+		t.Fatalf("ArmReal = %+v %v", gate, err)
+	}
+	if !gate.ExpiresAt.Equal(g.clock.Now().UTC().Add(domain.RealGateTTL)) {
+		t.Fatalf("expires %v", gate.ExpiresAt)
+	}
+	if !g.svc.realGateArmed(g.ctx, g.real) {
+		t.Fatal("the gate is not in force")
+	}
+	if len(g.audits("real.arm")) != 1 || len(g.audits("real.arm_refused")) != 0 {
+		t.Fatalf("audits = %+v", g.store.AuditEntries())
+	}
+	es, _ := g.store.Events().List(g.ctx, []string{g.real.ID}, 50)
+	if !slices.ContainsFunc(es, func(e domain.Event) bool { return e.Kind == "real.armed" && e.Severity == domain.SeverityDanger }) {
+		t.Fatalf("events = %+v", es)
+	}
+	if g.b.Opens+g.b.Closes+g.b.Cancels != 0 {
+		t.Fatal("arming sent an order")
+	}
+	v, err := g.svc.RealGateStatus(g.ctx, g.admin, g.real.ID, "")
+	if err != nil || !v.Armed || !v.Enabled {
+		t.Fatalf("status after arming = %+v %v", v, err)
+	}
+}
+
 func TestRealGateStatus(t *testing.T) {
 	g := newGateEnv(t)
 	g.seedEvidence(t, g.a.ID, 20, 1)
@@ -296,7 +333,7 @@ func TestRealGateStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Armed || v.Enabled || v.Gate.State != domain.GateLocked || v.Phrase != "ENABLE REAL TRADING Live" || !v.CanArm || !v.CanDisarm ||
+	if v.Armed || !v.Enabled || v.Gate.State != domain.GateLocked || v.Phrase != "ENABLE REAL TRADING Live" || !v.CanArm || !v.CanDisarm ||
 		v.Rule != domain.DefaultEvidenceRule || len(v.DemoCandidates) != 2 || v.DemoAccountID != g.a.ID || v.Evidence.Count != 20 {
 		t.Fatalf("status = %+v", v)
 	}
@@ -318,7 +355,7 @@ func TestRealGateStatus(t *testing.T) {
 	// A viewer sees the checklist, cannot arm or disarm, and sees no demo account it cannot see.
 	vi := g.shareReal(t, "vi", domain.RoleViewer, domain.AccessView)
 	v, err = g.svc.RealGateStatus(g.ctx, vi, g.real.ID, "")
-	if err != nil || v.CanArm || v.CanDisarm || len(v.DemoCandidates) != 0 || len(v.Checks) != 9 {
+	if err != nil || v.CanArm || v.CanDisarm || len(v.DemoCandidates) != 0 || len(v.Checks) != 10 {
 		t.Fatalf("viewer = %+v %v", v, err)
 	}
 	// An operator with trade access may disarm.

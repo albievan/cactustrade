@@ -1,8 +1,10 @@
 # ADR-007: The real-mode gate
 
-**Status:** accepted as machinery (2026-11-24, PLAN 7.10–7.17). **Real trading stays
-impossible in this build**: `domain.RealTradingEnabled = false` until the owner's written
-consent (PLAN 7.18), which will be quoted here and in PLAN as a new D-number.
+**Status:** accepted as machinery (2026-11-24, PLAN 7.10–7.17); **lifted 2026-11-27** (PLAN
+7.19–7.23) after the owner's written consent, D39: "I give written consent to enable real-money
+trading on Real Money Maker. I accept the OD19–OD28 defaults and the real-money limit ceilings
+as they are in the plan. I accept the open 4.17 items. I understand losses are real." See
+*Lift* at the end; the text below is the machinery as decided on 2026-11-24.
 
 **Context.** cactusTrade trades demo accounts only. Every real-money refusal site (PLAN
 S1–S11) refuses whatever else is true. Before any of them can be lifted (7.19–7.23), the
@@ -52,3 +54,18 @@ forced to running and the opt-in variable set, every site S1–S11 still refuses
 reaches eToro; `TestRealRefusalModeReferences` lists every `ModeReal`/`ModeDemo` reference in
 non-test code and fails on a new one until it is reviewed. Lifting a refusal (7.19+) is a
 reviewed change of that list, after 7.18.
+
+**Lift (2026-11-27, PLAN 7.19–7.23, D39).** `RealTradingEnabled = true`
+(`TestRealTradingEnabledByOwnerConsent`); `CanArm` arms when every check passes. A real entry
+needs (1) the gate armed and in force, (2) `CACTUSTRADE_REAL_TRADING=on` (exactly "on"; off by
+default, `.env` off, `deploy.sh` never sets it, a warning and a danger event at every start
+while on), (3) reconciled, limits within `RealCeilings`, the agent started by hand (OD26: a real
+agent never resumes by itself), and (4) a `domain.RealPermit` from `PermitEntry` taken for that
+entry (60 s), checked by `AssessEntry`, `IntentFor`, the executor and the eToro client. Exits of
+what cactusTrade opened carry `PermitExit` and work whatever the gate and the opt-in. Without a
+permit the client sends nothing (`TestRealRefusalEtoroClient`, `TestRealMutationsRefusedWithoutPermit`);
+the refusal matrix now proves every site refuses whenever one key is missing
+(`TestRealRefusalDomain`, `TestRealRefusalApp`, `TestRealRefusalHTTP`), and
+`TestAgentSequencePropertiesReal` drives an armed real account through random disarms, kills,
+opt-in switches, expiries and restores. `set_sl_tp` stays not executable. Claude never places a
+real-money order; the first real run is the owner's (7.24).

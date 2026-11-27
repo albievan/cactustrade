@@ -47,7 +47,8 @@ func (s *Service) controlled(ctx context.Context, p Principal, accountID string,
 }
 
 // StartAgent starts an account's agent (agent.control, trade access, web session only). It
-// is refused for a real-money account (phase 7), without an eToro client or keys, with
+// is refused for a real-money account unless real entries may be made there (startable, PLAN
+// 7.22), without an eToro client or keys, with
 // invalid limits or no trading budget, while unreconciled and while the kill switch is on.
 // accountID "" is the caller's current account. Audited, with an event.
 func (s *Service) StartAgent(ctx context.Context, p Principal, accountID string) (AgentStatus, error) {
@@ -66,10 +67,17 @@ func (s *Service) StartAgent(ctx context.Context, p Principal, accountID string)
 	}
 	cur := s.agentState(ctx, v.ID)
 	if cur == domain.AgentRunning {
+		if v.Mode == domain.ModeReal && !s.rt.realStartedHere(v.ID) {
+			s.rt.setRealStarted(v.ID, true) // a person starts it again after a restart (OD26)
+			s.audit(ctx, p, "agent.start", v.ID, "real agent started by hand in this process")
+		}
 		return AgentStatus{AccountID: v.ID, State: cur}, nil
 	}
 	if err := s.setAgentState(ctx, v.ID, domain.AgentRunning); err != nil {
 		return AgentStatus{}, fmt.Errorf("app.StartAgent: %w", err)
+	}
+	if v.Mode == domain.ModeReal {
+		s.rt.setRealStarted(v.ID, true) // OD26: only a person's start lets a real agent trade
 	}
 	l := s.riskLimits(ctx, v.ID)
 	s.audit(ctx, p, "agent.start", v.ID, "from "+string(cur)+", trading budget $"+l.TradingBudget.String())
@@ -126,13 +134,21 @@ const (
 )
 
 // startable says why an account's agent may not run (nil = it may): the conditions of
-// StartAgent, also used by the OD5 resume.
+// StartAgent, also used by the OD5 resume. A real-money account also needs everything an
+// entry there needs (realEntryBlocked: the deployment opt-in, an armed gate in force,
+// reconciled, limits within the real ceilings; S8, PLAN 7.22).
 func (s *Service) startable(ctx context.Context, a domain.Account) error {
+	why := ""
+	if a.Mode == domain.ModeReal && a.Tradable() {
+		why = s.realEntryBlocked(ctx, a) // read once (review m2 of the lift)
+	}
 	switch {
 	case !a.Tradable():
 		return fmt.Errorf("%s: %w", a.Name, domain.ErrViewOnly)
-	case a.Mode != domain.ModeDemo:
+	case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:
 		return fmt.Errorf("%s: %w", a.Name, domain.ErrRealModeGated)
+	case why != "":
+		return fmt.Errorf("%s: %s: %w", a.Name, why, domain.ErrRealModeGated)
 	case s.d.Broker == nil || s.d.Market == nil:
 		return fmt.Errorf("the eToro client is not configured: %w", domain.ErrUnavailable)
 	case !s.hasKeys(ctx, a):
@@ -159,6 +175,9 @@ func (s *Service) startable(ctx context.Context, a domain.Account) error {
 
 // setAgentState writes an account's agent state and announces it on the bus.
 func (s *Service) setAgentState(ctx context.Context, accountID string, st domain.AgentState) error {
+	if st != domain.AgentRunning {
+		s.rt.setRealStarted(accountID, false) // first, so a failed write still stops real entries (OD26)
+	}
 	prev := s.agentState(ctx, accountID)
 	now := s.d.Clock.Now().UTC()
 	if err := s.d.Store.Settings().Set(ctx, agentStateKey(accountID), string(st), now); err != nil {
@@ -259,10 +278,11 @@ func (s *Service) Kill(ctx context.Context, p Principal, accountID, reason strin
 // flatten cancels every pending open order of ours and then closes every agent position
 // (OD1: never anyone else's), sending each request once without polling (the supervisor
 // follows them up). The kill switch and the force close (R24) share it; why is the reason
-// for people, recorded with exit on each cancel and close. A real-money account is left
-// alone (S7: exits there stay refused until PLAN 7.21).
+// for people, recorded with exit on each cancel and close. A real-money account is flattened
+// too, whatever its gate's state (S7, PLAN 7.21: exits always work; each close and cancel
+// carries an exit permit).
 func (s *Service) flatten(ctx context.Context, a domain.Account, exit domain.ExitReason, why string, rep *KillReport) {
-	if a.Mode != domain.ModeDemo || !a.Tradable() || s.d.Broker == nil {
+	if !a.Tradable() || s.d.Broker == nil {
 		return // nothing of ours can be there
 	}
 	sup := SupervisorReport{AccountID: a.ID, Killed: exit == domain.ExitKilled, flatten: why}
@@ -396,7 +416,8 @@ type ResumeOutcome struct {
 // running before the restart (OD5, owner): an agent resumes by itself only when its account
 // reconciled cleanly in this process, is demo, not killed, has valid limits with a budget
 // and keys; otherwise it comes back paused (killed when the kill switch is on), exits stay
-// active, and a warning event (an alert) says why. Either way an event records it. It must
+// active, and a warning event (an alert) says why. A real-money agent never resumes by itself
+// (OD26): it always comes back paused with an alert. Either way an event records it. It must
 // run after ReconcileAll and before the agent loop (4.14).
 func (s *Service) ResumeAgents(ctx context.Context) ([]ResumeOutcome, error) {
 	as, err := s.d.Store.Accounts().List(ctx)
@@ -418,7 +439,11 @@ func (s *Service) resume(ctx context.Context, a domain.Account) ResumeOutcome {
 	locks.ctl.Lock()
 	defer locks.ctl.Unlock()
 	r := ResumeOutcome{AccountID: a.ID, State: domain.AgentRunning}
-	if err := s.startable(ctx, a); err != nil {
+	err := s.startable(ctx, a)
+	if err == nil && a.Mode == domain.ModeReal {
+		err = fmt.Errorf("a real-money agent never resumes by itself after a restart (OD26): start it again by hand: %w", domain.ErrRealModeGated)
+	}
+	if err != nil {
 		r.State, r.Reason = domain.AgentPaused, err.Error()
 		if killed, kerr := s.isKilled(ctx, a.ID); killed || kerr != nil {
 			r.State = domain.AgentKilled

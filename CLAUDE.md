@@ -67,7 +67,10 @@ Each rule has a test; a change that breaks one is a BLOCKER.
 
 **Demo by default.** Real mode only through the gated switch (≥ N qualifying days of demo
 history, N set per real account by its admin, 1–60, default 5 — owner's decisions D36 and
-D37, 2026-11-27; admin, typed confirmation phrase, banner on every page). Never run real-mode orders
+D37, 2026-11-27; admin, typed confirmation phrase, banner on every page). Real trading is enabled
+(D39, 2026-11-27) **only** for the accounts in `domain.RealConsentFor` (Real Money Maker), and
+only with the gate armed, `CACTUSTRADE_REAL_TRADING=on`, an agent started by a person in this
+process and a fresh permit per entry. Never run real-mode orders
 yourself. Never put real credentials in code, tests, fixtures, logs or commits.
 
 ## 3. Architecture — non-negotiable

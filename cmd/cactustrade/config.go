@@ -44,6 +44,10 @@ type config struct {
 	// "vault" (HashiCorp Vault KV v2, PLAN 7.8, OD30). Vault holds its settings.
 	Secrets string
 	Vault   vault.Config
+	// RealTrading is the deployment's opt-in to real-money entries (OD28, the second key next
+	// to each account's armed gate): CACTUSTRADE_REAL_TRADING=on. Off by default; .env keeps it
+	// off and deploy.sh never sets it. Exits on real accounts never depend on it.
+	RealTrading bool
 }
 
 // Secret stores (CACTUSTRADE_SECRETS).
@@ -210,6 +214,9 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 	if err := c.LogLevel.UnmarshalText([]byte(env(getenv, "CACTUSTRADE_LOG_LEVEL", "info"))); err != nil {
 		return c, fmt.Errorf("CACTUSTRADE_LOG_LEVEL: %w", err)
 	}
+	if c.RealTrading, err = realTradingEnv(getenv); err != nil {
+		return c, err
+	}
 	switch c.Secrets = env(getenv, "CACTUSTRADE_SECRETS", secretsDB); c.Secrets {
 	case secretsDB:
 	case secretsVault:
@@ -220,6 +227,19 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 		return c, errors.New("CACTUSTRADE_SECRETS must be db or vault")
 	}
 	return c, nil
+}
+
+// realTradingEnv reads CACTUSTRADE_REAL_TRADING (OD28): exactly "on" switches real-money
+// entries on for this deployment; unset or "off" leaves them off; anything else stops the
+// start-up (a typo must never be read as either).
+func realTradingEnv(getenv func(string) string) (bool, error) {
+	switch v := strings.TrimSpace(getenv("CACTUSTRADE_REAL_TRADING")); v {
+	case "", "off":
+		return false, nil
+	case "on":
+		return true, nil
+	}
+	return false, errors.New("CACTUSTRADE_REAL_TRADING must be on or off (default off)")
 }
 
 func fileExists(p string) bool {

@@ -10,13 +10,15 @@ import (
 	"github.com/albievan/cactustrade/internal/ports"
 )
 
-// TestRealRefusalEtoroClient (PLAN 7.17, S3): before the owner's written consent (7.18) the
-// eToro client sends nothing that changes a real-money account, whatever else is in place —
-// an eToro real account with its own keys, the deployment opt-in variable set — for every
-// operation of the allowlist that mutates, through the client's methods and through mutate
-// itself. Reads are not part of this matrix (they stay allowed).
+// TestRealRefusalEtoroClient (PLAN 7.17, converted by 7.20, S3): without a permit in the
+// context (ports.WithPermit) the eToro client sends nothing that changes a real-money account,
+// whatever else is in place — an eToro real account with its own keys, the deployment opt-in
+// variable set (the client never reads it) — for every operation of the allowlist that
+// mutates, through the client's methods and through mutate itself. With a permit:
+// TestRealMutationsWithPermit / TestRealMutationsRefusedWithoutPermit. Reads are not part of
+// this matrix (they stay allowed).
 func TestRealRefusalEtoroClient(t *testing.T) {
-	t.Setenv("CACTUSTRADE_REAL_TRADING", "on") // OD28's opt-in (7.23) is read by nothing here
+	t.Setenv("CACTUSTRADE_REAL_TRADING", "on") // OD28's opt-in is the app's (7.22), not the client's
 	realAcct := domain.Account{ID: "real-1", Name: "Real", Mode: domain.ModeReal, Platform: domain.PlatformEtoro}
 	e := newEnv(t)
 	_ = e.sec.Put(context.Background(), "etoro.real-1.api_key", "real-api")

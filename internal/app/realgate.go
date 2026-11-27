@@ -13,10 +13,11 @@ import (
 	"github.com/albievan/cactustrade/internal/domain"
 )
 
-// The real-mode gate (PLAN 7.13): its status, arming (always refused in this build:
-// domain.RealTradingEnabled is false until the owner's written consent, PLAN 7.18), disarming
-// and the automatic disarms (OD24). Nothing here lifts a real-mode refusal (S1–S11): an armed
-// gate is only ever stored by armLocked, which ArmReal reaches only once CanArm allows it.
+// The real-mode gate (PLAN 7.13, lifted by 7.19–7.23 with the owner's written consent, D39):
+// its status, arming (every check of domain.GateChecks, then CanArm), disarming and the
+// automatic disarms (OD24). An armed gate is only ever stored by armLocked, which ArmReal
+// reaches only once CanArm allows it. An armed gate alone trades nothing: every real entry
+// also needs the deployment opt-in (OD28) and a fresh permit (realEntryPermit).
 
 // RealGateView is a real-money account's gate as the Real trading page shows it.
 type RealGateView struct {
@@ -35,7 +36,8 @@ type RealGateView struct {
 	Evidence domain.GateEvidence
 	Rule     domain.EvidenceRule
 	Phrase   string
-	// Enabled is domain.RealTradingEnabled: false in this build (arming is always refused).
+	// Enabled is domain.RealTradingEnabled: whether this build may arm real trading at all
+	// (true since D39).
 	Enabled bool
 	// CanArm: the caller may submit an arm request (admin, owner, web session); the server
 	// still runs every check then. CanDisarm: the caller may disarm (trade access, kill
@@ -141,6 +143,80 @@ func (s *Service) realGateState(ctx context.Context, a domain.Account) (bool, er
 	}
 	live, _ := s.gateLive(ctx, g)
 	return live, nil
+}
+
+// realEntryBlocked says why no real-money entry may be made on a now ("" = it may, as far as
+// the gate goes; PLAN 7.22): the deployment opt-in (OD28), this build (RealTradingEnabled),
+// the gate armed and in force (not expired, not older than the latest restore, not disarmed
+// in this process), the account reconciled and its limits within the real ceilings (OD25).
+// Any read error blocks (fail closed).
+func (s *Service) realEntryBlocked(ctx context.Context, a domain.Account) string {
+	switch {
+	case !isRealAccount(a):
+		return a.Name + " is not an eToro real-money account"
+	case !s.cfg.RealTrading:
+		return "real trading is off in this deployment (CACTUSTRADE_REAL_TRADING is not on)"
+	case !domain.RealTradingEnabled:
+		return "real trading is not enabled in this build"
+	}
+	if _, ok := s.consentFor(a.ID); !ok {
+		return "the owner's written consent does not cover " + a.Name
+	}
+	g, err := s.storedGate(ctx, a.ID)
+	if err != nil {
+		return "the real-trading gate cannot be read"
+	}
+	if live, _ := s.gateLive(ctx, g); !live {
+		return "real trading is not armed on " + a.Name
+	}
+	if rc := s.Reconciled(a.ID); !rc.OK {
+		return "the account is not reconciled: " + rc.Reason
+	}
+	if err := s.riskLimitsFor(ctx, a).ValidateFor(domain.ModeReal); err != nil {
+		return "the limits are not within the real-money ceilings: " + err.Error()
+	}
+	return ""
+}
+
+// realEntryPermit builds the permit for one entry on the real-money account a, issued at
+// now (domain.PermitEntry, good for domain.RealPermitTTL): the caller passes the time it
+// will assess or stamp the entry with, so the permit is never issued after it (review M1 of
+// the lift: a permit issued later than the decision's time is refused by AllowsEntry).
+// realEntryBlocked must say nothing, and the gate is read again for the permit itself.
+// Refusals wrap domain.ErrNoRealPermit.
+func (s *Service) realEntryPermit(ctx context.Context, a domain.Account, now time.Time) (domain.RealPermit, error) {
+	if why := s.realEntryBlocked(ctx, a); why != "" {
+		return domain.RealPermit{}, fmt.Errorf("%s: %w", why, domain.ErrNoRealPermit)
+	}
+	if !s.rt.realStartedHere(a.ID) {
+		return domain.RealPermit{}, fmt.Errorf("the agent of %s was not started by a person since this process started (OD26): %w", a.Name, domain.ErrNoRealPermit)
+	}
+	g, err := s.storedGate(ctx, a.ID)
+	if err != nil {
+		return domain.RealPermit{}, fmt.Errorf("reading the gate: %w: %w", err, domain.ErrNoRealPermit)
+	}
+	restored, err := s.restoredAt(ctx)
+	if err != nil {
+		return domain.RealPermit{}, fmt.Errorf("reading the restore time: %w: %w", err, domain.ErrNoRealPermit)
+	}
+	now = now.UTC()
+	if !s.gates.since(a.ID).Before(g.ArmedAt) { // disarmed in this process after it was armed
+		return domain.RealPermit{}, fmt.Errorf("real trading was disarmed on %s: %w", a.Name, domain.ErrNoRealPermit)
+	}
+	return domain.PermitEntry(g, a, now, restored)
+}
+
+// AnnounceRealTrading records, at start-up, that this deployment allows real-money entries
+// (OD28: CACTUSTRADE_REAL_TRADING=on): an audit entry and a danger system event everyone sees
+// (and an alert e-mail by the usual rules). With the opt-in off it does nothing.
+func (s *Service) AnnounceRealTrading(ctx context.Context) {
+	if !s.cfg.RealTrading {
+		return
+	}
+	s.audit(ctx, Principal{}, "system.real_trading_on", "", "CACTUSTRADE_REAL_TRADING=on at start-up")
+	s.emit(ctx, "", "system.real_trading_on", domain.SeverityDanger, "REAL MONEY: this deployment allows real-money trading",
+		"CACTUSTRADE_REAL_TRADING=on. An entry on a real-money account still needs its real-trading gate armed (Real trading page), "+
+			"a reconciliation and a fresh permit; exits work whatever the gate. Disarm a gate, or restart without the variable, to stop real entries.")
 }
 
 // RealArmedAccount names an account whose real trading is armed (the banner, OD27).
@@ -260,6 +336,7 @@ func (s *Service) gateInput(ctx context.Context, p Principal, a domain.Account, 
 		Today: domain.RiskDay(now), Rule: s.evidenceRule(ctx, a.ID),
 		User: domain.GateUser{ID: p.UserID, Role: p.Role, Session: p.Via == ViaSession}, Confirm: confirm,
 	}
+	in.Consent, _ = s.consentFor(a.ID)
 	if demo != nil {
 		ev, err := s.demoEvidence(ctx, demo.ID, now, in.Rule)
 		if err != nil {
@@ -303,10 +380,10 @@ func (s *Service) demoEvidence(ctx context.Context, demoID string, now time.Time
 // ArmReal asks to arm real trading on a real-money account (PLAN 7.13): the mode.switch
 // permission (admin), a web session, the account's owner, the caller's password (checked by
 // the bounded hasher; the HTTP adapter counts it with the sign-in limiter), the typed phrase
-// "ENABLE REAL TRADING <account name>" (422 when wrong), the checklist, then CanArm. In this
-// build CanArm always refuses (domain.ErrRealModeGated: a *domain.GateRefusal naming the
-// failing checks, else domain.ErrRealTradingDisabled), so nothing is ever stored as armed.
-// Every refusal after the password is audited as real.arm_refused with the failing checks.
+// "ENABLE REAL TRADING <account name>" (422 when wrong), the checklist, then CanArm (a
+// refusal is domain.ErrRealModeGated: a *domain.GateRefusal naming the failing checks).
+// Every refusal after the password is audited as real.arm_refused with the failing checks;
+// when every check passes the gate is stored armed (armLocked).
 func (s *Service) ArmReal(ctx context.Context, p Principal, accountID, demoAccountID, confirm, password string) (domain.RealGate, error) {
 	if err := s.authorize(p, domain.PermSwitchMode); err != nil {
 		return domain.RealGate{}, err
@@ -358,8 +435,7 @@ func (s *Service) ArmReal(ctx context.Context, p Principal, accountID, demoAccou
 
 // armLocked stores the account's gate armed with the evidence of the demo account, audits
 // real.arm, raises a danger event and e-mails the admins and the owner. The caller holds the
-// account's control lock and has passed CanArm: ArmReal is its only caller outside tests, so
-// in this build nothing reaches it.
+// account's control lock and has passed CanArm: ArmReal is its only caller outside tests.
 func (s *Service) armLocked(ctx context.Context, p Principal, a domain.Account, demoID string, ev domain.GateEvidence) (domain.RealGate, error) {
 	now := s.d.Clock.Now().UTC()
 	var g domain.RealGate

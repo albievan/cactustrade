@@ -71,6 +71,8 @@ services:
       CACTUSTRADE_ADDR: ":8443"
       CACTUSTRADE_LOG_LEVEL: ${CACTUSTRADE_LOG_LEVEL}
       CACTUSTRADE_COOKIE_SECURE: ${CACTUSTRADE_COOKIE_SECURE}
+      # Real-money entries (OD28): off unless the owner put "on" in .env.local (.env, README).
+      CACTUSTRADE_REAL_TRADING: ${CACTUSTRADE_REAL_TRADING:-off}
       # eToro demo keys (empty files when not provided; then set them in the web UI).
       ETORO_DEMO_PUB_FILE: /run/secrets/etoro_demo_pub
       ETORO_DEMO_PK_FILE: /run/secrets/etoro_demo_pk

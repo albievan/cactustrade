@@ -267,14 +267,16 @@ func TestExecutorPollSchedule(t *testing.T) {
 }
 
 func TestExecutorRefusals(t *testing.T) {
-	t.Run("real account: zero broker calls", func(t *testing.T) {
+	// PLAN 7.21/7.22: a real account without an armed gate and the opt-in gets no entry, and
+	// nothing that is not cactusTrade's own on it is closed or cancelled (OD1).
+	t.Run("real account: no entry without a permit, no exit of what is not ours", func(t *testing.T) {
 		x := newExecEnv(t)
 		real := x.account(t, "Real", domain.ModeReal)
 		_, err := x.svc.placeEntry(x.ctx, real, x.entry(domain.Long), domain.DefaultRiskLimits)
 		if !errors.Is(err, domain.ErrRealModeGated) {
 			t.Fatalf("err = %v", err)
 		}
-		ap := domain.AgentPosition{AccountID: real.ID, PositionID: 5, Instrument: instNYSE, Direction: domain.Long}
+		ap := domain.AgentPosition{AccountID: "another", PositionID: 5, Instrument: instNYSE, Direction: domain.Long}
 		if _, err := x.svc.closePosition(x.ctx, real, ap, "test", closePolls); !errors.Is(err, domain.ErrRealModeGated) {
 			t.Fatalf("close err = %v", err)
 		}

@@ -1473,11 +1473,11 @@ the history are views only (`TestEntriesNeverUseTheViewCache`, `TestHistoryLoopI
 Open for the owner: OD14–OD18 remain defaults until answered; `Themes.tsx` still derives
 `canEdit` in React (6.15 note); the trade pager's same-instant caveat (6.12-d).
 
-## Phase 7 — hardening and the real-mode gate — `done up to 7.17; 7.18–7.24 need the owner (written consent, real runs)`
+## Phase 7 — hardening and the real-mode gate — `done up to 7.23 (7.18 = D39); 7.24 needs the owner (first real run)`
 
 Order: hardening (7.1–7.9) → gate machinery with real trading still **impossible** (7.10–7.17)
-→ **owner's written consent (7.18, blocked)** → lifting the refusals (7.19–7.23) → owner's
-first real run (7.24, blocked). Claude never runs a real-mode order (CLAUDE.md §2).
+→ **owner's written consent (7.18, done: D39)** → lifting the refusals (7.19–7.23, done
+2026-11-27) → owner's first real run (7.24, blocked: owner only). Claude never runs a real-mode order (CLAUDE.md §2).
 New dependency: `filippo.io/age` (BSD-3-Clause, 7.6). New migration 00012 (`real_gates`).
 
 ### Unverified eToro facts for real mode (RU1–RU10, settle before 7.18)
@@ -1507,29 +1507,36 @@ U1–U11 (demo, step 4.17) must be settled first.
 
 **Owner, 2026-11-25:** "i still need to see how the platform performes before i allow real money trading". Real trading stays off; 7.18 waits for an observation period on demo (the Analysis page, R31, and the statements, R30, are the record). 4.17 evidence so far: kill drill run by the owner 2026-11-25 08:51 UTC with **no** positions open (the 2-position drill, a short, and a restart mid-position are still open: they need the agent trading in session).
 
-### Real-mode refusal sites today (each stays refusing until 7.18; tests that prove it)
+### Real-mode refusal sites (refusing until 7.18; lifted 7.19–7.23 behind the gate, the opt-in and a permit; tests that prove it)
 
-| # | Site | Refuses | Test today (kept) | Lifted in |
+| # | Site | Refuses (since the lift) | Tests | Lifted in |
 |---|---|---|---|---|
-| S1 | `domain.AssessEntry` (`risk.go`, `in.Mode != ModeDemo`) | entry | `TestAssessEntry` rows "real mode" / "no mode", `TestAssessEntryProperties` | 7.19 |
-| S2 | `domain.IntentFor` (`orders.go`) | intent | `orders_test.go` "real mode" → `ErrRealModeGated` | 7.19 |
-| S3 | `etoro.Client.mutate` (`execute.go:60`) | every account change, before I/O | `execute_test.go` real account → zero requests | 7.20 |
-| S4 | `fakes.SimBroker.gate` | mirrors S3 | `simbroker_test.go` | 7.20 |
-| S5 | `app.mayMutate` (`executor.go:164`; place / close / cancel) | all mutations | `executor_test.go` "real account: zero broker calls" | 7.21 (exits), 7.22 (opens) |
-| S6 | `app.Supervise` + `superviseTick` (`supervisor.go:75,125`) | supervision | `supervisor_test.go` real rows | 7.21 |
-| S7 | `app.flatten` (`agent_control.go:251`, was `flattenKilled`; shared with the force close, R24) and `app.forceClosable` (`force_close.go`) | kill flatten, force close | `agent_control_test.go` kill on real (stored only); `TestForceCloseRealAccountRefused` (0 broker calls) | 7.21 |
-| S8 | `app.startable` (`agent_control.go:84`; Start + OD5 resume) | start / resume | `agent_control_test.go` "real account", "real account: paused" | 7.22 |
-| S9 | `app.agentGate` + `agentTickAll` (`agent.go:127,262`) | ticks | `agent_test.go` "real account" | 7.22 |
-| S10 | `app.controlsFor` (`agent_view.go:123`, `Gated`) | UI controls | `TestAgentControlsRealAccountGated` | 7.22 |
-| S11 | HTTP `ErrRealModeGated` → 403 (`handlers_agent.go:30`) | API | `TestAgentRolesAndRealAccounts` | stays (still used when not armed) |
-| — | **Not lifted:** `set_sl_tp` (`executable` map, `ErrNotEnabled`); `cmd backtest` refusing a real account; `streamAccount` preferring demo keys | — | existing | never in phase 7 |
+| S1 | `domain.AssessEntry` (`risk.go`) | a real entry without an entry permit valid for the account at `Now`, or limits over `RealCeilings`; any mode but demo/real | `TestAssessEntryRefuses` "real mode without a permit" / "no mode", `TestRealRefusalDomain`, `TestRealEntryPermitProperties` | 7.19 — **done** |
+| S2 | `domain.IntentFor(o, permit)` (`orders.go`) | a real intent without an entry permit valid when the order was created | `TestIntentFor`, `TestRealRefusalDomain`, `TestRealEntryPermitProperties` | 7.19 — **done** |
+| S3 | `etoro.Client.mutate` (`execute.go`) | a real change without a permit in ctx for the account and op (open: entry; close/cancel: exit or entry), or with the deployment's demo keys; before I/O | `TestRealRefusalEtoroClient`, `TestRealMutationsRefusedWithoutPermit`, `TestRealMutationsWithPermit` | 7.20 — **done** |
+| S4 | `fakes.SimBroker.gate` | mirrors S3 | `TestSimBrokerRealPermits`, `TestSimBrokerGatesAndReads` | 7.20 — **done** |
+| S5 | `app.mayMutate` → `mayExit` (closes/cancels of ours: exit permit, whatever the gate) / `mayOpen` (entries: `realEntryPermit`) | a real entry while `realEntryBlocked` says why; an exit of anything not ours | `TestExecutorRefusals`, `TestRealRefusalApp`, `TestRealExitsWhateverTheGate`, `TestRealEntryWithPermit` | 7.21 (exits), 7.22 (opens) — **done** |
+| S6 | `app.supervisable` / `superviseTick` / `supervise` | a real account that is not armed and holds nothing of ours (skipped) | `TestRealSupervisable`, `TestRealExitsWhateverTheGate`, `TestSlowGateSweepDoesNotDelayExits` | 7.21 — **done** |
+| S7 | `app.flatten` (kill, force close) and `forceClosable` | nothing on real any more (exits) | `TestRealKillClosesAllOurs`, `TestForceCloseRealAccount` | 7.21 — **done** |
+| S8 | `app.startable` (Start) + `resume` (OD5) | start while `realEntryBlocked`; a real agent **never** resumes by itself (OD26) | `TestRealRefusalApp`, `TestRealAgentsNeverAutoResume` | 7.22 — **done** |
+| S9 | `app.agentGate` + `agentTickAll` (+ `decide`: a permit for `AssessEntry`) | ticks while `realEntryBlocked` | `TestRealRefusalApp`, `TestRealEntryWithPermit`, `TestAgentSequencePropertiesReal` | 7.22 — **done** |
+| S10 | `app.controlsFor` (`Gated` = `realEntryBlocked` says why; only Start is off) | the start control | `TestRealRefusalApp`, `TestAgentCards`, `TestDefaultConfigRefusesRealEntries` | 7.22 — **done** |
+| S11 | HTTP `ErrRealModeGated` → 403 (`handlers_agent.go`, `handlers_realgate.go`) | API (start while blocked; arming in a build without consent) | `TestRealRefusalHTTP`, `TestRealGateEndpoints` | stays |
+| — | **Not lifted:** `set_sl_tp` (`executable` map, `ErrNotEnabled`, on every account); `cmd backtest` refusing a real account; `streamAccount` preferring demo keys; full autonomy never auto-starts a real agent (OD26) | — | `TestRealMutationsRefusedWithoutPermit` (`set_sl_tp`), existing | never in phase 7 |
 
-**Pre-consent proof (7.17):** every site above also refuses with a gate *armed* (through
-`armLocked`), a reconciled real account with keys, real limits, its agent forced to running and
-`CACTUSTRADE_REAL_TRADING=on` set: `TestRealRefusalDomain` (S1, S2), `TestRealRefusalEtoroClient`
-(S3, every mutating allowlist op, 0 requests), `TestRealRefusalApp` (S4–S10, 0 mutating broker
-calls), `TestRealRefusalHTTP` (S11). `TestRealRefusalModeReferences` (`cmd/cactustrade`) lists
-every `ModeReal`/`ModeDemo` reference in non-test code with its role and fails on a new one.
+**Pre-consent proof (7.17), converted by the lift (7.19–7.23):** before D39 every site refused
+with a gate *armed*, a reconciled real account with keys, real limits, its agent forced to
+running and `CACTUSTRADE_REAL_TRADING=on` in the environment. Since the lift the same tests
+prove that every **entry** site refuses whenever one key is missing: `TestRealRefusalDomain`
+(S1, S2: no permit, another account's, expired, exit-only; a locked, never-armed, expired or
+restored gate cannot build one), `TestRealRefusalEtoroClient` (S3: no permit in ctx, every
+mutating allowlist op, 0 requests), `TestRealRefusalApp` (S4, S5 entries, S8–S10 with: armed but
+opt-in off; opt-in on but never armed; not reconciled; limits over the ceilings; expired;
+restored; disarmed in this process — 0 `Open`), `TestRealRefusalHTTP` (S11: armed, opt-in off →
+403 start with the reason; kill and force close available). Exits are proved by
+`TestRealExitsWhateverTheGate`, `TestRealKillClosesAllOurs` and `TestForceCloseRealAccount`.
+`TestRealRefusalModeReferences` (`cmd/cactustrade`) lists every `ModeReal`/`ModeDemo` reference
+in non-test code with its role (each lifted line reviewed and annotated) and fails on a new one.
 
 | ID | Step | Files | Acceptance tests | Status |
 |---|---|---|---|---|
@@ -1552,11 +1559,11 @@ every `ModeReal`/`ModeDemo` reference in non-test code with its role and fails o
 | 7.16 | **Docs.** ARCHITECTURE "Real-mode gate"; ADR-007 (gate, evidence rule, two keys + consent); README warning; RUNBOOK disarm. | docs | `make check` | done (2026-11-24; ARCHITECTURE "Real-mode gate", ADR-007, README "Real money"; the RUNBOOK disarm procedure is 7.9's, see decisions) |
 | 7.17 | **Real refusal matrix (pre-consent proof).** One test per layer with a real account that has keys, a gate made `armed` through `armLocked`, is reconciled, has its agent forced to running, valid limits and a deployment opt-in set: S1–S11 all still refuse; `AgentTick` → 0 `Open`; `placeEntry`, `closePosition`, `cancelOrder` → 0 broker calls; `Supervise` skipped; `flatten` and `ForceClose` → 0 calls; `controls.gated = true`; HTTP 403; `etoro.Client` → 0 HTTP requests; a source test lists every reference to `ModeReal`/`ModeDemo` in non-test code and fails on any new site not in this table. | `internal/app/real_refusal_test.go`, `internal/domain/real_refusal_test.go`, `internal/adapters/etoro/real_refusal_test.go`, `internal/adapters/http/realgate_test.go` | `go test -race ./... -run RealRefusal`; `make check`. | done (2026-11-24; `go test -race ./... -run RealRefusal`; "Pre-consent proof" under the refusal table) |
 | 7.18 | **OWNER: written consent to enable real trading.** Only the owner can complete this. Preconditions, all `done`: 2.7 (done 2026-11-24), 3.6 (done 2026-11-24), 4.17 (U1–U11 settled; open), 5.8 (done 2026-11-24); RU1–RU10 settled read-only with the owner's real **read** keys (owner run); every 7.1 BLOCKER/MAJOR fixed; OD19–OD28 answered. Record the owner's words, date and the accepted limits as a new D-number. Nothing after this row starts before it. | PLAN, `docs/adr/ADR-007` | The owner's written consent in PLAN | **done 2026-11-27: D39** (the owner's written consent; earlier text kept below). 2026-11-27 the owner asked "now enable to trade with real money"; recorded as the request, not yet the consent: still open are 4.17 (U1/U3/U5/U7/U9/U10, close recordings), RU1–RU10 (owner's real read keys), the owner's answers to OD19–OD28 (accept the defaults or change them) and the accepted real limits; the in-app gate then still needs 20 qualifying demo days (OD19/OD20; first demo day 2026-11-24) |
-| 7.19 | *(after 7.18)* **Domain lift.** `RealTradingEnabled = true` (the consent quoted in the commit). `RealPermit` built only by `PermitEntry(gate, account, now)` (armed, not expired, same account, ≤ 60 s old) and `PermitExit(account, ours)`. `AssessEntry` allows real only with a valid entry permit and limits within `RealCeilings`; `IntentFor(o, permit)`. | `internal/domain/{realgate.go,risk.go,orders.go}` + tests | Properties: real is never allowed without a valid entry permit (missing, other account, expired, exit-only, locked or expired gate); demo behaviour unchanged (existing properties green). | blocked by 7.18 |
-| 7.20 | *(after 7.18)* **Adapter lift.** `ports.WithPermit(ctx, p)`; `mutate` accepts real only with a permit for this account and op class (open needs entry; close/cancel accept exit or entry); real path from the allowlist, real keys only. SimBroker mirrors it. | `internal/adapters/etoro/{execute.go,execute_test.go}`, `internal/ports/{ports.go,fakes/simbroker.go}` | Golden real paths equal `Allowlist[op].Real`; bodies byte-identical in shape to demo (two shapes, leverage 1); without a permit → 0 requests; allowlist tests unchanged. | blocked by 7.18 |
-| 7.21 | *(after 7.18)* **App lift: exits first.** `mayExit` for real when the position/order is ours, **whatever the gate state** (a disarmed account still flattens). Supervisor includes real accounts that are armed or hold our positions/non-final orders; `flatten` for real (kill and force close). | `internal/app/{executor.go,supervisor.go,agent_control.go}` + tests | A disarmed real account with our position is closed at close − 10 min; a kill on an armed real account closes all of ours; 0 `Open` on any path. | blocked by 7.18 |
-| 7.22 | *(after 7.18)* **App lift: entries.** `mayOpen`, `startable`, `agentGate`, `agentTickAll`, `controlsFor`: real requires an armed gate + `CACTUSTRADE_REAL_TRADING=on` (OD28) + reconciled + real limits; a permit per entry. Real agents never auto-resume (OD26). 4.12 extended: scenarios with an armed real account and random disarm / kill / opt-in-off / expiry events. | `internal/app/{executor.go,agent.go,agent_control.go,agent_view.go}`, `agent_property_test.go` | `go test -race ./internal/app -run 'AgentSequenceProperties\|Real'`: no `Open` after a disarm, opt-in off or expiry; exits continue; every real `Open` carries a valid permit; demo invariants unchanged. | blocked by 7.18 |
-| 7.23 | *(after 7.18)* **Wiring.** `CACTUSTRADE_REAL_TRADING` (default off; `.env` off; `deploy.sh` never sets it); a start-up log line and a system event when on. | `cmd/cactustrade/*`, `.env`, `deploy.sh`, docs | `go test ./cmd/cactustrade`; default config → entries on real refused. | blocked by 7.18 |
+| 7.19 | *(after 7.18)* **Domain lift.** `RealTradingEnabled = true` (the consent quoted in the commit). `RealPermit` built only by `PermitEntry(gate, account, now)` (armed, not expired, same account, ≤ 60 s old) and `PermitExit(account, ours)`. `AssessEntry` allows real only with a valid entry permit and limits within `RealCeilings`; `IntentFor(o, permit)`. | `internal/domain/{realgate.go,risk.go,orders.go}` + tests | Properties: real is never allowed without a valid entry permit (missing, other account, expired, exit-only, locked or expired gate); demo behaviour unchanged (existing properties green). | done (2026-11-27; `TestRealTradingEnabledByOwnerConsent` (was `TestRealTradingDisabledInThisBuild`), `TestPermitEntryAndExit`, `TestRealEntryPermitProperties`, `TestRealRefusalDomain`, `TestGateChecks`/`TestGateProperties` (CanArm arms when all pass), `TestArmRealArms`; decisions "Steps 7.19–7.23") |
+| 7.20 | *(after 7.18)* **Adapter lift.** `ports.WithPermit(ctx, p)`; `mutate` accepts real only with a permit for this account and op class (open needs entry; close/cancel accept exit or entry); real path from the allowlist, real keys only. SimBroker mirrors it. | `internal/adapters/etoro/{execute.go,execute_test.go}`, `internal/ports/{ports.go,fakes/simbroker.go}` | Golden real paths equal `Allowlist[op].Real`; bodies byte-identical in shape to demo (two shapes, leverage 1); without a permit → 0 requests; allowlist tests unchanged. | done (2026-11-27; `TestRealMutationsWithPermit` (real paths = `Allowlist[op].Real`, bodies byte-identical to demo, real keys), `TestRealMutationsRefusedWithoutPermit`, `TestRealRefusalEtoroClient`, `TestSimBrokerRealPermits`; allowlist tests unchanged) |
+| 7.21 | *(after 7.18)* **App lift: exits first.** `mayExit` for real when the position/order is ours, **whatever the gate state** (a disarmed account still flattens). Supervisor includes real accounts that are armed or hold our positions/non-final orders; `flatten` for real (kill and force close). | `internal/app/{executor.go,supervisor.go,agent_control.go}` + tests | A disarmed real account with our position is closed at close − 10 min; a kill on an armed real account closes all of ours; 0 `Open` on any path. | done (2026-11-27; `TestRealExitsWhateverTheGate` (never armed / disarmed / opt-in off / expired: closed at close − 10 min, 0 `Open`), `TestRealKillClosesAllOurs`, `TestForceCloseRealAccount`, `TestRealSupervisable`) |
+| 7.22 | *(after 7.18)* **App lift: entries.** `mayOpen`, `startable`, `agentGate`, `agentTickAll`, `controlsFor`: real requires an armed gate + `CACTUSTRADE_REAL_TRADING=on` (OD28) + reconciled + real limits; a permit per entry. Real agents never auto-resume (OD26). 4.12 extended: scenarios with an armed real account and random disarm / kill / opt-in-off / expiry events. | `internal/app/{executor.go,agent.go,agent_control.go,agent_view.go}`, `agent_property_test.go` | `go test -race ./internal/app -run 'AgentSequenceProperties\|Real'`: no `Open` after a disarm, opt-in off or expiry; exits continue; every real `Open` carries a valid permit; demo invariants unchanged. | done (2026-11-27; `TestRealEntryWithPermit`, `TestRealAgentsNeverAutoResume`, `TestRealRefusalApp`, `TestAgentSequencePropertiesReal` (40 seeds × 90 ticks: random disarm/kill/opt-in-off/expiry/restore and recovery; every real `Open` carries a valid permit, none while a key is missing, exits continue), `TestAgentSequenceProperties` unchanged) |
+| 7.23 | *(after 7.18)* **Wiring.** `CACTUSTRADE_REAL_TRADING` (default off; `.env` off; `deploy.sh` never sets it); a start-up log line and a system event when on. | `cmd/cactustrade/*`, `.env`, `deploy.sh`, docs | `go test ./cmd/cactustrade`; default config → entries on real refused. | done (2026-11-27; `TestRealTradingOptInConfig`, `TestDefaultConfigRefusesRealEntries`, `TestAnnounceRealTrading`, `TestDeployRealTradingOptIn`; README "Real money", RUNBOOK "Disarm real trading now", ARCHITECTURE, ADR-007 "Lift") |
 | 7.24 | **OWNER: first real run** (never by Claude). The smallest long the owner chooses on an NYSE share in session; sanitised real fixtures; disarm drill and kill drill with 1 position. | `testdata/`, `docs/etoro-api.md` | Real fixtures green; RU list closed | blocked: owner only |
 
 ### Phase 7 security review (7.1, 2026-11-24)
@@ -1843,6 +1850,71 @@ mutating calls are. `TestRealRefusalModeReferences` lives in `cmd/cactustrade` (
 `os` in `internal/app`, also in tests), compares per-file multisets of trimmed lines (a second
 copy of a listed line fails too), and skips `storetest` (the shared suite's fixtures); a planted
 `var _ = domain.ModeReal` in `internal/app/executor.go` failed it (checked by hand, reverted).
+
+### Steps 7.19–7.23: decisions (2026-11-27)
+
+**Review of the lift (reviewer agent, 2026-11-27): 3 MAJOR, 3 MINOR, all fixed before the first commit.**
+- M1: `decide` took its time before the entry permit was issued, so on a real clock every real entry was refused (fail closed). `realEntryPermit(ctx, a, now)` now issues the permit at the caller's time; `fakes.Clock.Step` gives a clock that moves; `TestRealEntryWithRunningClock` (fails with the old code).
+- M2: OD26 rested on a stored "paused": a failed write or an unreadable state could leave a real agent "running" after a restart. Now structural: a real account ticks, enters and gets a permit only after a person's Start in this process (`runtimeState.realStarted`, cleared first by any move away from running); `TestRealAgentStoredRunningDoesNotTrade`.
+- M3: the lift allowed every real account; D39 covers Real Money Maker only. `domain.RealConsentFor` (one id, D39) + gate check `owner_consent` + `realEntryBlocked`; `TestRealConsents`, `TestRealOnlyConsentedAccounts`. Another real account needs a new written consent and a reviewed edit.
+- m1: `TestRealPermitCallSites` pins who may build or attach a permit. m2: the gate is read once in `agentGate` and `startable`. m3: `.env.local` on the owner's Mac already had `CACTUSTRADE_REAL_TRADING=on` (written 17:21 the same day, before the lift); the owner asked the same evening to "enable the real money trading now".
+
+The real-money lift after the owner's written consent (D39). No new dependency, no migration.
+Claude ran no real-mode order and called no real eToro endpoint: every test uses fakes.
+
+- **Permit (7.19).** `domain.RealPermit` has unexported fields; only `PermitEntry(gate, account,
+  now, restoredAt)` and `PermitExit(account, ours)` build one. `PermitEntry` takes the restore
+  time as well (the plan wrote `PermitEntry(gate, account, now)`): `RealGate.Live` needs it, and
+  a gate older than a restore must not build a permit. An entry permit is good for 60 s
+  (`RealPermitTTL`), never past the gate's expiry, for its account only, and also allows exits;
+  an exit permit allows closes and cancels only and does not expire (a close resent after a
+  429 is the same exit). `RiskInput` gained `AccountID` and `Permit`; `IntentFor(o, permit)`
+  checks the permit at the order's `CreatedAt` (the domain reads no clock). `ErrNoRealPermit`
+  wraps `ErrRealModeGated`, so every existing refusal mapping (403) holds.
+- **Fresh permit per entry (7.22).** The agent's `decide` takes a permit for `AssessEntry`; the
+  executor's `mayOpen` takes **another** right before the order row and the send, so a disarm,
+  an expiry or the opt-in going off between the assessment and the send stops the order
+  (`realEntryBlocked` re-read: opt-in, `RealTradingEnabled`, the gate live incl. this process's
+  disarm latch, reconciled, `RiskLimits.ValidateFor(real)`).
+- **Exits (7.21).** `mayExit` gives a real close/cancel an exit permit whenever the position or
+  order is the account's own (`AgentPosition.AccountID`, `Order.AccountID`; OD1), whatever the
+  gate or the opt-in. A real account is supervised while its gate is stored armed or it holds
+  open agent positions or unfinished orders (a read error counts as "needs it"); that check runs
+  in the account's own supervisor goroutine, so a slow store never holds up another account
+  (`TestSlowGateSweepDoesNotDelayExits` now expects the real pass's gate read beside the
+  sweep's). Kill flatten and force close (single and all-accounts) include real accounts.
+- **Controls (7.22).** `Gated` now means "no real entry may be made here now" and only turns
+  Start off (with `startBlockedReason` = the reason); pause, stop, kill and force close stay on
+  for real accounts. The web panel and cards no longer disable those buttons when gated (they
+  did, which would have hidden the kill switch on a real account). `forceCloseBlockedReason` is
+  kept in the contract and always empty.
+- **OD26.** `resume` refuses every real agent after a restart (paused, warning event naming
+  OD26), even when it would be startable; `autoStartAll` stays demo-only.
+- **Opt-in (7.23).** `CACTUSTRADE_REAL_TRADING` is read only by `cmd/cactustrade`
+  (`realTradingEnv`): exactly `on` turns it on, unset/`off` off, anything else stops the
+  start-up. It reaches the app as `app.Config.RealTrading`; the app never reads the environment.
+  While on: a start-up warning log line and `AnnounceRealTrading` (audit
+  `system.real_trading_on`, danger system event). `.env` has `CACTUSTRADE_REAL_TRADING=off`;
+  compose and the k8s manifest pass the value through (default off) so the owner can turn it on
+  in `.env.local`; `deploy.sh` validates it (on/off), warns loudly when on, and never sets it
+  (`TestDeployRealTradingOptIn` also scans `deploy.sh` for an assignment of `on`).
+  **Note:** this machine's `.env.local` (not in git, not touched) already contains
+  `CACTUSTRADE_REAL_TRADING=on`, so a container deployment from here passes `on` through; real
+  entries still need an armed gate on the account.
+- **eToro client.** A real `open` needs an entry permit valid at the client's own clock; a real
+  account with `EnvKeys` (the deployment's demo keys) is refused for every change ("real keys
+  only"). Each real change logs a warning line "eToro REAL-MONEY account change" (op and request
+  id only). `set_sl_tp` stays not executable everywhere.
+- **HTTP.** `failGate`: `ErrRealTradingDisabled` → 403 "Real trading is not enabled in this
+  build"; any other real-mode refusal on the gate endpoints → 403 "Real trading is not armed".
+  `ErrRealModeGated`'s text lost "only demo accounts trade".
+- **Tests converted, none deleted.** `TestRealTradingDisabledInThisBuild` →
+  `TestRealTradingEnabledByOwnerConsent`; `TestForceCloseRealAccountRefused` →
+  `TestForceCloseRealAccount`; `TestRealRefusal*` now refuse without a key/permit (above);
+  `TestArmReal*` arm when every check passes (`TestArmRealArms` new); the HTTP arm test now
+  arms (200), shows the banner and disarms; `TestForceCloseRefusalsDoNotCount` uses unknown
+  accounts as its non-password refusals. `modeSites` was rewritten line by line for every
+  changed `ModeReal`/`ModeDemo` reference, each annotated with its site.
 
 ### Steps 7.8–7.9 and 7.1.13–7.1.16: decisions (2026-11-24)
 

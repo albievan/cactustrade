@@ -20,7 +20,7 @@ export function AgentCardView({ card, busy, onAction, onSwitch }: {
   const c = card.controls;
   const name = card.account.name;
   const killed = card.killed || card.state === "killed";
-  const off = busy || c.gated;
+  const off = busy; // a gated (real-money) account only blocks start, which the server already set false
   return (
     <div className="col">
       <div className={"card h-100 agent-card" + (card.current ? " border-primary border-2 shadow-sm" : "")}

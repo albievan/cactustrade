@@ -326,7 +326,7 @@ func TestSuperviseCancelsStalePendingOrders(t *testing.T) {
 	// a fresh pending order is left to the executor; when killed it is cancelled at once
 	y := supEnv(t, time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC))
 	young := y.storedOrder(t, openSpec(instNYSE), y.clock.Now(), domain.OrderSent)
-	in, _ := domain.IntentFor(young)
+	in, _ := domain.IntentFor(young, domain.RealPermit{})
 	y.b.OpenScript = []fakes.SimOutcome{fakes.SimPending}
 	st, err := y.b.Open(ports.WithAccount(y.ctx, y.a), in)
 	if err != nil {

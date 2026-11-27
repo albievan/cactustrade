@@ -199,13 +199,17 @@ func (o Order) Transition(to OrderState, at time.Time, reason string) (Order, er
 // IntentFor builds the broker request for an open order. It is the only place an
 // OrderIntent is built: RequestID is the order's persisted id, and the intent carries no
 // leverage or settlement (the adapter's two constant shapes, CLAUDE.md §2.3). It refuses
-// anything but a valid open order of a demo account that is created or sent.
-func IntentFor(o Order) (OrderIntent, error) {
+// anything but a valid open order that is created or sent, of a demo account, or of a
+// real-money account with an entry permit for it that was valid when the order was created
+// (S2, PLAN 7.19; a demo order ignores the permit).
+func IntentFor(o Order, permit RealPermit) (OrderIntent, error) {
 	switch {
 	case o.Kind != OrderOpen:
 		return OrderIntent{}, Invalid("kind", "only an open order has an intent")
-	case o.Mode != ModeDemo:
+	case o.Mode != ModeDemo && o.Mode != ModeReal:
 		return OrderIntent{}, fmt.Errorf("order %s: %w", o.RequestID, ErrRealModeGated)
+	case o.Mode == ModeReal && !permit.AllowsEntry(o.AccountID, o.CreatedAt):
+		return OrderIntent{}, fmt.Errorf("order %s: %w", o.RequestID, ErrNoRealPermit)
 	case o.State != OrderCreated && o.State != OrderSent:
 		return OrderIntent{}, fmt.Errorf("order %s is %s: %w", o.RequestID, o.State, ErrIllegalTransition)
 	}

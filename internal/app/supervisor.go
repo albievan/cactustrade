@@ -52,10 +52,11 @@ func (r *SupervisorReport) fail(format string, args ...any) {
 	r.Errors = append(r.Errors, fmt.Sprintf(format, args...))
 }
 
-// SuperviseLoop supervises every eToro demo account with keys every SupervisorInterval until
-// ctx ends. Each account runs in its own goroutine with a timeout, so one account's exits
-// never wait for another's; an account whose previous pass is still running is skipped.
-// It returns when ctx ends and every pass has finished.
+// SuperviseLoop supervises every eToro account with keys that supervisable allows (every demo
+// account; a real-money one that is armed or holds something of ours) every
+// SupervisorInterval until ctx ends. Each account runs in its own goroutine with a timeout,
+// so one account's exits never wait for another's; an account whose previous pass is still
+// running is skipped. It returns when ctx ends and every pass has finished.
 func (s *Service) SuperviseLoop(ctx context.Context) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -77,10 +78,14 @@ func (s *Service) superviseTick(ctx context.Context, wg *sync.WaitGroup) {
 	s.health.tick(s.d.Clock.Now())
 	defer s.sweepRealGatesAside(ctx, wg, as) // after the passes have started (review minor 4)
 	for _, a := range as {
-		if !s.supervisable(ctx, a) {
+		// A real-money account's gate and our records there are read in its own goroutine
+		// (realSupervised), so a slow store never holds up another account's exits.
+		if !a.Tradable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal || !s.hasKeys(ctx, a) {
 			continue
 		}
-		s.health.want(a.ID, s.d.Clock.Now())
+		if a.Mode == domain.ModeDemo {
+			s.health.want(a.ID, s.d.Clock.Now())
+		}
 		if !s.rt.claim(a.ID) {
 			continue
 		}
@@ -89,6 +94,12 @@ func (s *Service) superviseTick(ctx context.Context, wg *sync.WaitGroup) {
 			actx := ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
 			cctx, cancel := context.WithTimeout(actx, superviseTimeout)
 			defer cancel()
+			if a.Mode == domain.ModeReal {
+				if !s.realSupervised(cctx, a) {
+					return // not armed, nothing of ours there: nothing to supervise
+				}
+				s.health.want(a.ID, s.d.Clock.Now())
+			}
 			rep, err := s.Supervise(cctx, a.ID)
 			switch {
 			case err != nil:
@@ -116,8 +127,10 @@ func (r *runtimeState) release(accountID string) {
 	delete(r.supervising, accountID)
 }
 
-// Supervise runs one supervisor pass over an eToro demo account: take the lease, read the
-// portfolio (else use the recorded agent positions), fold the equity into the risk state
+// Supervise runs one supervisor pass over an eToro demo account, or a real-money one that is
+// armed or holds positions or unfinished orders of ours (PLAN 7.21: exits there work whatever
+// the gate): take the lease, read the portfolio (else use the recorded agent positions), fold
+// the equity into the risk state
 // (risk day, high-water mark, daily latch; persisted), trip the kill switch on a drawdown,
 // close the positions due in their own market's session (all of them when killed), cancel
 // open orders pending for over a minute (all pending ones when killed), and reconcile every
@@ -138,8 +151,10 @@ func (s *Service) supervise(ctx context.Context, accountID string) (SupervisorRe
 	switch {
 	case !a.Tradable():
 		rep.Skipped = "view-only account"
-	case a.Mode != domain.ModeDemo:
-		rep.Skipped = "real mode is gated (phase 7)"
+	case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:
+		rep.Skipped = "the account has no trading mode"
+	case a.Mode == domain.ModeReal && !s.realSupervised(ctx, a):
+		rep.Skipped = "real-money account: not armed and nothing of cactusTrade's is open"
 	case s.d.Broker == nil:
 		rep.Skipped = "the eToro client is not configured"
 	}

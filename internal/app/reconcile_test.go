@@ -73,7 +73,7 @@ func TestReconcileCrashBetweenPersistAndSend(t *testing.T) {
 	young := x.storedOrder(t, openSpec(instASX), now.Add(-30*time.Second), domain.OrderSent)
 	// sent, and eToro has it: adopted
 	sent := x.storedOrder(t, openSpec(instNYSE), now.Add(-10*time.Second), domain.OrderSent)
-	in, err := domain.IntentFor(sent)
+	in, err := domain.IntentFor(sent, domain.RealPermit{})
 	if err != nil {
 		t.Fatal(err)
 	}

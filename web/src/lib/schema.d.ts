@@ -552,8 +552,9 @@ export interface paths {
          *     the real-money ceilings), the linked demo account (same owner), the demo evidence (20
          *     qualifying risk days in the last 60, the latest at most 7 days old) and the arming user
          *     (an admin who owns the account, in a web session; the number of days is the account
-         *     admin's, D36). `enabled` is false in this build:
-         *     arming is always refused until the owner's written consent (PLAN 7.18).
+         *     admin's, D36). `enabled` says whether this build may arm real trading at all (true
+         *     since the owner's written consent, D39). An armed gate trades only with the
+         *     deployment opt-in `CACTUSTRADE_REAL_TRADING=on` (OD28) and a fresh permit per entry.
          */
         get: operations["getRealGate"];
         put?: never;
@@ -576,14 +577,15 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Ask to arm real trading (admin who owns the account, web session only, password and phrase) — refused in this build
+         * Arm real trading (admin who owns the account, web session only, password and phrase)
          * @description Checks, in order: the mode.switch permission (admin), a web session (never an API key),
          *     ownership of the account, the caller's password (counted like a sign-in: a wrong one
          *     is 403, too many attempts 429), the phrase `ENABLE REAL TRADING <account name>` (422
          *     when wrong), then the checklist (409 naming the failing checks). With every check
-         *     passing this build answers 403 "Real trading is not enabled in this build": real
-         *     trading needs the owner's written consent (PLAN 7.18). Nothing is ever stored as
-         *     armed. Every refusal after the password is audited.
+         *     passing the gate is stored armed for 30 days (OD24) and announced (audit, danger event,
+         *     e-mail); a build without the owner's consent answers 403 "Real trading is not enabled
+         *     in this build". Every refusal after the password is audited. Arming sends nothing to
+         *     eToro.
          */
         post: operations["armRealGate"];
         delete?: never;
@@ -1226,8 +1228,11 @@ export interface paths {
          * The agent of an account — state, reconciliation, kill switch, distance to the limits (viewer)
          * @description Reads the account's portfolio once (read-only) for the equity; when that fails the
          *     figures that need it are left out and `equityError` says why. `controls` lists the
-         *     actions the caller may take (the server decides; the UI only shows them). On a real
-         *     account (`controls.gated`) nothing can be started until the phase-7 gate.
+         *     actions the caller may take (the server decides; the UI only shows them). On a
+         *     real-money account on which no entry may be made now (`controls.gated`: not armed, the
+         *     deployment opt-in `CACTUSTRADE_REAL_TRADING` off, not reconciled, limits over the real
+         *     ceilings) the agent cannot be started and `controls.startBlockedReason` says why;
+         *     pause, stop, the kill switch and force close still work.
          */
         get: operations["getAgent"];
         put?: never;
@@ -1298,7 +1303,7 @@ export interface paths {
         };
         /**
          * What a force close of the account would do now (admin, web session, trade access)
-         * @description Reads only cactusTrade's own records. 403 for a real-money account (phase-7 gate).
+         * @description Reads only cactusTrade's own records. Real-money accounts too (exits always work, PLAN 7.21).
          */
         get: operations["forceClosePreview"];
         put?: never;
@@ -1308,8 +1313,8 @@ export interface paths {
          *     positions opened outside cactusTrade) and stops the agent. Unlike the kill switch it
          *     latches nothing: no admin reset is needed afterwards (a killed agent stays killed).
          *     The caller's current password is checked like a sign-in and counted by the sign-in
-         *     limiter: a wrong one is 403, too many attempts 429. A real-money account is refused
-         *     (403, phase-7 gate) before anything is sent.
+         *     limiter: a wrong one is 403, too many attempts 429. A real-money account is
+         *     force-closed too, whatever its real-trading gate (exits always work, PLAN 7.21).
          */
         post: operations["forceCloseAgent"];
         delete?: never;
@@ -1325,12 +1330,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What a force close of every eToro demo account the caller can trade would do now (admin, web session) */
+        /** What a force close of every eToro account the caller can trade would do now (admin, web session) */
         get: operations["forceCloseAllPreview"];
         put?: never;
         /**
-         * Force close every eToro demo account the caller can trade (admin, web session only, password checked once)
-         * @description Real-money accounts are left out (phase-7 gate).
+         * Force close every eToro account the caller can trade (admin, web session only, password checked once)
+         * @description Real-money accounts included (exits always work, PLAN 7.21).
          */
         post: operations["forceCloseAll"];
         delete?: never;
@@ -1350,8 +1355,10 @@ export interface paths {
         put?: never;
         /**
          * Start the agent (operator with trade access, web session only — never an API key)
-         * @description Refused (403) for a real-money account (phase 7) and for an API key; 409 while the
-         *     kill switch is on or the account is not reconciled; 422 without a trading budget or
+         * @description Refused (403) for an API key, and for a real-money account unless real entries may be
+         *     made there (its gate armed and in force, the deployment opt-in
+         *     `CACTUSTRADE_REAL_TRADING=on`, reconciled, limits within the real ceilings); 409 while
+         *     the kill switch is on or the account is not reconciled; 422 without a trading budget or
          *     with invalid limits; 503 without the account's eToro keys.
          */
         post: operations["startAgent"];
@@ -3248,7 +3255,7 @@ export interface components {
             gate: components["schemas"]["RealGate"];
             /** @description armed and in force now */
             armed: boolean;
-            /** @description this build may arm real trading at all (false until the owner's written consent) */
+            /** @description this build may arm real trading at all (true since the owner's written consent, D39) */
             enabled: boolean;
             /** @description the demo account the checklist is for; absent = none */
             demoAccountId?: string;
@@ -3335,16 +3342,17 @@ export interface components {
             stop: boolean;
             kill: boolean;
             reset: boolean;
-            /** @description a real-money account: real trading needs the phase-7 gate */
+            /** @description a real-money account on which no entry may be made now (the agent cannot start; startBlockedReason says why) */
             gated: boolean;
-            /** @description force close (admin, web session, trade access, demo account) */
+            /** @description force close (admin, web session, trade access, an eToro account) */
             forceClose: boolean;
-            /** @description Why `forceClose` is false on a real-money account for a caller who could otherwise use it. Absent otherwise. */
+            /** @description Kept for older clients; always absent since PLAN 7.21 (force close works on real-money accounts). */
             forceCloseBlockedReason?: string;
             /**
-             * @description Why `start` is false although the caller could otherwise start the agent: this
-             *     process's agent loop is not running (still starting up, or the start-up resume
-             *     failed and cactusTrade must be restarted). Absent when nothing blocks it.
+             * @description Why `start` is false although the caller could otherwise start the agent: a
+             *     real-money account on which no entry may be made now (`gated`), or this process's
+             *     agent loop is not running (still starting up, or the start-up resume failed and
+             *     cactusTrade must be restarted). Absent when nothing blocks it.
              */
             startBlockedReason?: string;
         };
@@ -5143,7 +5151,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Armed (never in this build) */
+            /** @description Armed */
             200: {
                 headers: {
                     [name: string]: unknown;

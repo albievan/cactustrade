@@ -2,6 +2,7 @@ package main
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,7 +17,9 @@ import (
 // modeSites lists every reference to domain.ModeReal / domain.ModeDemo in non-test Go code
 // (PLAN 7.17), by file and the trimmed line, with what it is. A new reference fails
 // TestRealRefusalModeReferences until it is added here — and reviewed: a new "!= ModeDemo"
-// refusal is fine, anything that lets ModeReal through is a 7.19+ change.
+// refusal is fine; since the lift (PLAN 7.19–7.23, D39) ModeReal may pass only towards an
+// exit of ours (an exit permit) or an entry with realEntryBlocked silent and a fresh entry
+// permit — anything else that lets ModeReal through is a BLOCKER.
 var modeSites = map[string][]string{
 	// S1, S2 and the types themselves.
 	"internal/domain/credentials.go": {
@@ -25,13 +28,17 @@ var modeSites = map[string][]string{
 		`if m == ModeReal {`, // EtoroKeys: the real key names
 	},
 	"internal/domain/orders.go": {
-		`case o.Mode != ModeDemo && o.Mode != ModeReal:`, // validation
-		`case o.Mode != ModeDemo:`,                       // S2 IntentFor
+		`case o.Mode != ModeDemo && o.Mode != ModeReal:`,                            // validation
+		`case o.Mode != ModeDemo && o.Mode != ModeReal:`,                            // S2 IntentFor: any other mode refused
+		`case o.Mode == ModeReal && !permit.AllowsEntry(o.AccountID, o.CreatedAt):`, // S2 (7.19): real only with a valid entry permit
 	},
 	"internal/domain/risk.go": {
-		`case in.Mode != ModeDemo:`, // S1 AssessEntry
-		`if m == ModeReal {`,        // DefaultLimitsFor (OD25)
-		`if m != ModeReal {`,        // ValidateFor (OD25)
+		`case in.Mode != ModeDemo && in.Mode != ModeReal:`,                          // S1 AssessEntry: any other mode refused
+		`case in.Mode == ModeReal && !in.Permit.AllowsEntry(in.AccountID, in.Now):`, // S1 (7.19): real only with a valid entry permit
+		`case in.Mode == ModeReal && l.ValidateFor(ModeReal) != nil:`,               // S1 (7.19): and limits within the real ceilings
+		`return deny("real mode is gated (phase 7): the limits are not within the real-money ceilings: %v", l.ValidateFor(ModeReal))`,
+		`if m == ModeReal {`, // DefaultLimitsFor (OD25)
+		`if m != ModeReal {`, // ValidateFor (OD25)
 	},
 	"internal/domain/history.go": {`case t.Mode != ModeDemo && t.Mode != ModeReal:`}, // validation
 	// R28: presets are capped at the real ceilings on a real account; only demo starts itself.
@@ -44,30 +51,63 @@ var modeSites = map[string][]string{
 		`c(CheckRealAccount, in.Real.Tradable() && in.Real.Mode == ModeReal, "an eToro real-money account", "not an eToro real-money account"),`,
 		`case !d.Tradable() || d.Mode != ModeDemo:`, // the linked demo account
 		`if err := in.Limits.ValidateFor(ModeReal); err != nil {`,
+		`case !a.Tradable() || a.Mode != ModeReal || a.ID == "":`, // PermitEntry (7.19): refuses anything but a real eToro account
+		`case !a.Tradable() || a.Mode != ModeReal || a.ID == "":`, // PermitExit (7.19): the same
 	},
 	// S3, S4 and adapter plumbing (paths and keys by mode; reads stay allowed).
-	"internal/adapters/etoro/execute.go":     {`if mode != domain.ModeDemo || acct.Mode != domain.ModeDemo {`}, // S3
-	"internal/adapters/etoro/client.go":      {`if a.Mode == domain.ModeReal {`, `return a, domain.ModeReal, nil`, `return a, domain.ModeDemo, nil`},
-	"internal/adapters/etoro/allowlist.go":   {`if m == domain.ModeReal {`},
-	"internal/adapters/etoro/stream.go":      {`mode := domain.ModeDemo`, `if acct.Mode == domain.ModeReal {`, `mode = domain.ModeReal`},
-	"internal/ports/fakes/simbroker.go":      {`case a.Mode != domain.ModeDemo:`}, // S4
-	"internal/adapters/saxo/client.go":       {`if a.Mode == domain.ModeReal {`},  // view-only: LIVE vs SIM host
+	"internal/adapters/etoro/execute.go": {
+		`case mode == domain.ModeDemo && acct.Mode == domain.ModeDemo:`,                                                                  // S3: demo as before
+		`case mode == domain.ModeReal && acct.Mode == domain.ModeReal && !acct.EnvKeys && realPermitted(ctx, op, acct.ID, c.cfg.Now()):`, // S3 (7.20): real only with its own keys and a permit for the account and operation
+	},
+	"internal/adapters/etoro/client.go":    {`if a.Mode == domain.ModeReal {`, `return a, domain.ModeReal, nil`, `return a, domain.ModeDemo, nil`},
+	"internal/adapters/etoro/allowlist.go": {`if m == domain.ModeReal {`},
+	"internal/adapters/etoro/stream.go":    {`mode := domain.ModeDemo`, `if acct.Mode == domain.ModeReal {`, `mode = domain.ModeReal`},
+	"internal/ports/fakes/simbroker.go": {
+		`case a.Mode == domain.ModeDemo:`, // S4: demo as before
+		`case a.Mode != domain.ModeReal:`, // S4: no mode refused; real only with a permit (7.20)
+	},
+	"internal/adapters/saxo/client.go":       {`if a.Mode == domain.ModeReal {`}, // view-only: LIVE vs SIM host
 	"internal/adapters/saxo/oauth.go":        {`if acct.Mode == domain.ModeReal {`},
 	"internal/adapters/trading212/client.go": {`if acct.Mode == domain.ModeReal {`},
 	"internal/adapters/http/metrics.go":      {`if mode != domain.ModeReal {`, `mode = domain.ModeDemo`},
 	"internal/adapters/http/handlers_market.go": {
 		`mode := domain.ModeDemo`, `if v, err := s.svc.CurrentAccount(r.Context(), state(r).principal); err == nil && v.Mode == domain.ModeReal {`, `mode = domain.ModeReal`,
 	},
-	// S5–S10 and the app's plumbing.
-	"internal/app/executor.go":      {`case a.Mode != domain.ModeDemo:`},                                                                                                                               // S5 mayMutate
-	"internal/app/supervisor.go":    {`case a.Mode != domain.ModeDemo:`},                                                                                                                               // S6
-	"internal/app/agent_control.go": {`case a.Mode != domain.ModeDemo:`, `if a.Mode != domain.ModeDemo || !a.Tradable() || s.d.Broker == nil {`},                                                       // S8 startable, S7 flatten
-	"internal/app/agent.go":         {`if !a.Tradable() || a.Mode != domain.ModeDemo || s.agentState(ctx, a.ID) != domain.AgentRunning || !s.rt.claimTick(a.ID) {`, `case a.Mode != domain.ModeDemo:`}, // S9
-	"internal/app/agent_view.go":    {`c := AgentControls{Gated: v.Mode != domain.ModeDemo}`},                                                                                                          // S10
-	"internal/app/force_close.go":   {`if v.Mode != domain.ModeDemo {`, `if v.Tradable() && v.Mode == domain.ModeDemo && v.Access.AtLeast(domain.AccessTrade) {`},                                      // S7
+	// S5–S10 and the app's plumbing (PLAN 7.21: exits on real accounts whatever the gate;
+	// 7.22: real entries only with realEntryBlocked silent and a fresh permit).
+	"internal/app/executor.go": {
+		`case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`, // S5 mayMutate: no mode refused
+		`if a.Mode != domain.ModeReal {`,                               // S5 mayExit: a real exit needs an exit permit (ours only)
+		`if a.Mode == domain.ModeReal && a.Tradable() {`,               // S5 mayOpen: a real entry needs a fresh entry permit
+	},
+	"internal/app/supervisor.go": {
+		`if !a.Tradable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal || !s.hasKeys(ctx, a) {`, // S6 superviseTick: eToro accounts with keys
+		`if a.Mode == domain.ModeDemo {`,                               // S6: a demo account is always wanted
+		`if a.Mode == domain.ModeReal {`,                               // S6: a real one only when realSupervised (exits)
+		`case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`, // S6 supervise: no mode skipped
+		`case a.Mode == domain.ModeReal && !s.realSupervised(ctx, a):`, // S6: real skipped when not armed and nothing of ours
+	},
+	"internal/app/agent_control.go": {
+		`case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`,  // S8 startable: no mode refused
+		`if a.Mode == domain.ModeReal && a.Tradable() {`,                // S8 startable: real only when entries may be made
+		`if err == nil && a.Mode == domain.ModeReal {`,                  // S8 resume: a real agent never resumes (OD26)
+		`if v.Mode == domain.ModeReal && !s.rt.realStartedHere(v.ID) {`, // S8 StartAgent: a person's start marks a real agent (OD26, review M2)
+		`if v.Mode == domain.ModeReal {`,                                // S8 StartAgent: a person's start marks a real agent (OD26, review M2)
+	},
+	"internal/app/agent.go": {
+		`case !a.Tradable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`,                        // S9 agentTickAll: eToro accounts
+		`case a.Mode == domain.ModeReal && (!s.rt.realStartedHere(a.ID) || s.realEntryBlocked(ctx, a) != ""):`, // S9 agentTickAll: real only when started by a person here and entries may be made
+		`case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`,                                         // S9 agentGate: no mode refused
+		`if a.Mode == domain.ModeReal {`, // S9 agentGate: real only when entries may be made and started by a person here (OD26)
+		`if a.Mode == domain.ModeReal {`, // S1 input: a real entry is assessed with a fresh permit
+	},
+	"internal/app/agent_view.go": {
+		`case domain.ModeDemo:`, // S10 controlsFor: demo not gated
+		`case domain.ModeReal:`, // S10: real gated while realEntryBlocked says why (no mode: gated)
+	},
 	"internal/app/health.go": {
-		`return a.Tradable() && a.Mode == domain.ModeDemo && s.hasKeys(ctx, a)`,      // S6 supervisable
-		`AccountID: a.ID, Mode: accountMode(a), Supervised: s.supervisable(ctx, a),`, // health: reports the mode (a read)
+		`return a.Mode == domain.ModeDemo || a.Mode == domain.ModeReal && s.realSupervised(ctx, a)`, // S6 supervisable (exits, 7.21)
+		`AccountID: a.ID, Mode: accountMode(a), Supervised: s.supervisable(ctx, a),`,                // health: reports the mode (a read)
 	},
 	"internal/app/accounts.go": {`if mode != domain.ModeDemo && mode != domain.ModeReal {`, `a := domain.Account{ID: domain.EnvAccountID, Name: "Demo (environment)", OwnerID: owner.ID, Mode: domain.ModeDemo, EnvKeys: true, CreatedAt: now, UpdatedAt: now}`},
 	"internal/app/system.go": {
@@ -107,6 +147,8 @@ var modeSites = map[string][]string{
 		`if !isRealAccount(v.Account) {`, // realAccount: only real accounts have a gate (refuses)
 		`if !isRealAccount(a) {`,         // disarmIfArmedQuietly: nothing to disarm
 		`if !isRealAccount(a) {`,         // sweepRealGates: nothing to sweep
+		`case !isRealAccount(a):`,        // realEntryBlocked (7.22): only a real account may have real entries
+		`if err := s.riskLimitsFor(ctx, a).ValidateFor(domain.ModeReal); err != nil {`, // realEntryBlocked: limits within the real ceilings
 	},
 	// cmd: the environment account is demo; the research commands (backtest, etoro-probe)
 	// read only with a demo account's keys and refuse any other before a request.
@@ -208,4 +250,61 @@ func stripComment(line string) string {
 		}
 	}
 	return line
+}
+
+// TestRealPermitCallSites (review m1 of the lift): a real-money permit is built and attached
+// to a broker context only where the gate is checked. domain.PermitEntry is called only by
+// internal/app/realgate.go (realEntryPermit), domain.PermitExit and ports.WithPermit only by
+// internal/app/executor.go (mayExit, brokerCtxFor). Any other caller fails the build.
+func TestRealPermitCallSites(t *testing.T) {
+	root := filepath.Join("..", "..")
+	want := map[string]map[string]int{
+		"domain.PermitEntry(": {"internal/app/realgate.go": 1},
+		"domain.PermitExit(":  {"internal/app/executor.go": 1},
+		"ports.WithPermit(":   {"internal/app/executor.go": 1},
+	}
+	got := map[string]map[string]int{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if name := d.Name(); path != root && strings.HasPrefix(name, ".") || name == "node_modules" || name == "web" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		for call := range want {
+			pkg, bare, _ := strings.Cut(call, ".")
+			n := strings.Count(string(src), call)
+			// inside its own package the call has no qualifier
+			if strings.HasPrefix(rel, "internal/"+pkg+"/") {
+				n += strings.Count(string(src), " "+bare) + strings.Count(string(src), "\t"+bare) - strings.Count(string(src), "func "+bare)
+			}
+			if n > 0 {
+				if got[call] == nil {
+					got[call] = map[string]int{}
+				}
+				got[call][rel] += n
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for call, files := range want {
+		if !maps.Equal(got[call], files) {
+			t.Errorf("%s is called from %v; only %v may (a real permit only where the gate is checked)", call, got[call], files)
+		}
+	}
 }

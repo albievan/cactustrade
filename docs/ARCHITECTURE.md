@@ -421,9 +421,22 @@ container deployment). One SQL dialect subset serves both:
 
 ## Real-mode gate (phase 7, ADR-007)
 
-Real trading is **impossible in this build**: `domain.RealTradingEnabled` is false until the
-owner's written consent (PLAN 7.18), and every refusal site S1–S11 (PLAN, Phase 7) refuses a
-real-money account whatever the gate says. What exists is the gate's machinery:
+Real trading is **lifted behind two keys and a permit** since the owner's written consent (D39,
+PLAN 7.19–7.23): `domain.RealTradingEnabled` is true, and a real-money **entry** is made only
+while the account's gate is armed and in force, the deployment opt-in
+`CACTUSTRADE_REAL_TRADING=on` (OD28, `app.Config.RealTrading`, default off) is set, the account
+is reconciled and its limits are within `RealCeilings` (`realEntryBlocked`), and it carries a
+fresh `domain.RealPermit` built by `PermitEntry(gate, account, now, restoredAt)` (valid 60 s,
+never past the gate's expiry): `AssessEntry` (S1) and `IntentFor` (S2) need it, the executor's
+`mayOpen` takes a new one right before the send, and the eToro client's `mutate` (S3; SimBroker
+S4) sends a real `open` only with a valid entry permit in the context (`ports.WithPermit`), to
+`Allowlist[op].Real` with the account's own keys and the same two body shapes. **Exits** of
+what cactusTrade opened — the supervisor's closes (S6: a real account is supervised while armed
+or holding our positions/orders), the kill flatten and force close (S7), cancels — carry
+`PermitExit(account, ours)` and work whatever the gate and the opt-in (CLAUDE.md §2.6). The
+controls (S10) are `gated` while `realEntryBlocked` says why; start and the OD5 resume (S8)
+refuse the same way, and a real agent never resumes by itself after a restart (OD26).
+`set_sl_tp` stays not executable on every account. The gate's machinery:
 
 - **Domain** (`internal/domain/realgate.go`, `risk.go`): `DayFacts` → `QualifyingDays` (OD19
   strict, OD20: 20 completed risk days in the last 60, the latest ≤ 7 days old); `GateChecks`
@@ -435,15 +448,17 @@ real-money account whatever the gate says. What exists is the gate's machinery:
 - **Storage:** `real_gates` (migration 00012, both dialects), versioned like the risk state, so
   a disarm is never overwritten by an older arm; `Orders.ListSince` and
   `AgentPositions.ListSince` read the evidence window; the decisions are read one per risk day.
-- **App** (`internal/app/realgate.go`): `RealGateStatus` (view), `ArmReal` (refused),
+- **App** (`internal/app/realgate.go`): `RealGateStatus` (view), `ArmReal` (every check, then
+  `CanArm`; stores the gate armed),
   `DisarmReal` (trade access + `agent.kill`, session or API key, idempotent; the agent stops,
   nothing is cancelled or closed), the automatic disarms (kill trip in `tripLocked`, key change
   in `SetAccountCredentials` before the first key is written, a raised limit in
   `SetRiskLimits`, a restore and the expiry on every read and in the supervisor loop's sweep,
   which runs beside the passes with a timeout), an in-memory disarm latch plus a stored kill
   when the disarm cannot be written (fail closed in every process), and `armLocked`, which only
-  `ArmReal` calls after `CanArm` — unreachable here, used by tests to build the worst case of
-  the refusal matrix. A kill stores the disarm before its flatten and announces it (event,
+  `ArmReal` calls after `CanArm` (tests also call it to build an armed account).
+  `realEntryBlocked` / `realEntryPermit` are the entry side (above); `AnnounceRealTrading`
+  records a danger system event at start-up while the opt-in is on. A kill stores the disarm before its flatten and announces it (event,
   e-mails) after. `Status.RealArmed` feeds the banner, `Status.RealArmedUnknown` says a gate
   could not be read (never shown as "not armed"); `TradingHealth` reports `RealGateArmed` per
   account and an unreadable gate as a problem.
@@ -451,8 +466,9 @@ real-money account whatever the gate says. What exists is the gate's machinery:
   "a backup was restored"), whatever the clocks say; `restore.at` stays as a second check.
 - **HTTP:** `GET /api/v1/accounts/{id}/real-gate`, `POST …/arm` (web session, password under
   the sign-in limiter, CSRF), `POST …/disarm` (session or key, CSRF for cookies, never rate
-  limited). A failing check is 409, every other real-mode refusal 403 "Real trading is not
-  enabled in this build".
+  limited). A failing check is 409; a build without the consent 403 "Real trading is not
+  enabled in this build"; any other real-mode refusal 403 (the agent endpoints: "Real trading
+  needs the phase-7 gate", with the reason).
 - **Web:** *Setup → Real trading* shows the server's checklist, the evidence days, the demo
   account picker, the arm dialog (phrase + password) and Disarm; a red, non-dismissible
   banner on every signed-in page while any visible account is armed (OD27), or saying the

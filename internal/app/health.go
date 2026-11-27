@@ -183,10 +183,28 @@ func (h *healthLog) snapshot() (lastTick time.Time, firstSeen map[string]time.Ti
 	return h.lastTick, firstSeen, passes, llm
 }
 
-// supervisable reports whether the supervisor loop supervises the account: an eToro demo
-// account with both keys (real accounts stay gated until PLAN 7.21).
+// supervisable reports whether the supervisor loop supervises the account: an eToro account
+// with both keys that is demo, or real-money and armed or holding something of ours
+// (realSupervised, PLAN 7.21).
 func (s *Service) supervisable(ctx context.Context, a domain.Account) bool {
-	return a.Tradable() && a.Mode == domain.ModeDemo && s.hasKeys(ctx, a)
+	if !a.Tradable() || !s.hasKeys(ctx, a) {
+		return false
+	}
+	return a.Mode == domain.ModeDemo || a.Mode == domain.ModeReal && s.realSupervised(ctx, a)
+}
+
+// realSupervised reports whether a real-money account needs the supervisor (PLAN 7.21): its
+// gate is stored armed, or cactusTrade has open positions or unfinished orders there. A read
+// error counts as "needs it" (exits must work, CLAUDE.md §2.6).
+func (s *Service) realSupervised(ctx context.Context, a domain.Account) bool {
+	if g, err := s.storedGate(ctx, a.ID); err != nil || g.State == domain.GateArmed {
+		return true
+	}
+	if ps, err := s.d.Store.AgentPositions().ListOpen(ctx, a.ID); err != nil || len(ps) > 0 {
+		return true
+	}
+	os, err := s.d.Store.Orders().ListOpen(ctx, a.ID)
+	return err != nil || len(os) > 0
 }
 
 // TradingHealth reports every eToro account's trading health and the loops' liveness, for

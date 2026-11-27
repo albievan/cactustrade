@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -41,7 +42,10 @@ func TestAgentCards(t *testing.T) {
 	if sec.Account.ID != second.ID || sec.State != domain.AgentStopped || sec.Reconciliation.OK || !sec.LimitsEditable || sec.LimitsBlocked != "" {
 		t.Fatalf("second card %+v", sec)
 	}
-	if !rl.Killed || rl.State != domain.AgentKilled || rl.LimitsEditable || !rl.Controls.Gated || rl.Controls.ForceClose || rl.Controls.ForceCloseBlocked == "" {
+	// A real-money account without the deployment opt-in is gated (no start); force close and
+	// the kill switch still work there (PLAN 7.21).
+	if !rl.Killed || rl.State != domain.AgentKilled || rl.LimitsEditable || !rl.Controls.Gated || rl.Controls.Start || !rl.Controls.ForceClose ||
+		!rl.Controls.Kill || rl.Controls.ForceCloseBlocked != "" || !strings.Contains(rl.StartBlocked, "CACTUSTRADE_REAL_TRADING") {
 		t.Fatalf("real card %+v", rl)
 	}
 	// the controls are the panel's own

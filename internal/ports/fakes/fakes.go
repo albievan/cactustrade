@@ -19,10 +19,19 @@ import (
 type Clock struct {
 	mu sync.Mutex
 	T  time.Time
+	// Step, when set, moves the clock forward by Step after every Now: a clock that runs, so
+	// code that reads the time twice sees two different times (as on a real clock).
+	Step time.Duration
 }
 
-// Now returns the current fake time.
-func (c *Clock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.T }
+// Now returns the current fake time (then moves it by Step, if set).
+func (c *Clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.T
+	c.T = c.T.Add(c.Step)
+	return t
+}
 
 // Advance moves the clock forward.
 func (c *Clock) Advance(d time.Duration) { c.mu.Lock(); c.T = c.T.Add(d); c.mu.Unlock() }

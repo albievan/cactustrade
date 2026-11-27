@@ -252,9 +252,13 @@ func (st RiskState) Observe(equity Cents, day RiskDate, l RiskLimits) RiskState 
 // RiskInput is everything one entry decision depends on. All of it is passed in: the engine
 // reads no clock and calls no broker.
 type RiskInput struct {
-	Now          time.Time
-	Mode         TradingMode // the account's mode: only demo may trade until the phase-7 gate
-	SessionOpen  time.Time   // the instrument's market session today
+	Now  time.Time
+	Mode TradingMode // the account's mode: demo, or real with a valid entry permit
+	// AccountID and Permit: a real-money entry needs an entry permit for this account that is
+	// valid at Now (PermitEntry, PLAN 7.19). A demo entry ignores both.
+	AccountID    string
+	Permit       RealPermit
+	SessionOpen  time.Time // the instrument's market session today
 	SessionClose time.Time
 	Trading      bool // the market trades today (calendar); false = closed
 	Portfolio    Portfolio
@@ -292,7 +296,9 @@ func deny(reason string, args ...any) RiskDecision {
 }
 
 // AssessEntry decides whether an entry (long or short) may be sent and how large it may be. It fails
-// closed: any missing, stale or inconsistent input is a refusal. The size it returns is never
+// closed: any missing, stale or inconsistent input is a refusal. A real-money entry also needs a
+// valid entry permit for the account (RiskInput.Permit) and limits within RealCeilings (S1,
+// PLAN 7.19); any other mode is refused. The size it returns is never
 // larger than requested and never more than
 //
 //	min(available cash − reserved, remaining trading budget, position cap, loss allowance)
@@ -302,8 +308,12 @@ func AssessEntry(in RiskInput) RiskDecision {
 	l, st, pf := in.Limits, in.State, in.Portfolio
 	equity := pf.Equity()
 	switch {
-	case in.Mode != ModeDemo:
-		return deny("real mode is gated (phase 7): only demo accounts trade")
+	case in.Mode != ModeDemo && in.Mode != ModeReal:
+		return deny("real mode is gated (phase 7): unknown trading mode")
+	case in.Mode == ModeReal && !in.Permit.AllowsEntry(in.AccountID, in.Now):
+		return deny("real mode is gated (phase 7): no valid real-trading permit (armed gate, opt-in, fresh permit)")
+	case in.Mode == ModeReal && l.ValidateFor(ModeReal) != nil:
+		return deny("real mode is gated (phase 7): the limits are not within the real-money ceilings: %v", l.ValidateFor(ModeReal))
 	case st.Killed:
 		return deny("the kill switch is on (admin reset required)")
 	case !in.Reconciled:

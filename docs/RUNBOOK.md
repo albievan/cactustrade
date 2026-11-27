@@ -55,7 +55,7 @@ Labels are account ids (never names) or values from fixed sets. Times are Unix s
 | `cactustrade_supervisor_last_tick_timestamp_seconds` | — | the supervisor loop's latest tick |
 | `cactustrade_lease_held` | account | 1 when this process holds the single-writer lease (D22) |
 | `cactustrade_orders_non_final` | account, state | our orders in `created`, `sent`, `pending`, `partially_filled`, `unknown` |
-| `cactustrade_real_gate_armed` | account | 1 when real trading is armed (0 until the owner's consent, PLAN 7.18) |
+| `cactustrade_real_gate_armed` | account | 1 when real trading is armed on the account |
 | `cactustrade_agent_loop_running` | — | 0 when the start-up resume failed and the agent loop does not run |
 | `cactustrade_order_transitions_total` | account, kind, state | stored order transitions (creation included), counted from the live bus |
 | `cactustrade_etoro_requests_total` | op, class, mode | requests that left for eToro; class `2xx`, `3xx`, `4xx`, `429`, `5xx` or `error` (no answer) |
@@ -348,18 +348,16 @@ closed by cactusTrade until Vault answers.
 
 ### Disarm real trading now
 
-**Today real trading is impossible in this build** (`domain.RealTradingEnabled = false`,
-PLAN 7.10; every real-mode site S1–S11 refuses). The gate machinery exists (PLAN 7.13–7.15: the
-*Real trading* page, the disarm endpoint, the banner); real trading itself is lifted only after
-the owner's written consent (7.18). Steps marked *(from 7.21)* / *(from 7.23)* do not do
-everything described until that step ships. Do the steps in this order; each one alone stops
-new real entries, and **exits continue** after every one of them.
+Real-money entries need the account's armed gate **and** the deployment opt-in
+`CACTUSTRADE_REAL_TRADING=on` (OD28; PLAN 7.19–7.23 after the owner's consent, D39). Do the
+steps in this order; each one alone stops new real entries, and **exits continue** after every
+one of them (closes before the session ends, the kill switch, force close).
 
 1. **Kill the real account** (fastest; operator with trade access, session or API key, never
-   rate-limited): `POST /api/v1/agent/kill?accountId=<real account>` (above). It stores the kill
-   and disarms the gate today. *(from 7.21)* Our pending orders are cancelled and our positions
-   closed; until then a kill on a real account flattens nothing (refusal site S7), so close any
-   real position in eToro's web app.
+   rate-limited): `POST /api/v1/agent/kill?accountId=<real account>` (above). It stores the kill,
+   disarms the gate, cancels our pending orders and closes every position cactusTrade opened
+   there (never the owner's own). If you only want to stop new entries and keep the positions
+   to their planned exits, disarm instead (step 2).
 2. **Disarm** (trade access and the `agent.kill` permission, session or API key, never
    rate-limited, D32): the *Disarm* button under *Setup → Real trading*, or
    ```sh
@@ -370,10 +368,11 @@ new real entries, and **exits continue** after every one of them.
    evidence). If the disarm cannot be stored (database trouble), cactusTrade also stores a kill
    on the account so that every process refuses entries; an admin resets it once the cause is
    fixed.
-3. *(from 7.23)* **Switch the deployment off:** `CACTUSTRADE_REAL_TRADING=off` (the default,
-   OD28; `deploy.sh` never sets it) and restart. Real entries are then refused even on an armed
-   account; real exits never depend on it. The setting does not exist before 7.23 (nothing reads
-   it): skip this step until then.
+3. **Switch the deployment off:** remove `CACTUSTRADE_REAL_TRADING=on` from `.env.local` (or
+   the environment) so it is `off` again (the default, OD28; `deploy.sh` never sets it) and
+   restart (`./deploy.sh --upgrade …`, or restart the binary). Real entries are then refused even
+   on an armed account; real exits never depend on it. While it is on, every start logs a
+   warning and records a danger event "REAL MONEY: this deployment allows real-money trading".
 4. **Cut eToro access** if cactusTrade itself is in doubt: delete or regenerate the real API
    key in eToro's settings. From then on, close any real position in eToro's web app.
 5. Check: the red "REAL MONEY" banner is gone (a red "real-trading state unknown" banner means

@@ -8,14 +8,35 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 )
 
-// executable are the account-changing operations this version performs, for demo accounts
-// only (phase 4). Setting or moving stops (OpSetStopLossTake) stays disabled: nothing needs
-// it, and deepening a stop can move balance into margin.
+// executable are the account-changing operations this version performs: on demo accounts,
+// and on real-money accounts with a permit (PLAN 7.20). Setting or moving stops
+// (OpSetStopLossTake) stays disabled on both: nothing needs it, and deepening a stop can move
+// balance into margin.
 var executable = map[Op]bool{OpOpenOrder: true, OpCancelOrder: true, OpClosePosition: true}
+
+// realPermitted reports whether the permit in ctx allows op on the real-money account
+// accountID at now (PLAN 7.20): opening needs an entry permit valid now; closing a position or
+// cancelling an order accepts an exit or an entry permit for the account. Anything else (no
+// permit, another account's, an expired one, any other operation) is refused.
+func realPermitted(ctx context.Context, op Op, accountID string, now time.Time) bool {
+	p, ok := ports.PermitFrom(ctx)
+	if !ok {
+		return false
+	}
+	switch op {
+	case OpOpenOrder:
+		return p.AllowsEntry(accountID, now)
+	case OpClosePosition, OpCancelOrder:
+		return p.AllowsExit(accountID)
+	}
+	return false
+}
 
 // isUUID reports whether s is a UUID in its canonical 36-character form (eToro requires a
 // GUID x-request-id; Parse-style leniency would let other strings through).
@@ -44,8 +65,11 @@ func isHex(c byte) bool {
 }
 
 // mutate performs one account-changing operation: refused before any I/O unless the
-// operation is enabled, the account is an eToro demo account and requestID is a UUID; then
-// exactly one request with x-request-id = requestID. It never retries: a network error, a
+// operation is enabled, the account is an eToro demo account, or an eToro real-money account
+// with its own keys (never the deployment's demo keys) and a permit in ctx for this account
+// and operation (realPermitted; S3, PLAN 7.20), and requestID is a UUID; then exactly one
+// request with x-request-id = requestID, to the mode's allowlisted path with the mode's keys
+// and the same body as on demo. It never retries: a network error, a
 // timeout, a 5xx or an unreadable answer is domain.ErrOutcomeUnknown (the request may have
 // been processed); a 4xx is a *domain.NotAcceptedError (a 429 also pauses the quota group).
 func (c *Client) mutate(ctx context.Context, op Op, path map[string]string, requestID string, body, out any) error {
@@ -57,8 +81,12 @@ func (c *Client) mutate(ctx context.Context, op Op, path map[string]string, requ
 	if err != nil {
 		return err
 	}
-	if mode != domain.ModeDemo || acct.Mode != domain.ModeDemo {
-		return fmt.Errorf("etoro %s for %s: %w", op, acct.Name, domain.ErrRealModeGated)
+	switch {
+	case mode == domain.ModeDemo && acct.Mode == domain.ModeDemo:
+	case mode == domain.ModeReal && acct.Mode == domain.ModeReal && !acct.EnvKeys && realPermitted(ctx, op, acct.ID, c.cfg.Now()):
+		c.cfg.Log.WarnContext(ctx, "eToro REAL-MONEY account change", "op", string(op), "request_id", requestID)
+	default:
+		return fmt.Errorf("etoro %s for %s: %w", op, acct.Name, domain.ErrNoRealPermit)
 	}
 	if !isUUID(requestID) {
 		return fmt.Errorf("etoro %s: %w", op, domain.Invalid("requestId", "must be a UUID"))
@@ -160,7 +188,7 @@ func openBody(in domain.OrderIntent) (openRequest, error) {
 	}, nil
 }
 
-// Open sends a market order for a demo account. eToro's 200 means accepted, not filled: the
+// Open sends a market order for a demo account, or a real-money one with an entry permit. eToro's 200 means accepted, not filled: the
 // answer is pending with eToro's order id; poll Lookup. An answer whose referenceId is not
 // our request id (or that has no order id) is an unknown outcome.
 func (c *Client) Open(ctx context.Context, in domain.OrderIntent) (domain.OrderStatus, error) {
@@ -189,7 +217,8 @@ type closeRequest struct {
 	InstrumentID int64 `json:"InstrumentID"`
 }
 
-// Close sends a market order closing the whole position of a demo account. The answer
+// Close sends a market order closing the whole position of a demo account, or of a
+// real-money one with an exit or entry permit. The answer
 // carries eToro's close order id; poll CloseOrder.
 func (c *Client) Close(ctx context.Context, positionID int64, instrument domain.InstrumentID, requestID string) (domain.OrderStatus, error) {
 	if positionID <= 0 || instrument <= 0 {
@@ -219,7 +248,8 @@ func (c *Client) Close(ctx context.Context, positionID int64, instrument domain.
 	return st, nil
 }
 
-// Cancel asks eToro to cancel a pending open order of a demo account. 200 means the request
+// Cancel asks eToro to cancel a pending open order of a demo account, or of a real-money one
+// with an exit or entry permit. 200 means the request
 // was accepted, not that the order was cancelled: confirm with Lookup.
 func (c *Client) Cancel(ctx context.Context, orderID int64, requestID string) error {
 	if orderID <= 0 {

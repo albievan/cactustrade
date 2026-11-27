@@ -36,7 +36,7 @@ func TestAssessEntryRefuses(t *testing.T) {
 		want   string
 		kill   bool
 	}{
-		{"real mode", func(in *RiskInput) { in.Mode = ModeReal }, "real mode is gated", false},
+		{"real mode without a permit", func(in *RiskInput) { in.Mode = ModeReal }, "real mode is gated", false},
 		{"no mode", func(in *RiskInput) { in.Mode = "" }, "real mode is gated", false},
 		{"killed", func(in *RiskInput) { in.State.Killed = true }, "kill switch", false},
 		{"daily latch", func(in *RiskInput) { in.State.DayStopped = true }, "until the next risk day", false},

@@ -308,7 +308,7 @@ func (ae *agentEnv) pendingAtBroker(t *testing.T, n int) {
 		if err := ae.store.Orders().Create(ae.ctx, o); err != nil {
 			t.Fatal(err)
 		}
-		in, _ := domain.IntentFor(o)
+		in, _ := domain.IntentFor(o, domain.RealPermit{})
 		ae.b.OpenScript = []fakes.SimOutcome{fakes.SimPending}
 		st, err := ae.b.Open(bctx, in)
 		if err != nil {

@@ -22,6 +22,22 @@ func AccountFrom(ctx context.Context) (domain.Account, bool) {
 	return a, ok
 }
 
+type permitKey struct{}
+
+// WithPermit carries a real-trading permit (domain.PermitEntry / PermitExit, PLAN 7.20) to
+// the broker adapter for the account change made with ctx. The app sets it right before the
+// call; a real-money account change without a valid one is refused before any I/O.
+func WithPermit(ctx context.Context, p domain.RealPermit) context.Context {
+	return context.WithValue(ctx, permitKey{}, p)
+}
+
+// PermitFrom returns the permit set by WithPermit (the zero permit, which allows nothing,
+// when there is none).
+func PermitFrom(ctx context.Context) (domain.RealPermit, bool) {
+	p, ok := ctx.Value(permitKey{}).(domain.RealPermit)
+	return p, ok
+}
+
 type noteKey struct{}
 
 // accountNote holds the first account a request resolved (NoteAccount), for its log lines.

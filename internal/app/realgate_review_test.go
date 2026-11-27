@@ -329,10 +329,18 @@ func TestSlowGateSweepDoesNotDelayExits(t *testing.T) {
 	if !slow.deadline.Load() {
 		t.Fatal("the sweep has no timeout")
 	}
-	// A second tick while the sweep still runs does not start another.
+	// Since PLAN 7.21 the real account's own supervision reads its gate too (in its own
+	// goroutine, realSupervised): one sweep and one pass, both slow.
+	for deadline := time.Now().Add(5 * time.Second); slow.reads.Load() < 2; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d gate reads, want the sweep's and the real pass's", slow.reads.Load())
+		}
+	}
+	// A second tick while the sweep (and the real pass) still run starts neither again.
 	x.svc.superviseTick(x.ctx, &wg)
-	if n := slow.reads.Load(); n != 1 {
-		t.Fatalf("%d sweeps at once", n)
+	time.Sleep(20 * time.Millisecond)
+	if n := slow.reads.Load(); n != 2 {
+		t.Fatalf("%d gate reads: a second sweep or pass started", n)
 	}
 	release()
 	wg.Wait()

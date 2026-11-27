@@ -210,7 +210,7 @@ function CreateAccount({ specs, onCreated }: { specs: Specs; onCreated: () => vo
       <div className="mt-2"><button className="btn btn-success">Add</button></div>
       <PlatformHelp platform={platform} />
       <div className="form-text">Keys can also be set later; they are write-only.</div>
-      {platform === "etoro" && mode === "real" && <div className="form-text text-danger">A real account can be added and tested now; the agent trades real money only after the gated switch (phase 7).</div>}
+      {platform === "etoro" && mode === "real" && <div className="form-text text-danger">A real account can be added and tested now; the agent trades real money only once an admin arms real trading on it (Real trading page) and the deployment allows it.</div>}
       {msg && <div className="alert alert-success mt-3 mb-0 py-2">{msg}</div>}
       {error && <div className="alert alert-danger mt-3 mb-0">{error}</div>}
     </div></form>

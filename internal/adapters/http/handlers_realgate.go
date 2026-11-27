@@ -13,9 +13,10 @@ import (
 // maps them, runs the arming password under the sign-in limiter, and words the refusals.
 // Disarm is never rate limited (neverThrottled, D32).
 
-// failGate maps the gate's errors: failing checks are 409 naming them, every other real-mode
-// refusal is 403 "Real trading is not enabled in this build"; the rest as the agent
-// endpoints (invalid input 422).
+// failGate maps the gate's errors: failing checks are 409 naming them; a build without the
+// owner's consent is 403 "Real trading is not enabled in this build"; any other real-mode
+// refusal 403 "Real trading is not armed"; the rest as the agent endpoints (invalid input
+// 422).
 func (s *Server) failGate(w http.ResponseWriter, r *http.Request, err error) {
 	if gr, ok := errors.AsType[*domain.GateRefusal](err); ok {
 		details := make([]string, 0, len(gr.Failed))
@@ -25,9 +26,13 @@ func (s *Server) failGate(w http.ResponseWriter, r *http.Request, err error) {
 		problemFor(w, r, err, http.StatusConflict, "Real trading cannot be armed", strings.Join(details, "; "), "")
 		return
 	}
-	if errors.Is(err, domain.ErrRealModeGated) {
+	switch {
+	case errors.Is(err, domain.ErrRealTradingDisabled):
 		problemFor(w, r, err, http.StatusForbidden, "Real trading is not enabled in this build",
 			"real trading needs the owner's written consent (PLAN 7.18): this build refuses to arm it", "")
+		return
+	case errors.Is(err, domain.ErrRealModeGated):
+		problemFor(w, r, err, http.StatusForbidden, "Real trading is not armed", detail(err, domain.ErrForbidden), "")
 		return
 	}
 	s.failAgent(w, r, err)

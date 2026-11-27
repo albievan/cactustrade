@@ -269,3 +269,42 @@ func TestDeployRestoreDryRun(t *testing.T) {
 		})
 	}
 }
+
+// TestDeployRealTradingOptIn (PLAN 7.23, OD28): the rendered manifest carries
+// CACTUSTRADE_REAL_TRADING as .env gives it (off), or as the owner set it (on, with a loud
+// warning); any other value stops deploy.sh; and deploy.sh itself never turns it on.
+func TestDeployRealTradingOptIn(t *testing.T) {
+	noLocal := "CACTUSTRADE_ENV_LOCAL=" + filepath.Join(t.TempDir(), "none") // this machine's .env.local is not the default
+	m, warn := renderManifest(t, noLocal)
+	if !strings.Contains(m, `CACTUSTRADE_REAL_TRADING: "off"`) || strings.Contains(warn, "REAL-MONEY") {
+		t.Fatalf("default: the manifest does not keep real trading off (warnings %q)", warn)
+	}
+	m, warn = renderManifest(t, noLocal, "CACTUSTRADE_REAL_TRADING=on")
+	if !strings.Contains(m, `CACTUSTRADE_REAL_TRADING: "on"`) || !strings.Contains(warn, "ALLOWS REAL-MONEY ENTRIES") {
+		t.Fatalf("owner's opt-in: not passed through or not warned (warnings %q)", warn)
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(context.Background(), "bash", filepath.Join(root, "deploy.sh"), "--render", "--k3s")
+	cmd.Env = append(os.Environ(), noLocal, "CACTUSTRADE_REAL_TRADING=yes")
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "must be on or off") {
+		t.Fatalf("an invalid value was accepted: %v\n%s", err, out)
+	}
+	src, err := os.ReadFile(filepath.Join(root, "deploy.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// an assignment of "on" (a warning that names the setting is fine), or a write to .env.local
+	if regexp.MustCompile(`(?m)^\s*(export\s+|local\s+)?CACTUSTRADE_REAL_TRADING=["']?on|set_env_local\s+["']?CACTUSTRADE_REAL_TRADING`).Match(src) {
+		t.Fatal("deploy.sh sets CACTUSTRADE_REAL_TRADING")
+	}
+	env, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^CACTUSTRADE_REAL_TRADING=off$`).Match(env) {
+		t.Fatal(".env must keep CACTUSTRADE_REAL_TRADING=off")
+	}
+}

@@ -77,9 +77,12 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
     return loadError ? <div className="alert alert-warning">{loadError}</div> : null;
   }
   const c = p.controls;
+  // gated: a real-money account on which no entry may be made now. Only start is affected (the
+  // server sets c.start false and says why); pause, stop, the kill switch and force close
+  // always work there (exits always do).
   const gated = c.gated;
   const killed = p.state === "killed" || p.killed;
-  const off = !!busy || gated;
+  const off = !!busy;
   const missing = p.missing ?? []; // a server older than R22 sends none
   // The fixes this panel runs itself; every other one opens its page.
   const actions: Partial<Record<Missing, () => void>> = {
@@ -114,7 +117,7 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
               </button>
             </div>
             <button className="btn btn-danger btn-sm" title="Kill switch: stop entries and close cactusTrade's positions" aria-label="Kill switch"
-              disabled={busy === "kill" || gated || !c.kill} onClick={() => setDialog("kill")}>
+              disabled={busy === "kill" || !c.kill} onClick={() => setDialog("kill")}>
               <i className="bi bi-x-octagon-fill" />
             </button>
             {killed && c.reset && (
@@ -143,8 +146,8 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
             </div>
             {gated && (
               <div className="alert alert-secondary py-2 small mb-2">
-                <i className="bi bi-lock-fill me-1" />Real trading needs the phase-7 gate: the agent cannot be controlled on a real-money account.
-                {c.forceCloseBlockedReason && <div className="mt-1">No force close here: {c.forceCloseBlockedReason}.</div>}
+                <i className="bi bi-lock-fill me-1" />Real money: no new entries on this account now. Pause, stop, the kill switch and
+                force close still work.
               </div>
             )}
             {killed && (

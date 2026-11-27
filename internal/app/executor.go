@@ -15,7 +15,9 @@ import (
 
 // The executor (PLAN 4.7) is the only code that sends orders to eToro. Every order is
 // persisted before its request leaves (CLAUDE.md §2.7), every mutation needs the account's
-// lease (D22), and real-money or non-eToro accounts never reach the broker.
+// lease (D22), non-eToro accounts never reach the broker, and a real-money account change
+// carries a permit (PLAN 7.21–7.22): an exit permit for closes and cancels of ours, whatever
+// the gate; a fresh entry permit for every entry.
 
 // Execution timings. Offsets are measured from the order's latest send.
 var (
@@ -68,6 +70,10 @@ type runtimeState struct {
 	// killed latches every kill in this process (review m3): even when neither kill write
 	// reached the database, entries stay refused after it recovers, until ResetKill.
 	killed map[string]bool
+	// realStarted marks real-money accounts whose agent a person started in THIS process
+	// (OD26, review M2 of the lift): a real account ticks and enters only while marked, so a
+	// stored "running" that survived a restart (or a failed write of "paused") never trades.
+	realStarted map[string]bool
 	// views is the portfolio view cache (PLAN 6.6a): read by view use cases only, never by
 	// an order path (CLAUDE.md §2.2).
 	views *viewCache
@@ -97,7 +103,7 @@ func newRuntimeState() *runtimeState {
 	return &runtimeState{
 		reconciled: map[string]Reconciliation{}, supervising: map[string]bool{},
 		agents: map[string]*agentLocks{}, entryCancel: map[string]context.CancelFunc{}, ticking: map[string]bool{},
-		killed: map[string]bool{}, views: newViewCache(), warned: map[string]bool{}, lastScan: map[string]time.Time{},
+		killed: map[string]bool{}, realStarted: map[string]bool{}, views: newViewCache(), warned: map[string]bool{}, lastScan: map[string]time.Time{},
 	}
 }
 
@@ -185,19 +191,64 @@ type entryRequest struct {
 	RequestID string
 }
 
-// mayMutate refuses an account change for a non-eToro or real-money account (before any
-// broker call), without an eToro client, or when another process holds the lease.
+// mayMutate refuses an account change for a non-eToro account (before any broker call),
+// without an eToro client, or when another process holds the lease. The real-money rules are
+// the callers': mayOpen for entries, mayExit for closes and cancels.
 func (s *Service) mayMutate(ctx context.Context, a domain.Account) error {
 	switch {
 	case !a.Tradable():
 		return fmt.Errorf("%s: %w", a.Name, domain.ErrViewOnly)
-	case a.Mode != domain.ModeDemo:
-		s.d.Log.WarnContext(ports.WithAccount(ctx, a), "account change refused: real mode is gated")
+	case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:
+		s.d.Log.WarnContext(ports.WithAccount(ctx, a), "account change refused: the account has no trading mode")
 		return fmt.Errorf("%s: %w", a.Name, domain.ErrRealModeGated)
 	case s.d.Broker == nil:
 		return fmt.Errorf("the eToro client is not configured: %w", domain.ErrUnavailable)
 	}
 	return s.holdLease(ctx, a.ID)
+}
+
+// mayExit allows closing a position or cancelling an order of cactusTrade's own (ours) on
+// account a (S5 for exits, PLAN 7.21): mayMutate, and on a real-money account an exit permit,
+// whatever the gate's state — a disarmed or expired gate, the opt-in off, a kill — because
+// exits must still work (CLAUDE.md §2.6). Something not ours is refused (OD1). The permit is
+// the zero permit on a demo account.
+func (s *Service) mayExit(ctx context.Context, a domain.Account, ours bool) (domain.RealPermit, error) {
+	if err := s.mayMutate(ctx, a); err != nil {
+		return domain.RealPermit{}, err
+	}
+	if a.Mode != domain.ModeReal {
+		return domain.RealPermit{}, nil
+	}
+	p, err := domain.PermitExit(a, ours)
+	if err != nil {
+		s.d.Log.WarnContext(ports.WithAccount(ctx, a), "real-money exit refused", "err", err)
+		return domain.RealPermit{}, err
+	}
+	return p, nil
+}
+
+// mayOpen allows an entry on account a (S5 for entries): mayMutate, and on a real-money
+// account a fresh entry permit (realEntryPermit, PLAN 7.22). The permit is the zero permit on
+// a demo account.
+func (s *Service) mayOpen(ctx context.Context, a domain.Account) (domain.RealPermit, error) {
+	if a.Mode == domain.ModeReal && a.Tradable() {
+		p, err := s.realEntryPermit(ctx, a, s.d.Clock.Now()) // before the order's CreatedAt
+		if err != nil {
+			s.d.Log.WarnContext(ports.WithAccount(ctx, a), "real-money entry refused", "err", err)
+			return domain.RealPermit{}, err
+		}
+		if err := s.mayMutate(ctx, a); err != nil {
+			return domain.RealPermit{}, err
+		}
+		return p, nil
+	}
+	return domain.RealPermit{}, s.mayMutate(ctx, a)
+}
+
+// brokerCtxFor is the context of a broker call that changes account a: the account, and the
+// permit for a real-money account (ports.WithPermit).
+func brokerCtxFor(ctx context.Context, a domain.Account, p domain.RealPermit) context.Context {
+	return ports.WithPermit(ports.WithAccount(ctx, a), p)
 }
 
 // holdLease takes or renews the account's single-writer lease for this process (D22).
@@ -324,12 +375,14 @@ func (s *Service) orderEvent(ctx context.Context, a domain.Account, d domain.Dir
 
 // placeEntry sends an entry the risk engine allowed and follows it until eToro has filled,
 // rejected or cancelled it, or it is abandoned. Nothing is sent unless the account is a demo
-// eToro account that is reconciled, not killed and whose lease this process holds, and the
+// eToro account, or a real-money one with a fresh entry permit (mayOpen), that is reconciled,
+// not killed and whose lease this process holds, and the
 // order row is stored first (state created, then sent). The returned order is its latest
 // stored version; an error means it was not (or not knowingly) placed.
 func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryRequest, l domain.RiskLimits) (domain.Order, error) {
 	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
-	if err := s.mayMutate(ctx, a); err != nil {
+	permit, err := s.mayOpen(ctx, a)
+	if err != nil {
 		return domain.Order{}, fmt.Errorf("executor.placeEntry: %w", err)
 	}
 	switch killed, err := s.isKilled(ctx, a.ID); {
@@ -363,7 +416,7 @@ func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryReque
 		o, _ = s.move(ctx, o, domain.OrderAbandoned, "the cash figure was stale when the order was due: not sent", nil)
 		return o, fmt.Errorf("executor.placeEntry: the portfolio is older than %s: %w", l.MaxPortfolioAge, domain.ErrUnavailable)
 	}
-	intent, err := domain.IntentFor(o)
+	intent, err := domain.IntentFor(o, permit)
 	if err != nil {
 		o, _ = s.move(ctx, o, domain.OrderAbandoned, "no valid intent: not sent", nil)
 		return o, fmt.Errorf("executor.placeEntry: %w", err)
@@ -371,7 +424,7 @@ func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryReque
 	if o, err = s.move(ctx, o, domain.OrderSent, "", nil); err != nil {
 		return o, fmt.Errorf("executor.placeEntry: marking the order sent (nothing sent): %w", err)
 	}
-	return s.sendOpen(ctx, a, o, intent)
+	return s.sendOpen(ctx, a, o, intent, permit)
 }
 
 // sendOpen sends a stored open order once and follows it. An open is never resent (review
@@ -379,8 +432,8 @@ func (s *Service) placeEntry(ctx context.Context, a domain.Account, r entryReque
 // the order up; found → followed, not found → polled and abandoned after lookupGiveUp. Its
 // cash stays reserved until it is final. Once the request has left, its outcome is stored
 // even if ctx was cancelled meanwhile (a kill, review m4).
-func (s *Service) sendOpen(ctx context.Context, a domain.Account, o domain.Order, in domain.OrderIntent) (domain.Order, error) {
-	bctx := ports.WithAccount(ctx, a)
+func (s *Service) sendOpen(ctx context.Context, a domain.Account, o domain.Order, in domain.OrderIntent, permit domain.RealPermit) (domain.Order, error) {
+	bctx := brokerCtxFor(ctx, a, permit)
 	wctx := context.WithoutCancel(ctx)
 	label := s.instrumentLabel(ctx, o.Instrument)
 	if cerr := ctx.Err(); cerr != nil {
@@ -664,7 +717,8 @@ func (s *Service) recordFills(ctx context.Context, a domain.Account, o domain.Or
 // while the kill switch is on.
 func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain.AgentPosition, why string, polls []time.Duration) (domain.Order, error) {
 	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
-	if err := s.mayMutate(ctx, a); err != nil {
+	permit, err := s.mayExit(ctx, a, ap.AccountID == a.ID && ap.PositionID > 0)
+	if err != nil {
 		return domain.Order{}, fmt.Errorf("executor.closePosition: %w", err)
 	}
 	if ap.CloseRequestID != "" {
@@ -705,7 +759,7 @@ func (s *Service) closePosition(ctx context.Context, a domain.Account, ap domain
 	if o, err = s.move(ctx, o, domain.OrderSent, "", nil); err != nil {
 		return o, fmt.Errorf("executor.closePosition: marking the close sent (nothing sent): %w", err)
 	}
-	bctx := ports.WithAccount(ctx, a)
+	bctx := brokerCtxFor(ctx, a, permit)
 	label := s.instrumentLabel(ctx, ap.Instrument)
 	for {
 		st, err := s.d.Broker.Close(bctx, ap.PositionID, ap.Instrument, o.RequestID)
@@ -871,7 +925,8 @@ func (s *Service) markClosed(ctx context.Context, a domain.Account, ap domain.Ag
 // request id. The target's own state follows from its next lookup.
 func (s *Service) cancelOrder(ctx context.Context, a domain.Account, target domain.Order, why string) (domain.Order, error) {
 	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
-	if err := s.mayMutate(ctx, a); err != nil {
+	permit, err := s.mayExit(ctx, a, target.AccountID == a.ID)
+	if err != nil {
 		return domain.Order{}, fmt.Errorf("executor.cancelOrder: %w", err)
 	}
 	if target.Kind != domain.OrderOpen || target.EtoroOrderID <= 0 || target.State.Final() {
@@ -891,7 +946,7 @@ func (s *Service) cancelOrder(ctx context.Context, a domain.Account, target doma
 	if o, err = s.move(ctx, o, domain.OrderSent, "", nil); err != nil {
 		return o, fmt.Errorf("executor.cancelOrder: marking the cancel sent (nothing sent): %w", err)
 	}
-	bctx := ports.WithAccount(ctx, a)
+	bctx := brokerCtxFor(ctx, a, permit)
 	for {
 		err := s.d.Broker.Cancel(bctx, target.EtoroOrderID, o.RequestID)
 		na, isNA := errors.AsType[*domain.NotAcceptedError](err)
@@ -924,4 +979,22 @@ func (s *Service) cancelOrder(ctx context.Context, a domain.Account, target doma
 			return o, fmt.Errorf("executor.cancelOrder: %w", err)
 		}
 	}
+}
+
+// setRealStarted marks (or clears) a real account's agent as started by hand in this process.
+func (r *runtimeState) setRealStarted(accountID string, on bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if on {
+		r.realStarted[accountID] = true
+		return
+	}
+	delete(r.realStarted, accountID)
+}
+
+// realStartedHere reports whether a person started the real account's agent in this process.
+func (r *runtimeState) realStartedHere(accountID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.realStarted[accountID]
 }
