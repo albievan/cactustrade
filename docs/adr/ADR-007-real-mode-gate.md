@@ -69,3 +69,11 @@ the refusal matrix now proves every site refuses whenever one key is missing
 `TestAgentSequencePropertiesReal` drives an armed real account through random disarms, kills,
 opt-in switches, expiries and restores. `set_sl_tp` stays not executable. Claude never places a
 real-money order; the first real run is the owner's (7.24).
+
+**Data reset (2026-11-28, PLAN R49).** Resetting all trading data deletes the decisions,
+orders and agent positions the demo evidence is read from, so it restarts the evidence: every
+real-money account needs N new qualifying demo days (default 5, D37) before it can be armed
+again. The reset is refused while any gate is armed, locks a gate stored armed
+(`DisarmDataReset`), latches the disarm in memory, and stores `data_reset.at`, which counts
+like `restore.at` (a gate armed before it is never in force). The kill switch and the
+high-water mark (`risk_state`) are kept.

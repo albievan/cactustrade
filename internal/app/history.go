@@ -69,6 +69,15 @@ func (s *Service) SyncTrades(ctx context.Context, accountID string) (TradeSync, 
 	if !last.IsZero() {
 		out.Since = last.Add(-historyOverlap)
 	}
+	// OD38: after a data reset the history starts at the reset; older trades are not read
+	// back in (an unreadable floor reads nothing).
+	floor, err := s.historyFloor(ctx, a.ID)
+	if err != nil {
+		return out, fmt.Errorf("app.SyncTrades: %w", err)
+	}
+	if floor.After(out.Since) {
+		out.Since = floor
+	}
 	trades, err := s.d.Broker.TradeHistory(ports.WithAccount(ctx, a), out.Since)
 	if err != nil {
 		return out, fmt.Errorf("app.SyncTrades: %s: %w", a.Name, err)
@@ -99,6 +108,23 @@ func (s *Service) SyncTrades(ctx context.Context, accountID string) (TradeSync, 
 		}
 	}
 	return out, nil
+}
+
+// historyFloor is the account's trade-history floor (OD38: the latest data reset; zero =
+// none).
+func (s *Service) historyFloor(ctx context.Context, accountID string) (time.Time, error) {
+	v, err := s.d.Store.Settings().Get(ctx, domain.HistorySinceKey(accountID))
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		return time.Time{}, nil
+	case err != nil:
+		return time.Time{}, err
+	}
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("the history floor %q is unreadable: %w", v, err)
+	}
+	return t, nil
 }
 
 // SyncTradesAll syncs every eToro account that has keys, demo and real (system, read-only),

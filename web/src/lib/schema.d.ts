@@ -1060,6 +1060,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/data-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What resetting all trading data would do now (admin, web UI)
+         * @description The checks (every agent stopped or killed, no lease of another process, no real-money
+         *     gate armed, every eToro account with keys reconciled, no open position, no order in
+         *     flight, no order in the last 15 minutes, a backup can be taken), the rows wiped and
+         *     kept per table, and every real-money account's qualifying demo days now (the reset
+         *     sets them to 0). Only reads.
+         */
+        get: operations["getDataResetPreview"];
+        put?: never;
+        /**
+         * Reset all trading data of every account (admin, web session only, password and phrase)
+         * @description Checks, in order: an admin in a web session (never an API key), the phrase
+         *     `DELETE ALL TRADING DATA` (422 when wrong), the caller's password (counted like a
+         *     sign-in: a wrong one is 403, too many attempts 429), a fresh reconciliation of every
+         *     eToro account, the checks (409 naming the failing ones), then an encrypted backup
+         *     (without it nothing is wiped). Wipes the orders, agent positions, trades, decisions,
+         *     LLM calls, equity snapshots, events and LLM reviews of every account (and the
+         *     watchlists when asked); keeps users, accounts, keys, settings, limits, the risk state
+         *     (kill switch, high-water mark), real-gate records (an armed one is locked) and the
+         *     audit log. Audited before and after, announced and e-mailed to every admin and
+         *     account owner. Sends nothing to eToro.
+         */
+        post: operations["resetAllData"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -2240,6 +2277,59 @@ export interface components {
         };
         BackupRecipientsInput: {
             recipients: string[];
+        };
+        DataResetCheck: {
+            /** @enum {string} */
+            name: "reset_agents_stopped" | "reset_no_live_lease" | "reset_no_armed_gate" | "reset_reconciled" | "reset_no_open_position" | "reset_no_open_order" | "reset_no_recent_order" | "reset_backup_ready";
+            pass: boolean;
+            detail: string;
+        };
+        /** @description rows per table, by table name */
+        TableCounts: {
+            [key: string]: number;
+        };
+        RealEvidenceWarning: {
+            accountId: string;
+            name: string;
+            /** @description the demo account whose history is the evidence (absent = none) */
+            demoAccountId?: string;
+            demoName?: string;
+            /** @description qualifying demo days now; 0 after the reset */
+            daysNow: number;
+            /** @description qualifying demo days arming needs */
+            required: number;
+        };
+        DataResetPreview: {
+            checks: components["schemas"]["DataResetCheck"][];
+            /** @description every check passes now (the server checks again) */
+            canReset: boolean;
+            wiped: components["schemas"]["TableCounts"];
+            kept: components["schemas"]["TableCounts"];
+            realAccounts: components["schemas"]["RealEvidenceWarning"][];
+            backupReady: boolean;
+            /** @description why no backup can be taken (absent when one can) */
+            backupWhy?: string;
+            backupFolder?: string;
+            /** @description what to type: DELETE ALL TRADING DATA */
+            phrase: string;
+        };
+        DataResetRequest: {
+            confirm: string;
+            /** @description the caller's current password (never logged or stored) */
+            password: string;
+            /**
+             * @description also empty every watchlist (kept by default)
+             * @default false
+             */
+            wipeWatchlists: boolean;
+        };
+        DataResetResult: {
+            /** @description the encrypted backup taken first */
+            backupFile: string;
+            counts: components["schemas"]["TableCounts"];
+            wipedWatchlists: boolean;
+            /** Format: date-time */
+            at: string;
         };
         BackupFile: {
             name: string;
@@ -5935,6 +6025,60 @@ export interface operations {
             };
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getDataResetPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataResetPreview"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    resetAllData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DataResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Reset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataResetResult"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };
     };

@@ -326,6 +326,42 @@ func (e CredentialName) Valid() bool {
 	}
 }
 
+// Defines values for DataResetCheckName.
+const (
+	ResetAgentsStopped  DataResetCheckName = "reset_agents_stopped"
+	ResetBackupReady    DataResetCheckName = "reset_backup_ready"
+	ResetNoArmedGate    DataResetCheckName = "reset_no_armed_gate"
+	ResetNoLiveLease    DataResetCheckName = "reset_no_live_lease"
+	ResetNoOpenOrder    DataResetCheckName = "reset_no_open_order"
+	ResetNoOpenPosition DataResetCheckName = "reset_no_open_position"
+	ResetNoRecentOrder  DataResetCheckName = "reset_no_recent_order"
+	ResetReconciled     DataResetCheckName = "reset_reconciled"
+)
+
+// Valid indicates whether the value is a known member of the DataResetCheckName enum.
+func (e DataResetCheckName) Valid() bool {
+	switch e {
+	case ResetAgentsStopped:
+		return true
+	case ResetBackupReady:
+		return true
+	case ResetNoArmedGate:
+		return true
+	case ResetNoLiveLease:
+		return true
+	case ResetNoOpenOrder:
+		return true
+	case ResetNoOpenPosition:
+		return true
+	case ResetNoRecentOrder:
+		return true
+	case ResetReconciled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EmailSetupInputTls.
 const (
 	None     EmailSetupInputTls = "none"
@@ -1863,6 +1899,62 @@ type DailyHistory struct {
 	To        time.Time    `json:"to"`
 }
 
+// DataResetCheck defines model for DataResetCheck.
+type DataResetCheck struct {
+	Detail string             `json:"detail"`
+	Name   DataResetCheckName `json:"name"`
+	Pass   bool               `json:"pass"`
+}
+
+// DataResetCheckName defines model for DataResetCheck.Name.
+type DataResetCheckName string
+
+// DataResetPreview defines model for DataResetPreview.
+type DataResetPreview struct {
+	BackupFolder *string `json:"backupFolder,omitempty"`
+	BackupReady  bool    `json:"backupReady"`
+
+	// BackupWhy why no backup can be taken (absent when one can)
+	BackupWhy *string `json:"backupWhy,omitempty"`
+
+	// CanReset every check passes now (the server checks again)
+	CanReset bool             `json:"canReset"`
+	Checks   []DataResetCheck `json:"checks"`
+
+	// Kept rows per table, by table name
+	Kept TableCounts `json:"kept"`
+
+	// Phrase what to type: DELETE ALL TRADING DATA
+	Phrase       string                `json:"phrase"`
+	RealAccounts []RealEvidenceWarning `json:"realAccounts"`
+
+	// Wiped rows per table, by table name
+	Wiped TableCounts `json:"wiped"`
+}
+
+// DataResetRequest defines model for DataResetRequest.
+type DataResetRequest struct {
+	Confirm string `json:"confirm"`
+
+	// Password the caller's current password (never logged or stored)
+	Password string `json:"password"`
+
+	// WipeWatchlists also empty every watchlist (kept by default)
+	WipeWatchlists *bool `json:"wipeWatchlists,omitempty"`
+}
+
+// DataResetResult defines model for DataResetResult.
+type DataResetResult struct {
+	At time.Time `json:"at"`
+
+	// BackupFile the encrypted backup taken first
+	BackupFile string `json:"backupFile"`
+
+	// Counts rows per table, by table name
+	Counts          TableCounts `json:"counts"`
+	WipedWatchlists bool        `json:"wipedWatchlists"`
+}
+
 // Decimal An exact decimal (prices and units, up to 6 places)
 type Decimal = string
 
@@ -3150,6 +3242,22 @@ type RealArmedAccount struct {
 	Name string `json:"name"`
 }
 
+// RealEvidenceWarning defines model for RealEvidenceWarning.
+type RealEvidenceWarning struct {
+	AccountId string `json:"accountId"`
+
+	// DaysNow qualifying demo days now; 0 after the reset
+	DaysNow int `json:"daysNow"`
+
+	// DemoAccountId the demo account whose history is the evidence (absent = none)
+	DemoAccountId *string `json:"demoAccountId,omitempty"`
+	DemoName      *string `json:"demoName,omitempty"`
+	Name          string  `json:"name"`
+
+	// Required qualifying demo days arming needs
+	Required int `json:"required"`
+}
+
 // RealGate defines model for RealGate.
 type RealGate struct {
 	AccountId string     `json:"accountId"`
@@ -3688,6 +3796,9 @@ type SystemStatus struct {
 
 // SystemStatusDatabase defines model for SystemStatus.Database.
 type SystemStatusDatabase string
+
+// TableCounts rows per table, by table name
+type TableCounts map[string]int64
 
 // TestEmailRequest defines model for TestEmailRequest.
 type TestEmailRequest struct {
@@ -4288,6 +4399,9 @@ type CreateStatementScheduleJSONRequestBody = StatementScheduleInput
 // UpdateStatementScheduleJSONRequestBody defines body for UpdateStatementSchedule for application/json ContentType.
 type UpdateStatementScheduleJSONRequestBody = StatementScheduleInput
 
+// ResetAllDataJSONRequestBody defines body for ResetAllData for application/json ContentType.
+type ResetAllDataJSONRequestBody = DataResetRequest
+
 // CreateThemeJSONRequestBody defines body for CreateTheme for application/json ContentType.
 type CreateThemeJSONRequestBody = ThemeInput
 
@@ -4620,6 +4734,12 @@ type ServerInterface interface {
 	// SendStatementNow E-mail the statements of the schedule's last complete period now (its owner or an admin, web UI; audited; once a minute)
 	// (POST /api/v1/statements/schedules/{id}/send-now)
 	SendStatementNow(w http.ResponseWriter, r *http.Request, id string)
+	// GetDataResetPreview What resetting all trading data would do now (admin, web UI)
+	// (GET /api/v1/system/data-reset)
+	GetDataResetPreview(w http.ResponseWriter, r *http.Request)
+	// ResetAllData Reset all trading data of every account (admin, web session only, password and phrase)
+	// (POST /api/v1/system/data-reset)
+	ResetAllData(w http.ResponseWriter, r *http.Request)
 	// GetSystemHealth Trading health (admin) — 503 when a loop is not alive
 	// (GET /api/v1/system/health)
 	GetSystemHealth(w http.ResponseWriter, r *http.Request)
@@ -7333,6 +7453,34 @@ func (siw *ServerInterfaceWrapper) SendStatementNow(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetDataResetPreview operation middleware
+func (siw *ServerInterfaceWrapper) GetDataResetPreview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDataResetPreview(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResetAllData operation middleware
+func (siw *ServerInterfaceWrapper) ResetAllData(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResetAllData(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSystemHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetSystemHealth(w http.ResponseWriter, r *http.Request) {
 
@@ -7952,6 +8100,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/watchlist/{instrumentId}", wrapper.RemoveFromWatchlist)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/reload", wrapper.ReloadSettings)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/restart", wrapper.RestartServer)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/system/data-reset", wrapper.GetDataResetPreview)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/data-reset", wrapper.ResetAllData)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/events", wrapper.ListEvents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/events/seen", wrapper.MarkEventsSeen)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/risk/limits", wrapper.GetRiskLimits)

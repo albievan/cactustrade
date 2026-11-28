@@ -490,3 +490,101 @@ func TestBackupsUnavailable(t *testing.T) {
 		t.Fatalf("list failure: %v", err)
 	}
 }
+
+// TestScheduledBackupWithoutRecipient: a schedule left on without any recipient (the
+// deployment's key went away) is not silent: backup.last holds the error, it is audited and
+// raises a warning event, once per slot (review minor 4 of R48).
+func TestScheduledBackupWithoutRecipient(t *testing.T) {
+	ctx := context.Background()
+	e, b := backupEnv(t)
+	if err := e.store.Settings().Set(ctx, domain.SettingBackupSchedule, `{"kind":"hourly","keep":0,"setAt":"`+
+		e.clock.Now().UTC().Format(time.RFC3339Nano)+`"}`, e.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Advance(time.Hour)
+	ran, err := e.svc.RunDueBackup(ctx)
+	if !ran || !errors.Is(err, domain.ErrInvalid) || len(b.Writes) != 0 {
+		t.Fatalf("run without a recipient: %v %v, writes %v", ran, err, b.Writes)
+	}
+	st, err := e.svc.BackupStatus(ctx, e.admin)
+	if err != nil || st.Last == nil || st.Last.OK || !strings.Contains(st.Last.Error, "age public key") || st.Last.Trigger != "schedule" {
+		t.Fatalf("last %+v %v", st.Last, err)
+	}
+	if !hasAudit(e, "backup.failed", "age public key") {
+		t.Fatalf("not audited: %v", auditActions(e))
+	}
+	warned := func() int {
+		evs, _ := e.store.Events().List(ctx, nil, 50)
+		n := 0
+		for _, ev := range evs {
+			if ev.Kind == "backup.failed" {
+				n++
+			}
+		}
+		return n
+	}
+	if warned() != 1 {
+		t.Fatalf("%d warnings", warned())
+	}
+	for range 30 { // the rest of the slot: no warning every minute
+		e.clock.Advance(time.Minute)
+		if ran, _ := e.svc.RunDueBackup(ctx); ran {
+			t.Fatal("ran again within the slot")
+		}
+	}
+	e.clock.Advance(30 * time.Minute)
+	if ran, _ := e.svc.RunDueBackup(ctx); !ran || warned() != 2 {
+		t.Fatalf("next slot: ran %v, %d warnings", ran, warned())
+	}
+}
+
+// TestBackupStatusDoesNotTouchTheRunLock: reading the status while no backup runs never makes
+// a backup started at the same time fail (review minor 5 of R48: the status used TryLock).
+func TestBackupStatusDoesNotTouchTheRunLock(t *testing.T) {
+	ctx := context.Background()
+	e, _ := backupEnv(t)
+	if _, err := e.svc.SetBackupRecipients(ctx, e.admin, []string{rcptA}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 200)
+	for range 100 {
+		wg.Go(func() {
+			if _, err := e.svc.BackupStatus(ctx, e.admin); err != nil {
+				errs <- err
+			}
+		})
+	}
+	for range 20 {
+		if _, err := e.svc.BackupNow(ctx, e.admin); err != nil {
+			errs <- err
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
+// TestBackupNeverPrunesItself: keep 1 with an older file whose name carries a later time (a
+// clock set back) keeps the file just written (review minor 6 of R48).
+func TestBackupNeverPrunesItself(t *testing.T) {
+	ctx := context.Background()
+	e, b := backupEnv(t)
+	if _, err := e.svc.SetBackupRecipients(ctx, e.admin, []string{rcptA}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.SetBackupSchedule(ctx, e.admin, domain.BackupSchedule{Kind: domain.BackupOff, Keep: 1}); err != nil {
+		t.Fatal(err)
+	}
+	future := "cactustrade-20991231T000000Z.db.age"
+	b.Put(future, []byte("from a clock ahead"))
+	f, err := e.svc.BackupNow(ctx, e.admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Names(); len(got) != 1 || got[0] != f.Name {
+		t.Fatalf("after keep 1: %v, written %s", got, f.Name)
+	}
+}

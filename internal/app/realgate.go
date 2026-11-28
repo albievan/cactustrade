@@ -77,21 +77,28 @@ func (l *gateLatch) since(accountID string) time.Time {
 // with a gate).
 func isRealAccount(a domain.Account) bool { return a.Tradable() && a.Mode == domain.ModeReal }
 
-// restoredAt is the time of the latest restore (zero = never). An unreadable value is
-// returned as an error: the caller treats every gate as not in force (fail closed).
+// restoredAt is the time of the latest restore or data reset (PLAN R49), whichever is later
+// (zero = never): a gate armed before either is not in force. An unreadable value is returned
+// as an error: the caller treats every gate as not in force (fail closed).
 func (s *Service) restoredAt(ctx context.Context) (time.Time, error) {
-	v, err := s.d.Store.Settings().Get(ctx, domain.SettingRestoreAt)
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		return time.Time{}, nil
-	case err != nil:
-		return time.Time{}, err
+	var latest time.Time
+	for _, key := range []string{domain.SettingRestoreAt, domain.SettingDataResetAt} {
+		v, err := s.d.Store.Settings().Get(ctx, key)
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			continue
+		case err != nil:
+			return time.Time{}, err
+		}
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("the time %q of %s is unreadable: %w", v, key, err)
+		}
+		if t.After(latest) {
+			latest = t
+		}
 	}
-	t, err := time.Parse(time.RFC3339Nano, v)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("the restore time %q is unreadable: %w", v, err)
-	}
-	return t, nil
+	return latest, nil
 }
 
 // storedGate is the account's stored gate, locked when there is none.
@@ -138,7 +145,7 @@ func (s *Service) realGateState(ctx context.Context, a domain.Account) (bool, er
 	if g.State != domain.GateArmed {
 		return false, nil
 	}
-	if _, err := s.d.Store.Settings().Get(ctx, domain.SettingRestoreAt); err != nil && !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.restoredAt(ctx); err != nil {
 		return false, err
 	}
 	live, _ := s.gateLive(ctx, g)
@@ -391,6 +398,9 @@ func (s *Service) ArmReal(ctx context.Context, p Principal, accountID, demoAccou
 	if p.Via != ViaSession {
 		return domain.RealGate{}, fmt.Errorf("arming real trading needs a web session, not an API key: %w", domain.ErrForbidden)
 	}
+	if s.rt.resetting.Load() { // PLAN R49: the reset wipes the evidence arming rests on
+		return domain.RealGate{}, fmt.Errorf("app.ArmReal: %s: %w", msgResetting, domain.ErrConflict)
+	}
 	v, err := s.realAccount(ctx, p, accountID, domain.AccessOwner)
 	if err != nil {
 		return domain.RealGate{}, err
@@ -430,6 +440,9 @@ func (s *Service) ArmReal(ctx context.Context, p Principal, accountID, demoAccou
 	locks := s.rt.agent(v.ID)
 	locks.ctl.Lock()
 	defer locks.ctl.Unlock()
+	if s.rt.resetting.Load() { // again under the lock: a reset may have started meanwhile
+		return domain.RealGate{}, fmt.Errorf("app.ArmReal: %s: %w", msgResetting, domain.ErrConflict)
+	}
 	return s.armLocked(ctx, p, v.Account, demo.ID, in.Evidence)
 }
 

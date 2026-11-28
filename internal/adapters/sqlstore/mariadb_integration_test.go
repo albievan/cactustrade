@@ -57,4 +57,20 @@ func TestMariaDBStore(t *testing.T) {
 		t.Fatal("driver")
 	}
 	storetest.Run(t, s)
+	t.Run("reset_classifies_every_table", func(t *testing.T) {
+		// TestResetClassifiesEveryTable for MariaDB: Counts covers exactly the schema's tables.
+		c, err := s.DataReset().Counts(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		schema := tableNames(t, s.DB())
+		if len(c) != len(schema) {
+			t.Fatalf("the reset knows %d tables, the schema has %d: %v", len(c), len(schema), schema)
+		}
+		for _, n := range schema {
+			if _, ok := c[n]; !ok {
+				t.Errorf("table %s is neither wiped nor kept by a data reset", n)
+			}
+		}
+	})
 }

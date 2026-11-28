@@ -79,8 +79,24 @@ func TestOpenBackupFolder(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 	base := t.TempDir()
 	cfg := config{DataDir: base, BackupDir: filepath.Join(base, "a", "backups")}
+	// A plain copy left by a crash two hours ago goes at start-up; a fresh one stays.
+	stale, fresh := filepath.Join(base, ".backup-0123456789abcdef.db"), filepath.Join(base, ".backup-aaaaaaaaaaaaaaaa.db")
+	for _, p := range []string{stale, fresh} {
+		if err := os.WriteFile(p, []byte("plain"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(stale, time.Now().Add(-2*time.Hour), time.Now().Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	if f := openBackupFolder(cfg, nil, log); f == nil || f.Folder() != cfg.BackupDir {
 		t.Fatal("folder not opened")
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("the stale copy is still there: %v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("the fresh copy went: %v", err)
 	}
 	if fi, err := os.Stat(cfg.BackupDir); err != nil || !fi.IsDir() || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700) {
 		t.Fatalf("folder %v %v", fi, err)

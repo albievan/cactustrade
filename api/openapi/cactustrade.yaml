@@ -1142,6 +1142,59 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/system/data-reset:
+    get:
+      tags: [system]
+      operationId: getDataResetPreview
+      summary: What resetting all trading data would do now (admin, web UI)
+      description: |
+        The checks (every agent stopped or killed, no lease of another process, no real-money
+        gate armed, every eToro account with keys reconciled, no open position, no order in
+        flight, no order in the last 15 minutes, a backup can be taken), the rows wiped and
+        kept per table, and every real-money account's qualifying demo days now (the reset
+        sets them to 0). Only reads.
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DataResetPreview" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [system]
+      operationId: resetAllData
+      summary: Reset all trading data of every account (admin, web session only, password and phrase)
+      description: |
+        Checks, in order: an admin in a web session (never an API key), the phrase
+        `DELETE ALL TRADING DATA` (422 when wrong), the caller's password (counted like a
+        sign-in: a wrong one is 403, too many attempts 429), a fresh reconciliation of every
+        eToro account, the checks (409 naming the failing ones), then an encrypted backup
+        (without it nothing is wiped). Wipes the orders, agent positions, trades, decisions,
+        LLM calls, equity snapshots, events and LLM reviews of every account (and the
+        watchlists when asked); keeps users, accounts, keys, settings, limits, the risk state
+        (kill switch, high-water mark), real-gate records (an armed one is locked) and the
+        audit log. Audited before and after, announced and e-mailed to every admin and
+        account owner. Sends nothing to eToro.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DataResetRequest" }
+      responses:
+        "200":
+          description: Reset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DataResetResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/events:
     get:
       tags: [events]
@@ -2530,6 +2583,57 @@ components:
           type: array
           maxItems: 10
           items: { type: string, maxLength: 2000 }
+    DataResetCheck:
+      type: object
+      required: [name, pass, detail]
+      properties:
+        name:
+          type: string
+          enum: [reset_agents_stopped, reset_no_live_lease, reset_no_armed_gate, reset_reconciled, reset_no_open_position, reset_no_open_order, reset_no_recent_order, reset_backup_ready]
+        pass: { type: boolean }
+        detail: { type: string }
+    TableCounts:
+      type: object
+      description: rows per table, by table name
+      additionalProperties: { type: integer, format: int64 }
+    RealEvidenceWarning:
+      type: object
+      required: [accountId, name, daysNow, required]
+      properties:
+        accountId: { type: string }
+        name: { type: string }
+        demoAccountId: { type: string, description: "the demo account whose history is the evidence (absent = none)" }
+        demoName: { type: string }
+        daysNow: { type: integer, description: "qualifying demo days now; 0 after the reset" }
+        required: { type: integer, description: "qualifying demo days arming needs" }
+    DataResetPreview:
+      type: object
+      required: [checks, canReset, wiped, kept, realAccounts, backupReady, phrase]
+      properties:
+        checks: { type: array, items: { $ref: "#/components/schemas/DataResetCheck" } }
+        canReset: { type: boolean, description: "every check passes now (the server checks again)" }
+        wiped: { $ref: "#/components/schemas/TableCounts" }
+        kept: { $ref: "#/components/schemas/TableCounts" }
+        realAccounts: { type: array, items: { $ref: "#/components/schemas/RealEvidenceWarning" } }
+        backupReady: { type: boolean }
+        backupWhy: { type: string, description: "why no backup can be taken (absent when one can)" }
+        backupFolder: { type: string }
+        phrase: { type: string, description: "what to type: DELETE ALL TRADING DATA" }
+    DataResetRequest:
+      type: object
+      required: [confirm, password]
+      properties:
+        confirm: { type: string, maxLength: 100 }
+        password: { type: string, maxLength: 256, description: "the caller's current password (never logged or stored)" }
+        wipeWatchlists: { type: boolean, default: false, description: "also empty every watchlist (kept by default)" }
+    DataResetResult:
+      type: object
+      required: [backupFile, counts, wipedWatchlists, at]
+      properties:
+        backupFile: { type: string, description: "the encrypted backup taken first" }
+        counts: { $ref: "#/components/schemas/TableCounts" }
+        wipedWatchlists: { type: boolean }
+        at: { type: string, format: date-time }
     BackupFile:
       type: object
       required: [name, size, at]

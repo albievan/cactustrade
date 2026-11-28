@@ -158,6 +158,13 @@ var modeSites = map[string][]string{
 		`case !isRealAccount(a):`,        // realEntryBlocked (7.22): only a real account may have real entries
 		`if err := s.riskLimitsFor(ctx, a).ValidateFor(domain.ModeReal); err != nil {`, // realEntryBlocked: limits within the real ceilings
 	},
+	// The data reset (R49): it only reads gates and evidence, latches disarms and refuses.
+	"internal/app/data_reset.go": {
+		`if isRealAccount(a) {`,  // dataResetFacts: a stored-armed gate refuses the reset
+		`if !isRealAccount(a) {`, // realEvidenceWarnings: only real accounts have evidence to lose
+		`if d.Tradable() && d.Mode == domain.ModeDemo && d.OwnerID == a.OwnerID && d.ID != a.ID {`, // the evidence's demo account (a read)
+		`if isRealAccount(a) {`, // wipeLocked: the gate disarm is latched (only narrows)
+	},
 	// cmd: the environment account is demo; the research commands (backtest, etoro-probe)
 	// read only with a demo account's keys and refuse any other before a request.
 	"cmd/cactustrade/main.go": {`case x.Mode != domain.ModeReal:`},

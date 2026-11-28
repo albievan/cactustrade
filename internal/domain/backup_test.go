@@ -271,20 +271,27 @@ func TestPruneSelect(t *testing.T) {
 		return s
 	}
 	tests := []struct {
-		name  string
-		names []string
-		keep  int
-		want  []string
+		name    string
+		names   []string
+		keep    int
+		protect string
+		want    []string
 	}{
-		{"keep 0 keeps all", []string{n(1), n(2), n(3)}, 0, nil},
-		{"keep more than there are", []string{n(1), n(2)}, 5, nil},
-		{"oldest first", []string{n(3), n(1), n(4), n(2)}, 2, []string{n(1), n(2)}},
-		{"strangers ignored", []string{"notes.txt", n(2), ".partial-1234", n(1), "cactustrade-x.db.age"}, 1, []string{n(1)}},
-		{"duplicates once", []string{n(1), n(1), n(2)}, 1, []string{n(1)}},
+		{"keep 0 keeps all", []string{n(1), n(2), n(3)}, 0, "", nil},
+		{"keep more than there are", []string{n(1), n(2)}, 5, "", nil},
+		{"oldest first", []string{n(3), n(1), n(4), n(2)}, 2, "", []string{n(1), n(2)}},
+		{"strangers ignored", []string{"notes.txt", n(2), ".partial-1234", n(1), "cactustrade-x.db.age"}, 1, "", []string{n(1)}},
+		{"duplicates once", []string{n(1), n(1), n(2)}, 1, "", []string{n(1)}},
+		// The clock was set back: an older file's name has a later time than the one just
+		// written. keep 1 keeps the new file all the same.
+		{"the file just written is never pruned", []string{n(9), n(2)}, 1, n(2), []string{n(9)}},
+		{"protected and newest", []string{n(1), n(2), n(3)}, 2, n(3), []string{n(1)}},
+		{"protected file not listed still counts", []string{n(1), n(2)}, 2, n(5), []string{n(1)}},
+		{"unparsed protect ignored", []string{n(1), n(2)}, 1, "x", []string{n(1)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := PruneSelect(tt.names, tt.keep); !slices.Equal(got, tt.want) {
+			if got := PruneSelect(tt.names, tt.keep, tt.protect); !slices.Equal(got, tt.want) {
 				t.Fatalf("PruneSelect = %v, want %v", got, tt.want)
 			}
 		})
@@ -312,7 +319,20 @@ func TestPruneSelectProperties(t *testing.T) {
 			parsed[s] = true
 		}
 		keep := r.IntN(10)
-		got := PruneSelect(names, keep)
+		protect := ""
+		if len(names) > 0 && r.IntN(2) == 0 {
+			protect = names[r.IntN(len(names))]
+		}
+		got := PruneSelect(names, keep, protect)
+		if parsed[protect] {
+			if slices.Contains(got, protect) {
+				t.Fatalf("case %d: pruned the protected %q", i, protect)
+			}
+			if keep > 0 && len(got) > max(0, len(parsed)-keep) {
+				t.Fatalf("case %d: pruned %d of %d with keep %d", i, len(got), len(parsed), keep)
+			}
+			continue
+		}
 		if keep == 0 && len(got) != 0 {
 			t.Fatalf("case %d: keep 0 pruned %v", i, got)
 		}

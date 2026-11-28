@@ -38,14 +38,24 @@ func backupLoop(ctx context.Context, svc backupRunner, log *slog.Logger, first, 
 }
 
 // openBackupFolder makes the backup folder ready (standalone: created 0700; in a container
-// it is the mount deploy.sh prepared) and returns it. A folder that cannot be made leaves
+// it is the mount deploy.sh prepared), removes the leftovers of interrupted backups, and
+// returns it. A folder that cannot be made leaves
 // backups from the app unavailable (logged); trading is not affected.
 func openBackupFolder(cfg config, src backup.Source, log *slog.Logger) *backup.Folder {
 	if err := os.MkdirAll(cfg.BackupDir, 0o700); err != nil {
 		log.Warn("backup folder not usable: backups from the app are unavailable", "folder", cfg.BackupDir, "err", err)
 		return nil
 	}
-	return backup.NewFolder(src, cfg.DataDir, cfg.BackupDir, cfg.BackupGroupRead)
+	f := backup.NewFolder(src, cfg.DataDir, cfg.BackupDir, cfg.BackupGroupRead)
+	// Leftovers of a backup a crash interrupted (older than backup.StaleAge) go now.
+	removed, err := f.RemoveStale(time.Now())
+	if len(removed) > 0 {
+		log.Info("removed leftovers of interrupted backups", "files", removed)
+	}
+	if err != nil {
+		log.Warn("removing leftovers of interrupted backups failed", "err", err)
+	}
+	return f
 }
 
 // deploymentBackupRecipients reads the deployment's backup recipients

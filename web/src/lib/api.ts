@@ -116,6 +116,8 @@ export type AnalysisPreset = components["schemas"]["AnalysisPreset"];
 export type BackupStatus = components["schemas"]["BackupStatus"];
 export type BackupSchedule = components["schemas"]["BackupSchedule"];
 export type BackupFile = components["schemas"]["BackupFile"];
+export type DataResetPreview = components["schemas"]["DataResetPreview"];
+export type DataResetResult = components["schemas"]["DataResetResult"];
 export type BackupRun = components["schemas"]["BackupRun"];
 export type BackupRecipient = components["schemas"]["BackupRecipient"];
 
@@ -382,6 +384,10 @@ export const api = {
   setBackupSchedule: (x: BackupSchedule) => request<BackupStatus>("PUT", "/api/v1/backups/schedule", x),
   setBackupRecipients: (recipients: string[]) => request<BackupStatus>("PUT", "/api/v1/backups/recipients", { recipients }),
   runBackup: () => request<BackupFile>("POST", "/api/v1/backups/run"),
+  // Reset all trading data (R49, admin, web session): the server checks everything again.
+  dataResetPreview: () => request<DataResetPreview>("GET", "/api/v1/system/data-reset"),
+  resetAllData: (confirm: string, password: string, wipeWatchlists: boolean) =>
+    request<DataResetResult>("POST", "/api/v1/system/data-reset", { confirm, password, wipeWatchlists }),
 };
 
 // backupFileUrl downloads one encrypted backup file with the session cookie (R48; web

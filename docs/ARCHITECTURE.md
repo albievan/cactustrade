@@ -370,6 +370,47 @@ raises a warning event and stops nothing).
   only (OD40); status and "Back up now" also with an admin API key. Every change, run,
   failure, prune and download is audited.
 
+### Data reset (R49)
+
+System → "Reset all trading data" (admin, web session, password, typed `DELETE ALL TRADING
+DATA`; `app.ResetAllData`, `GET|POST /api/v1/system/data-reset`). It wipes the trading data of
+**every** account (OD39) and nothing else; it never calls the broker except to reconcile.
+
+```
+ phrase → password (sign-in limiter) → rt.resetting (no start, auto-start or arm; kills,
+ disarms and exits go on) → ReconcileAll → domain.DataResetChecks → audit data.reset_started
+ → runBackup(trigger reset; a failure stops here, nothing wiped) → every account's ctl lock
+ (TryLock in id order, ≤ 5 s, else 409) → checks again → ports.DataReset.Reset (one
+ transaction) → gate disarms latched, every account unreconciled → unlock → audit data.reset,
+ warning event, e-mail to every admin and account owner → ReconcileAll
+```
+
+- **Checks** (pure, `domain.DataResetChecks`): every agent stopped or killed; no lease held by
+  another process; no real-money gate stored armed (one no longer in force is locked first);
+  every eToro account with keys reconciled OK by this run; no open agent position, no order
+  that is not final, no order created in the last 15 min — on **every** platform (Trading
+  212's orders live in the same tables); a backup can be taken (folder and recipient).
+- **Wiped** (`sqlstore.resetWiped` = `domain.DataResetWipedTables`): `orders`,
+  `agent_positions`, `trades`, `decisions`, `llm_calls`, `equity_snapshots`, `events`,
+  `reviews`; with the box ticked also `watchlist`. Settings derived from them:
+  `agent.aggressiveness_adapt.*`, `research.state.*`, `events.seen.*` (and
+  `watchlist.signals.*` with the watchlists).
+- **Kept** (`sqlstore.resetKept`): users, sessions, API keys, secrets, the audit log,
+  accounts and shares, every other setting, risk limits, **`risk_state`** (kill switch,
+  high-water mark: a reset never clears a kill), instrument blocks, instruments, Trading 212's
+  catalogue and instrument matches, themes, statement schedules, the outbox, password-reset
+  links, leases, `real_gates` rows (an armed one is set locked with `DisarmDataReset`) and
+  `goose_db_version`. `TestResetClassifiesEveryTable` (SQLite) and its MariaDB twin fail for
+  a table in neither list: **a migration that adds a table classifies it in `reset.go`** (and
+  adds it to `dumpSelects`).
+- **Afterwards.** `data_reset.at` counts like `restore.at` (`restoredAt` takes the later): a
+  gate armed before it is never in force. `history.since.<account>` is the floor of
+  `SyncTrades` (OD38): eToro's older trades are not read back in. The real-gate evidence is
+  read from the wiped decisions, orders and agent positions, so every real account needs N
+  new qualifying demo days (default 5) before it can be armed; the dialog warns per account.
+  Rows written between the backup and the wipe (a few seconds of events or scans) are in
+  neither.
+
 ## Accounts
 
 Every eToro call is made for one account: the app checks the caller's access (owner / trade /

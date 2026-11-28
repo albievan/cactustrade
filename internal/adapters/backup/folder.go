@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -334,4 +335,60 @@ func (f *Folder) Open(_ context.Context, name string) (io.ReadCloser, domain.Bac
 	}
 	p, _ := domain.ParseBackupName(name)
 	return file, domain.BackupFile{Name: name, Size: fi.Size(), At: p.At}, nil
+}
+
+// Leftovers of a backup that a crash interrupted: a partial file in the backup folder
+// (.partial-<16 hex>) and SQLite's plain copy in the data folder (.backup-<16 hex>.db and its
+// -wal, -shm, -journal files). Nothing else matches.
+var (
+	stalePartialRE = regexp.MustCompile(`^\.partial-[0-9a-f]{16}$`)
+	stalePlainRE   = regexp.MustCompile(`^\.backup-[0-9a-f]{16}\.db(-wal|-shm|-journal)?$`)
+)
+
+// StaleAge is how old a leftover must be before RemoveStale deletes it (a backup still being
+// written by another process is younger).
+const StaleAge = time.Hour
+
+// RemoveStale deletes, at start-up, the leftovers of interrupted backups last modified before
+// now − StaleAge: partial files in the backup folder and plain SQLite copies in the data
+// folder. Only regular files whose names match are touched (no symlinks, no subfolders). It
+// returns the names removed.
+func (f *Folder) RemoveStale(now time.Time) ([]string, error) {
+	var removed []string
+	var errs []error
+	for _, d := range []struct {
+		dir string
+		re  *regexp.Regexp
+	}{{f.dir, stalePartialRE}, {f.dataDir, stalePlainRE}} {
+		if d.dir == "" {
+			continue
+		}
+		root, err := os.OpenRoot(d.dir)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		entries, err := fs.ReadDir(root.FS(), ".")
+		if err != nil {
+			errs = append(errs, err)
+			_ = root.Close()
+			continue
+		}
+		for _, e := range entries {
+			if !d.re.MatchString(e.Name()) {
+				continue
+			}
+			fi, err := root.Lstat(e.Name())
+			if err != nil || !fi.Mode().IsRegular() || !fi.ModTime().Before(now.Add(-StaleAge)) {
+				continue
+			}
+			if err := root.Remove(e.Name()); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			removed = append(removed, e.Name())
+		}
+		_ = root.Close()
+	}
+	return removed, errors.Join(errs...)
 }

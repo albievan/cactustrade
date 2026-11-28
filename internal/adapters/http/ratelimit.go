@@ -91,7 +91,9 @@ func classify(method, path, pattern string) rateClass {
 		// R31: the analysis PDF reads a period of records and renders a PDF.
 		pattern == "GET /api/v1/analysis.pdf",
 		// R48: a backup copies the whole database; a download sends a whole file.
-		pattern == "POST /api/v1/backups/run", pattern == "GET /api/v1/backups/files/{name}":
+		pattern == "POST /api/v1/backups/run", pattern == "GET /api/v1/backups/files/{name}",
+		// R49: a data reset backs the whole database up first.
+		pattern == "POST /api/v1/system/data-reset":
 		return classExport
 	case method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions:
 		return classRead

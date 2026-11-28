@@ -356,6 +356,31 @@ type InstrumentMatches interface {
 	Delete(ctx context.Context, accountID string, id domain.InstrumentID) error // ErrNotFound
 }
 
+// ResetSpec is what a data reset wipes (PLAN R49): At is the reset's time (data_reset.at and
+// every account's history.since.<id>, OD38); WipeWatchlists also empties the watchlists and
+// their signals; AccountIDs are the accounts whose trade-history floor is set (all of them,
+// OD39).
+type ResetSpec struct {
+	At             time.Time
+	WipeWatchlists bool
+	AccountIDs     []string
+}
+
+// DataReset wipes all trading data in one transaction (PLAN R49): the orders, agent
+// positions, trades, decisions, LLM calls, equity snapshots, events and LLM reviews of every
+// account, the derived settings (and, when asked, the watchlists); every armed real-money
+// gate is locked (domain.DisarmDataReset). Users, sessions, keys, secrets, accounts, the
+// other settings, risk state (kill switch, high-water mark), instrument blocks, instruments,
+// themes, schedules, the mail outbox, gate records and the audit log are kept. Any failure
+// rolls everything back.
+type DataReset interface {
+	// Counts returns the rows of every table the reset knows (wiped and kept), by table name.
+	Counts(ctx context.Context) (map[string]int64, error)
+	// Reset wipes as spec says and returns the rows deleted per wiped table, plus
+	// "real_gates_locked" (gates locked) and "settings" (derived settings deleted).
+	Reset(ctx context.Context, spec ResetSpec) (map[string]int64, error)
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -385,6 +410,8 @@ type Store interface {
 	StatementSchedules() StatementSchedules
 	T212Instruments() T212Instruments
 	InstrumentMatches() InstrumentMatches
+	// DataReset wipes all trading data (PLAN R49).
+	DataReset() DataReset
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error

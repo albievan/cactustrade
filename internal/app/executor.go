@@ -79,6 +79,9 @@ type runtimeState struct {
 	views *viewCache
 	// sweeping is set while a sweep of the real gates runs (one at a time, review minor 4).
 	sweeping atomic.Bool
+	// resetting is set while all trading data is being reset (PLAN R49): no agent starts (by
+	// hand or by autonomy) and no gate is armed meanwhile; kills, disarms and exits go on.
+	resetting atomic.Bool
 	// warned holds the order warnings already raised in this process (kind + request id): a
 	// stuck order raises its warning once, not on every supervisor pass (live findings
 	// 2026-11-24).

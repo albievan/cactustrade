@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -29,9 +30,12 @@ const maxBackupRecipients = 10
 // maxBackupError bounds the error text kept in backup.last.
 const maxBackupError = 300
 
-// backupState serialises backup runs: one at a time in this process.
+// backupState serialises backup runs: one at a time in this process. running is set by
+// runBackup for as long as a run holds mu, so the status page reads it without touching the
+// lock (a TryLock there could make a concurrent run look busy).
 type backupState struct {
-	mu sync.Mutex
+	mu      sync.Mutex
+	running atomic.Bool
 }
 
 // storedBackupSchedule is the setting backup.schedule: the schedule and when it was set
@@ -202,9 +206,7 @@ func (s *Service) BackupStatus(ctx context.Context, p Principal) (BackupStatus, 
 	for _, r := range rs {
 		out.Recipients = append(out.Recipients, BackupRecipient{Key: r, Fingerprint: fingerprint(r), Source: src})
 	}
-	if out.Running = !s.backups.mu.TryLock(); !out.Running {
-		s.backups.mu.Unlock()
-	}
+	out.Running = s.backups.running.Load()
 	files, err := s.d.Backups.List(ctx)
 	if err != nil {
 		return out, fmt.Errorf("backups: listing the folder: %w: %w", domain.ErrUnavailable, err)
@@ -384,16 +386,21 @@ func (s *Service) runBackup(ctx context.Context, p Principal, trigger string) (d
 	if err := s.backupsAvailable(); err != nil {
 		return domain.BackupFile{}, err
 	}
-	rs, _ := s.backupRecipients(ctx)
-	if len(rs) == 0 {
-		return domain.BackupFile{}, domain.Invalid("recipients", "add an age public key first: backups are always encrypted")
-	}
 	if !s.backups.mu.TryLock() {
 		return domain.BackupFile{}, fmt.Errorf("a backup is running: %w", domain.ErrConflict)
 	}
 	defer s.backups.mu.Unlock()
+	s.backups.running.Store(true)
+	defer s.backups.running.Store(false)
 	start := s.d.Clock.Now().UTC()
-	f, err := s.d.Backups.Write(ctx, rs, start)
+	var f domain.BackupFile
+	err := domain.Invalid("recipients", "add an age public key first: backups are always encrypted")
+	// Without a recipient the run fails like any other (backup.last, audit, warning event):
+	// a schedule left on without one is not silent. backup.last moves the scheduler on to
+	// the next slot, so this is reported once per slot, not every minute.
+	if rs, _ := s.backupRecipients(ctx); len(rs) > 0 {
+		f, err = s.d.Backups.Write(ctx, rs, start)
+	}
 	run := domain.BackupRun{At: start, Trigger: trigger, Ms: s.d.Clock.Now().Sub(start).Milliseconds()}
 	if err != nil {
 		msg := err.Error()
@@ -420,13 +427,14 @@ func (s *Service) runBackup(ctx context.Context, p Principal, trigger string) (d
 		s.d.Log.ErrorContext(ctx, "backups: storing the last run failed", "err", serr)
 	}
 	s.audit(ctx, p, "backup.run", f.Name, fmt.Sprintf("trigger %s, %d bytes, %d ms", trigger, f.Size, run.Ms))
-	s.pruneBackups(ctx, p)
+	s.pruneBackups(ctx, p, f.Name)
 	return f, nil
 }
 
 // pruneBackups deletes the oldest backup files beyond the schedule's keep (0 = keep all).
-// Only names that parse as backups are touched. Called after a successful backup only.
-func (s *Service) pruneBackups(ctx context.Context, p Principal) {
+// Only names that parse as backups are touched, never written (the file just written).
+// Called after a successful backup only.
+func (s *Service) pruneBackups(ctx context.Context, p Principal, written string) {
 	keep := s.backupSchedule(ctx).Keep
 	if keep <= 0 {
 		return
@@ -442,7 +450,7 @@ func (s *Service) pruneBackups(ctx context.Context, p Principal) {
 	}
 	var removed []string
 	var errs []error
-	for _, n := range domain.PruneSelect(names, keep) {
+	for _, n := range domain.PruneSelect(names, keep, written) {
 		if err := s.d.Backups.Remove(ctx, n); err != nil {
 			errs = append(errs, err)
 			continue

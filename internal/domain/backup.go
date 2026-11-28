@@ -293,8 +293,11 @@ func ParseBackupName(name string) (ParsedBackupName, bool) {
 }
 
 // PruneSelect returns the backup files to delete so that the newest keep remain: the
-// oldest first. keep 0 keeps all. Names that do not parse are never returned.
-func PruneSelect(names []string, keep int) []string {
+// oldest first. keep 0 keeps all. Names that do not parse are never returned, nor is
+// protect (the file just written, "" = none): it always counts as one of the keep, even when
+// an older file's name carries a later time (a clock set back), so a backup never prunes
+// itself.
+func PruneSelect(names []string, keep int, protect string) []string {
 	if keep <= 0 {
 		return nil
 	}
@@ -304,6 +307,10 @@ func PruneSelect(names []string, keep int) []string {
 	}
 	var ok []named
 	seen := map[string]bool{}
+	if _, good := ParseBackupName(protect); good {
+		seen[protect] = true
+		keep--
+	}
 	for _, n := range names {
 		if p, good := ParseBackupName(n); good && !seen[n] {
 			seen[n] = true

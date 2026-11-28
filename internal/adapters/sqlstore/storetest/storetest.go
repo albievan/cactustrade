@@ -777,4 +777,5 @@ func Run(t *testing.T, s ports.Store) {
 	runRealGates(t, s, admin.ID, t0)
 	runStatements(t, s, t0)
 	runT212(t, s, admin.ID, t0)
+	runReset(t, s, admin.ID, t0)
 }

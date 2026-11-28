@@ -240,6 +240,20 @@ present, else the app's own image; the identity is passed over stdin, never as a
 argument or variable inside a container. With `--ssh-access`, copy the backup to the host and
 run `--restore` there.
 
+### Reset all trading data
+
+System → **Reset all trading data** (admin, in the web app) starts every account's trading
+record afresh: orders, the positions cactusTrade opened, trade history, decisions, LLM calls,
+equity history, events and reviews of all accounts are deleted (the watchlists too, only if
+you tick the box). Users, accounts, keys, settings, limits, kill switches and the audit log
+stay. It is refused while an agent runs or is paused, a real-money gate is armed, an account
+is not reconciled, cactusTrade has a position or an order open, or an order is younger than
+15 minutes. An encrypted backup is taken first (a backup recipient must be set under Setup →
+Backups); restore it with `cactustrade restore` or `deploy.sh --restore` to undo the reset.
+**A reset deletes the demo history real trading is armed on:** a real-money account needs
+its required qualifying demo days again (default 5) before it can be armed. Every admin and
+account owner gets an e-mail.
+
 ## Real money
 
 > **Real money is behind two keys** (the owner's written consent, D39, enabled the build:

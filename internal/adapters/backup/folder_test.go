@@ -336,3 +336,58 @@ func TestFolderRefusesPathsAndStrangers(t *testing.T) {
 		t.Fatal("listing a missing folder must fail")
 	}
 }
+
+// TestFolderRemoveStale: at start-up, partial files in the backup folder and plain SQLite
+// copies in the data folder older than an hour are removed; young ones, other names,
+// backups, subfolders and symlinks stay (review minor 6 of R48).
+func TestFolderRemoveStale(t *testing.T) {
+	dataDir, dir := folders(t)
+	now := time.Date(2027, 1, 1, 12, 0, 0, 0, time.UTC)
+	old, young := now.Add(-2*time.Hour), now.Add(-10*time.Minute)
+	put := func(d, name string, at time.Time) {
+		t.Helper()
+		p := filepath.Join(d, name)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(dir, ".partial-0123456789abcdef", old)
+	put(dir, ".partial-fedcba9876543210", young)
+	put(dir, ".partial-short", old)
+	put(dir, "cactustrade-20200101T000000Z.db.age", old)
+	put(dir, "notes.txt", old)
+	put(dataDir, ".backup-0123456789abcdef.db", old)
+	put(dataDir, ".backup-0123456789abcdef.db-wal", old)
+	put(dataDir, ".backup-aaaaaaaaaaaaaaaa.db", young)
+	put(dataDir, "cactustrade.db", old)
+	if err := os.Mkdir(filepath.Join(dir, ".partial-1111111111111111"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Symlink(filepath.Join(dataDir, "cactustrade.db"), filepath.Join(dir, ".partial-2222222222222222")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := NewFolder(fakeSource{driver: "sqlite"}, dataDir, dir, false).RemoveStale(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".partial-0123456789abcdef", ".backup-0123456789abcdef.db", ".backup-0123456789abcdef.db-wal"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("removed %v, want %v", got, want)
+	}
+	for _, n := range names(t, dir) {
+		if n == want[0] {
+			t.Fatalf("%s still there", n)
+		}
+	}
+	if left := names(t, dataDir); len(left) != 2 {
+		t.Fatalf("data folder: %v", left)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "cactustrade.db")); err != nil {
+		t.Fatal("the database was touched")
+	}
+}

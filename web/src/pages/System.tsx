@@ -2,11 +2,13 @@ import { useState } from "react";
 import { api, errorText } from "../lib/api";
 import { useMode } from "../lib/mode";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DataResetDialog } from "../components/DataResetDialog";
 import { TradingStatements } from "../components/TradingStatements";
 import { useSession } from "../lib/session";
 
-// Version and database for everyone; the reload / restart actions for admins; trading
-// statements (R30) for everyone who owns an account (the server decides).
+// Version and database for everyone; the reload / restart / reset-all-trading-data (R49)
+// actions for admins; trading statements (R30) for everyone who owns an account (the server
+// decides).
 export function System() {
   const status = useMode();
   const { can } = useSession();
@@ -15,6 +17,7 @@ export function System() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
+  const [resetting, setResetting] = useState(false);
   async function reload() {
     setError(""); setMsg("");
     try {
@@ -73,8 +76,23 @@ export function System() {
         </div>
         <button className="btn btn-outline-danger" onClick={() => setAsking(true)} disabled={busy}><i className="bi bi-power me-1" />{busy ? "Restarting…" : "Restart"}</button>
       </div></div>
+      <div className="card mt-3 border-danger"><div className="card-body d-flex flex-wrap gap-3 align-items-center">
+        <div className="me-auto">
+          <div className="fw-semibold">Reset all trading data</div>
+          <div className="small text-secondary">Wipes the orders, positions history, trades, decisions, LLM calls, equity history, events and
+            reviews of every account, after an encrypted backup. Users, accounts, keys, settings, limits and kill switches are kept.
+            Real trading needs new qualifying demo days afterwards.</div>
+        </div>
+        <button className="btn btn-outline-danger" onClick={() => setResetting(true)} disabled={busy}><i className="bi bi-trash me-1" />Reset all trading data</button>
+      </div></div>
       </>}
       <TradingStatements />
+      {resetting && (
+        <DataResetDialog onCancel={() => setResetting(false)} onDone={(r) => {
+          setResetting(false); setError("");
+          setMsg(`All trading data was reset. The backup taken first: ${r.backupFile}. Every account reconciles again before its agent can start.`);
+        }} />
+      )}
       {asking && (
         <ConfirmDialog title="Restart cactusTrade now?" confirmLabel="Restart" icon="power" onCancel={() => setAsking(false)}
           onConfirm={() => { setAsking(false); void restart(); }}>

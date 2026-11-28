@@ -173,6 +173,12 @@ type Store struct {
 	GatesErr error
 	// T212Err makes every T212Instruments call fail (e.g. a failed catalogue write).
 	T212Err error
+	// ResetErr makes the data reset fail with nothing changed (a rolled-back transaction);
+	// ResetCalls counts the resets done.
+	ResetErr   error
+	ResetCalls int
+	// OnReset, when set, runs after each successful data reset (e.g. to fail the broker).
+	OnReset func()
 }
 
 type instrRec struct {

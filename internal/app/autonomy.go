@@ -255,7 +255,7 @@ func (s *Service) autoStart(ctx context.Context, a domain.Account) bool {
 	case err != nil || domain.AgentState(raw) != domain.AgentStopped:
 		return false
 	}
-	if s.agentLoopBlocked() != "" {
+	if s.agentLoopBlocked() != "" || s.rt.resetting.Load() { // no start during a data reset (R49)
 		return false
 	}
 	if err := s.startable(ctx, a); err != nil {

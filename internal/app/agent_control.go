@@ -62,6 +62,9 @@ func (s *Service) StartAgent(ctx context.Context, p Principal, accountID string)
 	if why := s.agentLoopBlocked(); why != "" {
 		return AgentStatus{}, fmt.Errorf("app.StartAgent: %s: %w", why, domain.ErrUnavailable)
 	}
+	if s.rt.resetting.Load() { // PLAN R49: no start while all trading data is reset
+		return AgentStatus{}, fmt.Errorf("app.StartAgent: %s: try again when it is done: %w", msgResetting, domain.ErrConflict)
+	}
 	if err := s.startable(ctx, v.Account); err != nil {
 		return AgentStatus{}, fmt.Errorf("app.StartAgent: %w", s.fixable(p, v, err))
 	}
