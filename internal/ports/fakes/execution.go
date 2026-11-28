@@ -224,7 +224,7 @@ func (r orderRepo) Update(_ context.Context, prev, next domain.Order) error {
 	}
 	cur.State, cur.Reason, cur.Sends = next.State, next.Reason, next.Sends
 	cur.SentAt, cur.UpdatedAt = next.SentAt, next.UpdatedAt
-	cur.PositionID, cur.EtoroOrderID = next.PositionID, next.EtoroOrderID
+	cur.PositionID, cur.EtoroOrderID, cur.Filled = next.PositionID, next.EtoroOrderID, next.Filled
 	r.s.exec.orders[prev.RequestID] = cur
 	return nil
 }
@@ -276,6 +276,19 @@ func (r orderRepo) ListSince(_ context.Context, accountID string, since time.Tim
 
 type agentPosRepo struct{ s *Store }
 
+// withSold sets p.Sold as the SQL store reads it: the filled quantity of our own Trading 212
+// stops and sales of the position. The caller holds the lock.
+func (r agentPosRepo) withSold(p domain.AgentPosition) domain.AgentPosition {
+	p.Sold = 0
+	for _, o := range r.s.exec.orders {
+		if o.AccountID == p.AccountID && o.PositionID == p.PositionID && o.OnPlatform() == domain.PlatformTrading212 &&
+			(o.Kind == domain.OrderStop || o.Kind == domain.OrderClose) {
+			p.Sold += o.Filled
+		}
+	}
+	return p
+}
+
 func (r agentPosRepo) Add(_ context.Context, p domain.AgentPosition) error {
 	defer r.s.lock()()
 	if _, ok := r.s.accounts[p.AccountID]; !ok {
@@ -297,7 +310,7 @@ func (r agentPosRepo) Get(_ context.Context, accountID string, id int64) (domain
 	if !ok {
 		return domain.AgentPosition{}, domain.ErrNotFound
 	}
-	return p, nil
+	return r.withSold(p), nil
 }
 
 func (r agentPosRepo) Update(_ context.Context, p domain.AgentPosition) error {
@@ -311,12 +324,23 @@ func (r agentPosRepo) Update(_ context.Context, p domain.AgentPosition) error {
 	return nil
 }
 
+func (r agentPosRepo) SetCloseRequest(_ context.Context, accountID string, id int64, requestID string) error {
+	defer r.s.lock()()
+	cur, ok := r.s.exec.positions[accountID][id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	cur.CloseRequestID = requestID
+	r.s.exec.positions[accountID][id] = cur
+	return nil
+}
+
 func (r agentPosRepo) ListOpen(_ context.Context, accountID string) ([]domain.AgentPosition, error) {
 	defer r.s.lock()()
 	var out []domain.AgentPosition
 	for _, p := range r.s.exec.positions[accountID] {
 		if p.Open() {
-			out = append(out, p)
+			out = append(out, r.withSold(p))
 		}
 	}
 	slices.SortFunc(out, func(a, b domain.AgentPosition) int {
@@ -330,7 +354,7 @@ func (r agentPosRepo) ListSince(_ context.Context, accountID string, since time.
 	var out []domain.AgentPosition
 	for _, p := range r.s.exec.positions[accountID] {
 		if !p.OpenedAt.Before(since) {
-			out = append(out, p)
+			out = append(out, r.withSold(p))
 		}
 	}
 	slices.SortFunc(out, func(a, b domain.AgentPosition) int {

@@ -122,10 +122,109 @@ func runT212Positions(t *testing.T, s ports.Store, acct string, t0 time.Time) {
 	if g, _ := ap.Get(ctx, acct, p.PositionID); g != p {
 		t.Fatalf("after update: %+v", g)
 	}
+	// SetCloseRequest writes only the close order: a closed position stays closed (review B3).
+	if err := ap.SetCloseRequest(ctx, acct, p.PositionID, "t-sell-2"); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := ap.Get(ctx, acct, p.PositionID); g.CloseRequestID != "t-sell-2" || !g.ClosedAt.Equal(p.ClosedAt) {
+		t.Fatalf("after SetCloseRequest: %+v", g)
+	}
+	if err := ap.SetCloseRequest(ctx, acct, 404, "x"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetCloseRequest of an unknown position: %v", err)
+	}
+	p.CloseRequestID = "t-sell-2"
 	bad := p
 	bad.PositionID, bad.Ticker = 2, strings.Repeat("y", 65)
 	if err := ap.Add(ctx, bad); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("ticker of 65: %v", err)
+	}
+	runT212Sold(t, s, acct, t0)
+}
+
+// runT212Sold: a Trading 212 position's Sold is the filled quantity of its own stops and sales
+// (migration 00017), stored with each order's state; buys, cancels, eToro orders and other
+// positions' orders do not count (D44).
+func runT212Sold(t *testing.T, s ports.Store, acct string, t0 time.Time) {
+	ctx := context.Background()
+	const pid int64 = 777_000_001
+	p := domain.AgentPosition{
+		AccountID: acct, PositionID: pid, OpenRequestID: "s-buy", Instrument: 1001, Direction: domain.Long, OpenedAt: t0.Add(time.Minute),
+		Ticker: "VOD_l_EQ", Quantity: 10_000_000,
+	}
+	if err := s.AgentPositions().Add(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	or := s.Orders()
+	// fill moves an order to state with Filled set, in the same write.
+	fill := func(o domain.Order, state domain.OrderState, filled domain.Micros) {
+		t.Helper()
+		o, err := domain.NewOrder(o, t0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := or.Create(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+		sent, err := o.Transition(domain.OrderSent, t0.Add(time.Second), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := or.Update(ctx, o, sent); err != nil {
+			t.Fatal(err)
+		}
+		next, err := sent.Transition(state, t0.Add(2*time.Second), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		next.Filled, next.EtoroOrderID = filled, 1
+		if err := or.Update(ctx, sent, next); err != nil {
+			t.Fatal(err)
+		}
+		if g, _ := or.Get(ctx, o.RequestID); g.Filled != filled {
+			t.Fatalf("%s: Filled read back as %s", o.RequestID, g.Filled)
+		}
+	}
+	t212 := func(id string, k domain.OrderKind, q domain.Micros, positionID int64) domain.Order {
+		return domain.Order{
+			RequestID: id, AccountID: acct, Mode: domain.ModeDemo, Kind: k, Platform: domain.PlatformTrading212, Direction: domain.Long,
+			Instrument: 1001, Ticker: "VOD_l_EQ", Quantity: q, PositionID: positionID, StopLoss: 90_000_000,
+		}
+	}
+	buy := t212("s-buy", domain.OrderOpen, 10_000_000, 0)
+	buy.Amount, buy.Entry, buy.StopLoss = 1_000, 100_000_000, 90_000_000
+	fill(buy, domain.OrderFilled, 10_000_000)                                                 // a buy: not a sale
+	fill(t212("s-stop", domain.OrderStop, 10_000_000, pid), domain.OrderCancelled, 2_000_000) // a stop partly filled, then cancelled
+	fill(t212("s-sell1", domain.OrderClose, 8_000_000, pid), domain.OrderCancelled, 3_000_000)
+	fill(t212("s-sell2", domain.OrderClose, 5_000_000, pid), domain.OrderPartial, 1_000_000)  // still working
+	fill(t212("s-other", domain.OrderClose, 4_000_000, pid+1), domain.OrderFilled, 4_000_000) // another position
+	fill(domain.Order{RequestID: "s-etoro", AccountID: acct, Mode: domain.ModeDemo, Kind: domain.OrderClose, PositionID: pid, Instrument: 7},
+		domain.OrderFilled, 9_000_000) // an eToro order of the same position id
+	const want domain.Micros = 6_000_000
+	if g, err := s.AgentPositions().Get(ctx, acct, pid); err != nil || g.Sold != want || g.Unsold() != 4_000_000 {
+		t.Fatalf("Get: Sold %s Unsold %s (%v), want %s", g.Sold, g.Unsold(), err, want)
+	}
+	for name, list := range map[string]func() ([]domain.AgentPosition, error){
+		"ListOpen":  func() ([]domain.AgentPosition, error) { return s.AgentPositions().ListOpen(ctx, acct) },
+		"ListSince": func() ([]domain.AgentPosition, error) { return s.AgentPositions().ListSince(ctx, acct, t0) },
+	} {
+		l, err := list()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, g := range l {
+			if g.PositionID == pid {
+				found = true
+				if g.Sold != want {
+					t.Fatalf("%s: Sold %s, want %s", name, g.Sold, want)
+				}
+			} else if g.PositionID == 9_123_456_789 && g.Sold != 0 {
+				t.Fatalf("%s: position %d sold %s", name, g.PositionID, g.Sold)
+			}
+		}
+		if !found {
+			t.Fatalf("%s: position %d missing", name, pid)
+		}
 	}
 }
 

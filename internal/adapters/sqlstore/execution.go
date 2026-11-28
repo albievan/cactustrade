@@ -67,7 +67,7 @@ type orders struct{ db *sql.DB }
 // orderCols: etoro_order_id holds the broker's order id for both platforms (migration 00016
 // kept its name).
 const orderCols = "request_id, account_id, mode, kind, direction, instrument_id, amount_cents, entry_micros, stop_micros, take_profit_micros, " +
-	"position_id, target_order_id, etoro_order_id, state, reason, sends, created_at, sent_at, updated_at, platform, ticker, quantity_micros"
+	"position_id, target_order_id, etoro_order_id, state, reason, sends, created_at, sent_at, updated_at, platform, ticker, quantity_micros, filled_micros"
 
 // maxTicker is the longest Trading 212 ticker stored (VARCHAR(64)).
 const maxTicker = 64
@@ -93,11 +93,11 @@ func (r orders) Create(ctx context.Context, o domain.Order) error {
 	if len(o.Ticker) > maxTicker {
 		return fmt.Errorf("orders.Create: ticker: %w", domain.ErrInvalid)
 	}
-	_, err = r.db.ExecContext(ctx, "INSERT INTO orders ("+orderCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	_, err = r.db.ExecContext(ctx, "INSERT INTO orders ("+orderCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		o.RequestID, o.AccountID, string(o.Mode), string(o.Kind), string(o.Direction), int64(o.Instrument), int64(o.Amount),
 		int64(o.Entry), int64(o.StopLoss), int64(o.TakeProfit), o.PositionID, o.TargetOrderID, o.EtoroOrderID,
 		string(o.State), clip(o.Reason, maxReason), o.Sends, us(o.CreatedAt), usZ(o.SentAt), us(o.UpdatedAt),
-		platformOf(o.Platform), o.Ticker, int64(o.Quantity))
+		platformOf(o.Platform), o.Ticker, int64(o.Quantity), int64(o.Filled))
 	if isDuplicate(err) {
 		return fmt.Errorf("orders.Create: request id %s: %w", o.RequestID, domain.ErrConflict)
 	}
@@ -110,14 +110,14 @@ func (r orders) Create(ctx context.Context, o domain.Order) error {
 func scanOrder(sc interface{ Scan(...any) error }) (domain.Order, error) {
 	var o domain.Order
 	var mode, kind, dir, state, platform string
-	var inst, amount, entry, stop, tp, created, sent, updated, qty int64
+	var inst, amount, entry, stop, tp, created, sent, updated, qty, filled int64
 	err := sc.Scan(&o.RequestID, &o.AccountID, &mode, &kind, &dir, &inst, &amount, &entry, &stop, &tp,
 		&o.PositionID, &o.TargetOrderID, &o.EtoroOrderID, &state, &o.Reason, &o.Sends, &created, &sent, &updated,
-		&platform, &o.Ticker, &qty)
+		&platform, &o.Ticker, &qty, &filled)
 	if err != nil {
 		return domain.Order{}, err
 	}
-	o.Platform, o.Quantity = domain.Platform(platform), domain.Micros(qty)
+	o.Platform, o.Quantity, o.Filled = domain.Platform(platform), domain.Micros(qty), domain.Micros(filled)
 	o.Mode, o.Kind, o.Direction, o.State = domain.TradingMode(mode), domain.OrderKind(kind), domain.Direction(dir), domain.OrderState(state)
 	o.Instrument, o.Amount = domain.InstrumentID(inst), domain.Cents(amount)
 	o.Entry, o.StopLoss, o.TakeProfit = domain.Micros(entry), domain.Micros(stop), domain.Micros(tp)
@@ -139,9 +139,9 @@ func (r orders) Update(ctx context.Context, prev, next domain.Order) error {
 	if next.RequestID != prev.RequestID {
 		return fmt.Errorf("orders.Update: request id changed: %w", domain.ErrInvalid)
 	}
-	res, err := r.db.ExecContext(ctx, "UPDATE orders SET state = ?, reason = ?, sends = ?, sent_at = ?, updated_at = ?, position_id = ?, etoro_order_id = ? "+
+	res, err := r.db.ExecContext(ctx, "UPDATE orders SET state = ?, reason = ?, sends = ?, sent_at = ?, updated_at = ?, position_id = ?, etoro_order_id = ?, filled_micros = ? "+
 		"WHERE request_id = ? AND state = ? AND sends = ?",
-		string(next.State), clip(next.Reason, maxReason), next.Sends, usZ(next.SentAt), us(next.UpdatedAt), next.PositionID, next.EtoroOrderID,
+		string(next.State), clip(next.Reason, maxReason), next.Sends, usZ(next.SentAt), us(next.UpdatedAt), next.PositionID, next.EtoroOrderID, int64(next.Filled),
 		prev.RequestID, string(prev.State), prev.Sends)
 	err = mustAffect(res, err)
 	if !errors.Is(err, domain.ErrNotFound) {
@@ -206,6 +206,13 @@ type agentPositions struct{ db *sql.DB }
 
 const agentPosCols = "account_id, position_id, open_request_id, instrument_id, direction, opened_at, closed_at, close_request_id, ticker, quantity_micros"
 
+// agentPosSelect reads a position with its Sold: the share quantity our own Trading 212 stops
+// and sales of it have filled (migration 00017), summed from the orders, so it is exactly what
+// was stored with each order's state (D44). eToro positions have no such orders (0).
+const agentPosSelect = "SELECT p.account_id, p.position_id, p.open_request_id, p.instrument_id, p.direction, p.opened_at, p.closed_at, p.close_request_id, " +
+	"p.ticker, p.quantity_micros, (SELECT COALESCE(SUM(o.filled_micros), 0) FROM orders o WHERE o.account_id = p.account_id AND o.position_id = p.position_id " +
+	"AND o.platform = 'trading212' AND o.kind IN ('stop', 'close')) FROM agent_positions p "
+
 func (r agentPositions) Add(ctx context.Context, p domain.AgentPosition) error {
 	ok, err := accountExists(ctx, r.db, p.AccountID)
 	if err != nil {
@@ -231,18 +238,18 @@ func (r agentPositions) Add(ctx context.Context, p domain.AgentPosition) error {
 
 func scanAgentPos(sc interface{ Scan(...any) error }) (domain.AgentPosition, error) {
 	var p domain.AgentPosition
-	var inst, opened, closed, qty int64
+	var inst, opened, closed, qty, sold int64
 	var dir string
-	if err := sc.Scan(&p.AccountID, &p.PositionID, &p.OpenRequestID, &inst, &dir, &opened, &closed, &p.CloseRequestID, &p.Ticker, &qty); err != nil {
+	if err := sc.Scan(&p.AccountID, &p.PositionID, &p.OpenRequestID, &inst, &dir, &opened, &closed, &p.CloseRequestID, &p.Ticker, &qty, &sold); err != nil {
 		return domain.AgentPosition{}, err
 	}
-	p.Quantity = domain.Micros(qty)
+	p.Quantity, p.Sold = domain.Micros(qty), domain.Micros(sold)
 	p.Instrument, p.Direction, p.OpenedAt, p.ClosedAt = domain.InstrumentID(inst), domain.Direction(dir), fromUS(opened), fromUSZ(closed)
 	return p, nil
 }
 
 func (r agentPositions) Get(ctx context.Context, accountID string, positionID int64) (domain.AgentPosition, error) {
-	p, err := scanAgentPos(r.db.QueryRowContext(ctx, "SELECT "+agentPosCols+" FROM agent_positions WHERE account_id = ? AND position_id = ?", accountID, positionID))
+	p, err := scanAgentPos(r.db.QueryRowContext(ctx, agentPosSelect+"WHERE p.account_id = ? AND p.position_id = ?", accountID, positionID))
 	if err != nil {
 		return domain.AgentPosition{}, fmt.Errorf("agentPositions.Get: %w", notFound(err))
 	}
@@ -258,13 +265,23 @@ func (r agentPositions) Update(ctx context.Context, p domain.AgentPosition) erro
 	return nil
 }
 
+// SetCloseRequest stores only the close order of a position (never its closed time).
+func (r agentPositions) SetCloseRequest(ctx context.Context, accountID string, positionID int64, requestID string) error {
+	err := mustAffect(r.db.ExecContext(ctx, "UPDATE agent_positions SET close_request_id = ? WHERE account_id = ? AND position_id = ?",
+		requestID, accountID, positionID))
+	if err != nil {
+		return fmt.Errorf("agentPositions.SetCloseRequest: %w", err)
+	}
+	return nil
+}
+
 func (r agentPositions) ListOpen(ctx context.Context, accountID string) ([]domain.AgentPosition, error) {
-	return r.list(ctx, "ListOpen", "SELECT "+agentPosCols+" FROM agent_positions WHERE account_id = ? AND closed_at = 0 ORDER BY opened_at, position_id", accountID)
+	return r.list(ctx, "ListOpen", agentPosSelect+"WHERE p.account_id = ? AND p.closed_at = 0 ORDER BY p.opened_at, p.position_id", accountID)
 }
 
 // ListSince returns the account's positions opened at or after since, oldest first.
 func (r agentPositions) ListSince(ctx context.Context, accountID string, since time.Time) ([]domain.AgentPosition, error) {
-	return r.list(ctx, "ListSince", "SELECT "+agentPosCols+" FROM agent_positions WHERE account_id = ? AND opened_at >= ? ORDER BY opened_at, position_id",
+	return r.list(ctx, "ListSince", agentPosSelect+"WHERE p.account_id = ? AND p.opened_at >= ? ORDER BY p.opened_at, p.position_id",
 		accountID, us(since))
 }
 

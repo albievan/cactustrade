@@ -129,6 +129,9 @@ type Order struct {
 	// Quantity is the Trading 212 share quantity (always positive; the side comes from the
 	// kind); 0 for eToro.
 	Quantity Micros
+	// Filled is the Trading 212 share quantity Trading 212 reports filled so far (0 ≤ Filled ≤
+	// Quantity; 0 for eToro). It is stored with the order's state in the same write.
+	Filled Micros
 	// Direction of the position opened (open) or closed (close).
 	Direction  Direction
 	Instrument InstrumentID

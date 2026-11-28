@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -198,6 +199,20 @@ func TestT212AgentRefusals(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, StepReview},
+		{"the owner buys the share during the review (review c)", func(t *testing.T, ag *t212Agent) {
+			r := &agentReviewer{answer: func(context.Context, ports.ReviewInput) (domain.Verdict, error) {
+				ag.sim.Held[barc] = domain.T212Position{Ticker: barc, Quantity: 2_000_000, QuantityAvailable: 2_000_000, Cost: 400}
+				return domain.Verdict{Kind: domain.VerdictApprove, SizeBp: 10_000}, nil
+			}}
+			ag.svc.d.LLM = r
+			pr, err := ag.svc.SaveLLMProfile(ag.ctx, ag.admin, domain.LLMProfile{Name: "Desk", LLMConfig: domain.LLMConfig{Provider: "openai", Model: "gpt"}}, sp("k"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ag.svc.SetLLMSettings(ag.ctx, ag.admin, domain.LLMSettings{Enabled: true, Active: pr.ID}); err != nil {
+				t.Fatal(err)
+			}
+		}, StepPrices},
 		{"a stale eToro quote", func(t *testing.T, ag *t212Agent) { ag.m.QuoteAge = time.Hour }, StepCosts},
 		{"the size is under the minimum order value", func(t *testing.T, ag *t212Agent) {
 			ag.cand = func(id domain.InstrumentID) *domain.Candidate {

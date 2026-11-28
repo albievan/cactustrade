@@ -498,6 +498,19 @@ func (s *T212Sim) Fill(id int64) bool {
 	return ok
 }
 
+// FillPart fills q more of active order id at its price (a stop at its stop price); the rest
+// stays active (PARTIALLY_FILLED) until it is filled or cancelled.
+func (s *T212Sim) FillPart(id int64, q domain.Micros) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.init()
+	o, ok := s.active[id]
+	if ok {
+		s.fill(o, q, s.fillPrice(o))
+	}
+	return ok
+}
+
 // TriggerStop moves ticker's last price to price: every active sell stop at or above it
 // becomes a market order and fills at price (slippage below the stop is possible). It returns
 // how many fired.

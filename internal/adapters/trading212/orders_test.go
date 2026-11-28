@@ -259,6 +259,9 @@ func TestRealAccountNoMutation(t *testing.T) {
 	if e.demo.count()+e.live.count() != 0 {
 		t.Fatalf("requests sent: demo %d live %d", e.demo.count(), e.live.count())
 	}
+	if g := e.sec.Gets; g != 0 {
+		t.Fatalf("%d keys read for a real account (want none)", g)
+	}
 	// The mutation core refuses a real account too, before its keys.
 	if err := e.c.mutate(ctxFor(liveAcct), request{op: OpCancelOrder, id: 1}, nil); !errors.Is(err, domain.ErrRealModeGated) {
 		t.Fatalf("mutate: %v", err)
@@ -393,5 +396,21 @@ func TestToOrderSideFromQuantity(t *testing.T) {
 	}
 	if o := cv.toOrder(orderWire{ID: 1}); o.Side != "" {
 		t.Fatalf("%+v", o)
+	}
+}
+
+// TestAccountAsOfIsTheCashRead (review B4): the account's AsOf is when the cash was read, not
+// when the positions read (which may wait for its rate limit) ended.
+func TestAccountAsOfIsTheCashRead(t *testing.T) {
+	e := newEnv(t)
+	orderFixtures(t, e)
+	start := e.now
+	e.c.limiter(demoAcct.ID).Block(OpPositions, e.now.Add(10*time.Second))
+	a, err := e.c.Account(ctxFor(demoAcct))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.AsOf.Equal(start) || !e.now.After(start) {
+		t.Fatalf("AsOf %s, the cash was read at %s (clock now %s)", a.AsOf, start, e.now)
 	}
 }

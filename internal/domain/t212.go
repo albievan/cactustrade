@@ -26,10 +26,11 @@ const T212QuantityDecimals = 0
 
 // Trading 212 constants of PLAN R45.
 const (
-	// T212SizeBufferBp: a quantity is sized at the ask plus 1 %, and its reservation is the
-	// quantity at the ask plus 1 % (T212-g), so a market buy that fills a little higher is
-	// still paid for.
-	T212SizeBufferBp BasisPoints = 100
+	// T212SizeBufferBp: a quantity is sized at the ask plus 2 %, and its reservation is the
+	// quantity at the ask plus 2 % (T212-g), so any fill the fill check accepts (within
+	// T212FillToleranceBp of the quote) is paid for within the reservation and the remaining
+	// budget (review of R45.6-R45.8, d).
+	T212SizeBufferBp = T212FillToleranceBp
 	// T212FillToleranceBp: a fill more than 2 % from the eToro entry quote closes the
 	// position at once and blocks the instrument (D42, T212-j).
 	T212FillToleranceBp BasisPoints = 200
@@ -149,6 +150,23 @@ func (o Order) validateT212() error {
 	return nil
 }
 
+// T212Sellable is the most a new sell of ours (a stop or a sale) may sell of one Trading 212
+// position (D44, T212-i): what cactusTrade bought and has not sold yet (bought − sold),
+// capped by what Trading 212 makes available for trading, less what our sell orders that
+// are not final may still sell (resting), cut down to the quantity step. Never below 0. The
+// owner's own shares in the same ticker are never in it: they are neither bought nor sold by
+// cactusTrade, so a partly filled sale cannot let the next one reach them.
+func T212Sellable(bought, sold, available, resting, step Micros) Micros {
+	q := min(bought-sold, available) - resting
+	if q <= 0 {
+		return 0
+	}
+	if step > 0 {
+		q -= q % step
+	}
+	return q
+}
+
 // T212IntentFor builds the Trading 212 request for an order of ours. It is the only place a
 // T212Intent is built. It refuses anything but a valid buy, stop or sell of a Trading 212
 // practice account that is created or sent: a real-money account (ErrRealModeGated, D41 g),
@@ -244,7 +262,7 @@ func bigProd(vs ...int64) *big.Int {
 	return p
 }
 
-// T212Quantity is the quantity a size buys (T212-g): size ÷ (price per share × (1 + 1 %)),
+// T212Quantity is the quantity a size buys (T212-g): size ÷ (price per share × (1 + 2 %)),
 // truncated (never rounded up) to whole shares, or to T212QuantityStep when fractional.
 // perShare is T212MinorPerShare of the ask. 0 when nothing fits.
 func T212Quantity(size Cents, perShare Micros, fractional bool) Micros {
@@ -261,7 +279,7 @@ func T212Quantity(size Cents, perShare Micros, fractional bool) Micros {
 }
 
 // T212Reserve is the cash a buy of quantity at perShare reserves (T212-g): quantity × price ×
-// (1 + 1 %), rounded up to the minor unit. For a quantity from T212Quantity it never exceeds
+// (1 + 2 %), rounded up to the minor unit. For a quantity from T212Quantity it never exceeds
 // the size it came from.
 func T212Reserve(quantity, perShare Micros) Cents {
 	if quantity <= 0 || perShare <= 0 {

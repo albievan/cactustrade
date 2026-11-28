@@ -502,6 +502,15 @@ func TestT212ExecutorClose(t *testing.T) {
 	t.Run("the position is gone: settled, nothing sold", func(t *testing.T) {
 		x, ap, _ := filled(t)
 		delete(x.sim.Held, barc)
+		// Right after the fill a missing position may only be listed late (review B2): the
+		// sale waits, the position stays ours.
+		if _, err := x.svc.closeT212Position(x.ctx, x.a, ap, "flatten", nil); !errors.Is(err, domain.ErrUnavailable) {
+			t.Fatalf("within the grace: %v", err)
+		}
+		if !x.position(t, ap.PositionID).Open() {
+			t.Fatal("settled as gone right after its fill")
+		}
+		x.clock.Advance(fillVisibleAfter)
 		if _, err := x.svc.closeT212Position(x.ctx, x.a, ap, "flatten", nil); err != nil {
 			t.Fatal(err)
 		}

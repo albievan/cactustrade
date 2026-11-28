@@ -329,10 +329,10 @@ func TestT212QuantityAndReserve(t *testing.T) {
 		want     Micros
 		reserve  Cents
 	}{
-		// $1 000 at $189.10 (+1 % = 190.991): 5.23 shares → 5; 5 × 189.10 × 1.01 = 954.9550 → 95 496 cents.
-		{"USD", 100_000, 18_910_000_000, 5 * wholeShare, 95_496},
-		// £500 at 250.5 GBX (+1 % = 253.005 p): 197.6 shares → 197; 197 × 250.5 × 1.01 = 49 841.985 → 49 842 pence.
-		{"GBX", 50_000, 250_500_000, 197 * wholeShare, 49_842},
+		// $1 000 at $189.10 (+2 % = 192.882): 5.18 shares → 5; 5 × 189.10 × 1.02 = 964.41 → 96 441 cents.
+		{"USD", 100_000, 18_910_000_000, 5 * wholeShare, 96_441},
+		// £500 at 250.5 GBX (+2 % = 255.51 p): 195.7 shares → 195; 195 × 250.5 × 1.02 = 49 824.45 → 49 825 pence.
+		{"GBX", 50_000, 250_500_000, 195 * wholeShare, 49_825},
 		{"too small", 100, 18_910_000_000, 0, 0},
 		{"no size", 0, 18_910_000_000, 0, 0},
 		{"no price", 100_000, 0, 0, 0},
@@ -732,6 +732,7 @@ func TestValidateForPlatform(t *testing.T) {
 		{"Trading 212 without a budget or a minimum", t212, func(l *RiskLimits) { l.TradingBudget, l.MinOrderValue = 0, 0 }, PlatformTrading212, ""},
 		{"Trading 212 without a budget, with a minimum", t212, func(l *RiskLimits) { l.TradingBudget = 0 }, PlatformTrading212, ""},
 		{"Trading 212 fractional while unverified", t212, func(l *RiskLimits) { l.T212Fractional = true }, PlatformTrading212, "t212Fractional"},
+		{"Trading 212 fractional while unverified, no budget", t212, func(l *RiskLimits) { l.T212Fractional, l.TradingBudget = true, 0 }, PlatformTrading212, "t212Fractional"},
 		{"Saxo", etoro, func(*RiskLimits) {}, PlatformSaxo, "platform"},
 	}
 	for _, tc := range tests {

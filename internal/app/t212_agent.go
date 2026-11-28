@@ -331,6 +331,11 @@ func (s *Service) t212Decide(ctx, pctx context.Context, a domain.Account, l doma
 		it.fail(StepPrices, "reading the Trading 212 account failed: %v", err)
 		return reject(domain.DecisionRejectedRisk)
 	}
+	if _, held := acct.Position(m.Ticker); held {
+		// T212-i on the fresh figures too (review c): the owner may have bought it meanwhile.
+		it.fail(StepPrices, "Trading 212 now holds %s", m.Ticker)
+		return reject(domain.DecisionRejectedRisk)
+	}
 	fresh, err := s.t212Portfolio(ctx, a, acct)
 	if err != nil {
 		it.fail(StepPrices, "reading our positions failed: %v", err)

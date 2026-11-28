@@ -233,6 +233,9 @@ type AgentPositions interface {
 	Get(ctx context.Context, accountID string, positionID int64) (domain.AgentPosition, error)
 	// Update stores ClosedAt and CloseRequestID (the rest never changes).
 	Update(ctx context.Context, p domain.AgentPosition) error
+	// SetCloseRequest stores only CloseRequestID: a caller's stale copy of the position can
+	// never reopen or re-date it (Trading 212 sales, review B3). ErrNotFound when unknown.
+	SetCloseRequest(ctx context.Context, accountID string, positionID int64, requestID string) error
 	// ListOpen returns the account's positions not closed yet, oldest first.
 	ListOpen(ctx context.Context, accountID string) ([]domain.AgentPosition, error)
 	// ListSince returns the account's positions opened at or after since, open or closed,
