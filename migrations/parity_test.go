@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,39 @@ func TestMigrationParity(t *testing.T) {
 			b, _ := fs.ReadFile(FS, dir+"/"+n)
 			if !strings.Contains(string(b), "-- +goose Up") || !strings.Contains(string(b), "-- +goose Down") {
 				t.Errorf("%s/%s needs -- +goose Up and -- +goose Down", dir, n)
+			}
+		}
+	}
+}
+
+// oneStatementFrom is the first version held to one statement per migration: MariaDB commits
+// every DDL statement implicitly, so a migration with two could stop half applied with no
+// goose version recorded (re-review 2026-11-28, minor 4; the earlier ones are deployed).
+const oneStatementFrom = 17
+
+// TestMigrationOneStatement: from oneStatementFrom on, the Up section of every migration
+// holds exactly one SQL statement, in both dialects.
+func TestMigrationOneStatement(t *testing.T) {
+	for _, dir := range []string{"sqlite", "mariadb"} {
+		for _, n := range names(t, dir) {
+			m := versionRE.FindStringSubmatch(n)
+			if m == nil {
+				continue
+			}
+			if v, err := strconv.Atoi(m[1]); err != nil || v < oneStatementFrom {
+				continue
+			}
+			b, _ := fs.ReadFile(FS, dir+"/"+n)
+			up, _, _ := strings.Cut(string(b), "-- +goose Down")
+			stmts := 0
+			for line := range strings.SplitSeq(up, "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !strings.HasPrefix(line, "--") && strings.HasSuffix(line, ";") {
+					stmts++
+				}
+			}
+			if stmts != 1 {
+				t.Errorf("%s/%s: %d statements in its Up section, want 1 (MariaDB commits each DDL statement)", dir, n, stmts)
 			}
 		}
 	}

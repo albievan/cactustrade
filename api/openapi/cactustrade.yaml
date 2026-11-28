@@ -1786,9 +1786,10 @@ paths:
       summary: Say what became of a Trading 212 order whose outcome is unknown (owner, web UI)
       description: |
         T212-d: Trading 212 takes no request id, so an order whose answer was lost and that
-        matches more than one Trading 212 order waits for the account owner: name the Trading
-        212 order it is (same ticker, side, type and quantity, not another order of ours), or
-        say it was not placed. Audited.
+        matches more than one Trading 212 order (or, for a stop or a sale, none) waits for the
+        account owner: name the Trading 212 order it is (same ticker, side, type and quantity,
+        not another order of ours), or say it was not placed. "Not placed" is refused (409)
+        while Trading 212 lists any order that could be it. Audited.
       requestBody:
         required: true
         content:
@@ -1797,6 +1798,34 @@ paths:
       responses:
         "200":
           description: The order after the resolution
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/orders/{requestId}/settle:
+    parameters:
+      - { name: requestId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [agent]
+      operationId: settleOrder
+      summary: Settle the Trading 212 position a buy opened that Trading 212 does not list (owner, web UI)
+      description: |
+        Re-review 2026-11-28 (ADR-008 T212-s): a position of ours that Trading 212 does not
+        list, or whose stop or sale it lists nowhere, is never taken for closed by cactusTrade
+        (a late listing must not make it sell the owner's shares). The account owner, having
+        checked the account in Trading 212, settles it: the position is closed in cactusTrade's
+        records only, its unlisted stop or sale abandoned, nothing is sent, and cactusTrade
+        never sells anything of it afterwards. Refused (409) while Trading 212 still works a
+        stop or sale of ours on it, an order of ours on it waits to be resolved, or Trading 212
+        lists the position and every order of ours on it. requestId is the buy's. Audited.
+      responses:
+        "200":
+          description: The buy whose position was settled
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
@@ -4291,6 +4320,7 @@ components:
         quantity: { $ref: "#/components/schemas/Decimal" }
         filledQuantity: { $ref: "#/components/schemas/Decimal" }
         resolvable: { type: boolean, description: "a Trading 212 order whose outcome is unknown and that the account owner may resolve (POST /orders/{requestId}/resolve)" }
+        settleable: { type: boolean, description: "a Trading 212 buy whose position Trading 212 does not list, or whose stop or sale it lists nowhere, that the account owner may settle (POST /orders/{requestId}/settle)" }
         kindLabel: { type: string, description: "what the order is, worded by the server, e.g. \"Buy GOOG\", \"Cancel request for GOOG (buy order 396359836)\", \"Close request for GOOG (position 3649965576)\"" }
         direction: { type: string, description: "long, short or empty (cancel)" }
         instrumentId: { type: integer, format: int64 }

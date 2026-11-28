@@ -456,7 +456,9 @@ orders from Trading 212.
 - **Supervisor** (`t212_supervisor.go`, every 10 s with the eToro ones): risk state and drawdown
   from the account summary, stale buys cancelled, sales due before the close, every position's
   stop checked against the open orders (a missing one → sold; out of session → placed again), a
-  vanished position settled. It stores its read in the view cache for the dashboard.
+  position Trading 212 does not list kept open until a recorded stop or sale fill or its owner
+  settles it (ADR-008 T212-s; entries wait, danger event). It stores its read in the view cache
+  for the dashboard.
 - **Reconciliation** (`t212_reconcile.go`): part of `ReconcileAll` at start-up, before any loop;
   orders resolved, positions matched, holdings cactusTrade did not buy left alone (OD1), orphan
   stops of ours cancelled; any position without a confirmed stop keeps it unreconciled.

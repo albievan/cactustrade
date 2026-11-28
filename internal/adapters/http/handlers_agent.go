@@ -225,6 +225,9 @@ func toOrder(o app.OrderView) Order {
 		Reason: o.ReasonLabel(), Sends: o.Sends, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt,
 		Market: string(o.Market), Exchange: o.Market.Label(), Platform: Platform(o.OnPlatform()), Resolvable: o.Resolvable(),
 	}
+	if o.Settleable {
+		x.Settleable = ptr(true)
+	}
 	if o.Ticker != "" {
 		x.Ticker = ptr(o.Ticker)
 	}

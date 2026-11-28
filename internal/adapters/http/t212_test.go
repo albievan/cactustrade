@@ -184,6 +184,25 @@ func TestT212Endpoints(t *testing.T) {
 		t.Fatalf("resolve again %d %v", code, m)
 	}
 
+	// Settling a position Trading 212 does not list: owner, web session, a buy that opened one
+	// (re-review 2026-11-28).
+	set := "/api/v1/orders/lost-1/settle"
+	if code, _, _ := x.do("POST", set, ``); code != 403 {
+		t.Fatalf("settle without CSRF %d", code)
+	}
+	if code, body := x.bearer("POST", set, ``, key); code != 403 {
+		t.Fatalf("settle with a key %d %s", code, body)
+	}
+	if code, m, _ := x.do("POST", "/api/v1/orders/nope/settle", ``, csrf...); code != 404 {
+		t.Fatalf("settle unknown %d %v", code, m)
+	}
+	if code, m, _ := x.do("POST", set, ``, csrf...); code != 409 {
+		t.Fatalf("settle an order that opened no position %d %v", code, m)
+	}
+	if code := x.getJSON("/api/v1/orders?accountId="+pr, &orders); code != 200 || orders[0]["settleable"] != nil {
+		t.Fatalf("orders %d %v", code, orders)
+	}
+
 	// The kill switch on: the price source cannot change (409).
 	if code, m, _ := x.do("POST", "/api/v1/agent/kill?accountId="+pr, `{"reason":"drill"}`, csrf...); code != 200 {
 		t.Fatalf("kill %d %v", code, m)

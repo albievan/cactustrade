@@ -92,3 +92,14 @@ func (s *Server) ResolveOrder(w http.ResponseWriter, r *http.Request, requestID 
 	}
 	writeJSON(w, http.StatusOK, toOrder(o))
 }
+
+// SettleOrder handles POST /api/v1/orders/{requestId}/settle: the owner settles the Trading
+// 212 position a buy opened that Trading 212 does not list (web session; audited).
+func (s *Server) SettleOrder(w http.ResponseWriter, r *http.Request, requestID string) {
+	o, err := s.svc.SettleOrder(r.Context(), state(r).principal, requestID)
+	if err != nil {
+		s.failAgent(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toOrder(o))
+}

@@ -34,6 +34,12 @@ type t212PropStats struct {
 	// ownerBuys: the owner bought shares of a ticker cactusTrade holds; partialSales: a sale
 	// of ours filled only in part (D44: the next one never reaches the owner's shares).
 	ownerBuys, partialSales int
+	// ownerResolves: the owner resolved a stop or a sale of ours Trading 212 never listed as
+	// not placed (re-review 2026-11-28: never abandoned without an answer).
+	ownerResolves int
+	// lagged: a filled order Trading 212 did not list in its history yet (T4, T5b; re-review
+	// 2026-11-28: never taken for gone meanwhile).
+	lagged int
 }
 
 func (p *t212PropStats) add(o t212PropStats) {
@@ -48,6 +54,8 @@ func (p *t212PropStats) add(o t212PropStats) {
 	p.partials += o.partials
 	p.ownerBuys += o.ownerBuys
 	p.partialSales += o.partialSales
+	p.ownerResolves += o.ownerResolves
+	p.lagged += o.lagged
 }
 
 func (p t212PropStats) unexercised() []string {
@@ -55,7 +63,8 @@ func (p t212PropStats) unexercised() []string {
 	for name, n := range map[string]int{
 		"stop failures": p.stopFailures, "non-conforming fills": p.nonConforming, "lost answers": p.lost, "stops fired": p.stopHits,
 		"kills": p.kills, "drawdown trips": p.trips, "resets": p.resets, "partial fills": p.partials,
-		"owner buys in our tickers": p.ownerBuys, "partly filled sales": p.partialSales,
+		"owner buys in our tickers": p.ownerBuys, "partly filled sales": p.partialSales, "owner resolutions": p.ownerResolves,
+		"history lag": p.lagged,
 	} {
 		if n == 0 {
 			out = append(out, name)
@@ -167,12 +176,22 @@ func runT212Scenario(t *testing.T, seed uint64, ticks int) t212PropStats {
 		return strategy.Decision{Reason: "no signal (scenario)"}
 	}
 	ag.sim.OnPlace = s.checkPlace
+	// Half the scenarios: Trading 212 lists a filled order in its history only 5-25 s after
+	// its fill (a stop that fired, a sale, a buy), so for a while it is listed nowhere.
+	var lag *t212HistoryLag
+	if s.r.IntN(2) == 0 {
+		lag = &t212HistoryLag{T212Broker: ag.sim, now: ag.clock.Now, lag: time.Duration(5+s.r.IntN(21)) * time.Second}
+		ag.svc.d.T212 = lag
+	}
 	s.setLimits()
 	if _, err := ag.svc.StartAgent(ag.ctx, ag.owner, ag.a.ID); err != nil {
 		t.Fatal(err)
 	}
 	for range ticks {
 		s.step()
+	}
+	if lag != nil {
+		s.stats.lagged = lag.hidden
 	}
 	s.stats.partials = ag.sim.Outcomes[fakes.T212PartialFill]
 	s.stats.lost = ag.sim.Outcomes[fakes.T212LostApplied] + ag.sim.Outcomes[fakes.T212LostNotApplied] + ag.sim.Outcomes[fakes.T212RateLimited]
@@ -189,6 +208,30 @@ func runT212Scenario(t *testing.T, seed uint64, ticks int) t212PropStats {
 		}
 	}
 	return s.stats
+}
+
+// t212HistoryLag is Trading 212 listing a filled order in its history only lag after its
+// last fill (T4, T5b unverified): until then it is listed nowhere.
+type t212HistoryLag struct {
+	ports.T212Broker
+	now    func() time.Time
+	lag    time.Duration
+	mu     sync.Mutex
+	hidden int
+}
+
+func (h *t212HistoryLag) History(ctx context.Context, ticker, cursor string) (domain.T212HistoryPage, error) {
+	hp, err := h.T212Broker.History(ctx, ticker, cursor)
+	if err != nil {
+		return hp, err
+	}
+	now := h.now()
+	n := len(hp.Orders)
+	hp.Orders = slices.DeleteFunc(hp.Orders, func(o domain.BrokerOrder) bool { return o.FilledQuantity > 0 && now.Sub(o.FilledAt) < h.lag })
+	h.mu.Lock()
+	h.hidden += n - len(hp.Orders)
+	h.mu.Unlock()
+	return hp, nil
 }
 
 // addShares adds n more LSE shares (eToro 100…, tickers SAl_EQ …) to the catalogue, the
@@ -268,6 +311,7 @@ func (s *t212Scenario) step() {
 	now := ag.clock.Now()
 	ag.clock.Advance(domain.NextDecision(now, AgentBarInterval, AgentDecisionDelay).Sub(now))
 	s.control()
+	s.ownerResolves()
 	s.movePrices()
 	s.ownerBuys()
 	s.propose()
@@ -305,6 +349,31 @@ func (s *t212Scenario) step() {
 	}
 	ag.sim.Script, ag.sim.ReadErr, ag.m.Err = nil, nil, nil
 	s.checkAfter("agent")
+}
+
+// ownerResolves: the owner answers the danger alert about a stop or a sale of ours whose
+// answer was lost and that Trading 212 does not list T212MatchAfter after it was sent, as the
+// runbook says: checked in Trading 212, resolved as not placed. That is refused while Trading
+// 212 lists an order that could be it (it is matched instead).
+func (s *t212Scenario) ownerResolves() {
+	ag := s.ag
+	open, err := ag.store.Orders().ListOpen(ag.ctx, ag.a.ID)
+	if err != nil {
+		s.fail("orders: %v", err)
+	}
+	for _, o := range open {
+		if o.OnPlatform() != domain.PlatformTrading212 || o.State != domain.OrderUnknown || o.EtoroOrderID > 0 ||
+			(o.Kind != domain.OrderStop && o.Kind != domain.OrderClose) || ag.clock.Now().Sub(o.SentAt) < domain.T212MatchAfter {
+			continue
+		}
+		switch _, err := ag.svc.ResolveT212Order(ag.ctx, ag.owner, o.RequestID, 0, true); {
+		case err == nil:
+			s.stats.ownerResolves++
+		case errors.Is(err, domain.ErrConflict):
+		default:
+			s.fail("resolving %s: %v", o.RequestID, err)
+		}
+	}
 }
 
 // ownerBuys: now and then the owner buys 1-5 shares by hand of a ticker an open position of

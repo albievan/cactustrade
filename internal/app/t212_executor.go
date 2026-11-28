@@ -27,7 +27,10 @@ import (
 //     instrument blocked;
 //   - a close cancels the stop first, confirms it is gone, reads the positions fresh and
 //     sells at most what cactusTrade bought and Trading 212 makes available (T212-i), and
-//     only while the instrument's market is in session (T212-o).
+//     only while the instrument's market is in session (T212-o);
+//   - a stop or a sale of ours becomes final only on an answer of Trading 212's that gives its
+//     filled quantity, and a position of ours closes only on a recorded stop or sale fill or
+//     by its owner: "listed nowhere" is never "gone" (t212_unlisted.go, T212-s).
 
 // Trading 212 execution timings. Offsets are measured from the order's send.
 var (
@@ -289,15 +292,24 @@ func (s *Service) t212Lookup(ctx context.Context, a domain.Account, id int64, ti
 }
 
 // pollT212 reads an order of ours that has a Trading 212 id once and folds the answer in.
+// One Trading 212 does not list is left as it is (t212Find).
 func (s *Service) pollT212(ctx context.Context, a domain.Account, o domain.Order) (domain.Order, error) {
-	if o.EtoroOrderID <= 0 {
-		return o, nil
+	n, _, err := s.pollT212Listed(ctx, a, o)
+	return n, err
+}
+
+// pollT212Listed is pollT212 that also reports whether Trading 212 lists the order (an order
+// without a Trading 212 id, or final here, counts as listed: it is not read).
+func (s *Service) pollT212Listed(ctx context.Context, a domain.Account, o domain.Order) (domain.Order, bool, error) {
+	if o.EtoroOrderID <= 0 || o.State.Final() {
+		return o, true, nil
 	}
-	bo, found, err := s.t212Lookup(ctx, a, o.EtoroOrderID, o.Ticker)
+	bo, found, err := s.t212Find(ctx, a, o)
 	if err != nil || !found {
-		return o, err
+		return o, found, err
 	}
-	return s.applyT212(ctx, a, o, bo)
+	n, err := s.applyT212(ctx, a, o, bo)
+	return n, true, err
 }
 
 // applyT212 folds what Trading 212 reports about one of our orders into it, by kind.
@@ -897,12 +909,17 @@ func (s *Service) closeT212Position(ctx context.Context, a domain.Account, ap do
 	}
 	pos, held := acct.Position(ap.Ticker)
 	if !held || pos.Quantity <= 0 {
+		// A fresh fill may not be listed yet (review B2), and a fill Trading 212 lists late is
+		// never settled as gone (re-review 2026-11-28): only a recorded stop or sale fill, or the
+		// owner, closes it. Nothing is sold meanwhile.
 		if acct.AsOf.Sub(ap.OpenedAt) < fillVisibleAfter {
-			// A fresh fill may not be listed yet (review B2): never settled as gone so soon.
-			return domain.Order{}, fmt.Errorf("t212.closePosition: %s is not listed yet (a fresh fill): %w", ap.Ticker, domain.ErrUnavailable)
+			return domain.Order{}, fmt.Errorf("t212.closePosition: %s: %w: %w", ap.Ticker, errT212NotListedYet, domain.ErrUnavailable)
 		}
 		s.t212Vanished(ctx, a, ap)
-		return domain.Order{}, nil
+		if cur, err := s.d.Store.AgentPositions().Get(ctx, a.ID, ap.PositionID); err == nil && !cur.Open() {
+			return domain.Order{}, nil
+		}
+		return domain.Order{}, fmt.Errorf("t212.closePosition: %s: %w: %w", ap.Ticker, errT212NotListed, domain.ErrUnavailable)
 	}
 	frac := s.t212Fractional(ctx, a)
 	resting, err := s.t212RestingSells(ctx, a.ID, ap.Ticker, "")
@@ -1031,53 +1048,29 @@ func (s *Service) applyT212Sell(ctx context.Context, a domain.Account, o domain.
 	return o, nil
 }
 
-// t212Vanished settles an agent position Trading 212 no longer holds: closed by its stop when
-// the history says the stop filled, else gone (sold by hand, or by a stop whose fill is not
-// listed yet). A stop of ours still active on it is cancelled (it would sell the owner's
-// shares).
-func (s *Service) t212Vanished(ctx context.Context, a domain.Account, ap domain.AgentPosition) {
-	stops, err := s.t212OurStops(ctx, a.ID, ap.PositionID)
-	if err != nil {
-		s.d.Log.WarnContext(ctx, "reading the stops of a vanished position failed", "account", a.ID, "position", ap.PositionID, "err", err)
-	}
-	for _, st := range stops {
-		if st.EtoroOrderID <= 0 {
-			continue
-		}
-		if st, err = s.pollT212(ctx, a, st); err == nil && st.State == domain.OrderFilled {
-			continue // applyT212Stop settled it (closed by the stop when it sold everything)
-		}
-		if !st.State.Final() {
-			if _, _, err := s.cancelT212Stop(ctx, a, st, "its position is gone"); err != nil {
-				s.d.Log.WarnContext(ctx, "cancelling the stop of a vanished position failed", "account", a.ID, "position", ap.PositionID, "err", err)
-			}
-		}
-	}
-	if cur, err := s.d.Store.AgentPositions().Get(ctx, a.ID, ap.PositionID); err == nil && !cur.Open() {
-		return
-	}
-	s.markClosed(ctx, a, ap, "no longer held at Trading 212 (its stop, or sold outside cactusTrade)")
-}
-
-// cancelT212Stop cancels a stop of ours and confirms it: gone (cancelled, or no longer listed
-// anywhere, or ended after selling only part: that part is in the position's Sold), fired (it
+// cancelT212Stop cancels a stop of ours and confirms it: gone (Trading 212 says cancelled or
+// rejected, or ended after selling only part: that part is in the position's Sold), fired (it
 // filled in full first: the position is settled, T212-i), or neither (still active, e.g.
-// CANCELLING: the caller waits).
+// CANCELLING, or listed nowhere: the caller waits). A stop Trading 212 lists neither as active
+// nor in its history is never taken for gone (re-review 2026-11-28): it may have fired, and
+// its fill not be listed yet (T4, T5b); a sale now could sell the owner's shares (D44). At
+// most maxCancels cancels are sent for one stop, one at a time.
 func (s *Service) cancelT212Stop(ctx context.Context, a domain.Account, st domain.Order, why string) (gone, fired bool, err error) {
-	if _, err := s.cancelT212(ctx, a, st, why); err != nil && !errors.Is(err, domain.ErrNotFound) {
+	r, err := s.t212Cancels(ctx, a, st)
+	if err != nil {
 		return false, false, err
 	}
-	bo, found, err := s.t212Lookup(ctx, a, st.EtoroOrderID, st.Ticker)
+	if !r.inFlight && r.sent < maxCancels {
+		if _, err := s.cancelT212(ctx, a, st, why); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return false, false, err
+		}
+	}
+	bo, found, err := s.t212Find(ctx, a, st)
 	switch {
 	case err != nil:
 		return false, false, err
 	case !found:
-		// Neither active nor in the history pages read: taken as gone. A sell of the held
-		// quantity can never short (a stop left behind finds nothing to sell).
-		if _, err := s.move(ctx, st, domain.OrderCancelled, "cancelled: no longer listed by Trading 212", nil); err != nil {
-			s.d.Log.WarnContext(ctx, "recording a cancelled stop failed", "account", a.ID, "request", st.RequestID, "err", err)
-		}
-		return true, false, nil
+		return false, false, nil
 	}
 	cur, err := s.applyT212Stop(ctx, a, st, bo)
 	if err != nil {
@@ -1190,8 +1183,9 @@ func (s *Service) t212Claimed(ctx context.Context, a domain.Account, o domain.Or
 // resolveT212 resolves an order of ours whose Trading 212 id is not known (its answer was
 // lost, or the process stopped while it was sent; T212-d): matched in the open orders and
 // the history (domain.MatchT212Order): one candidate → adopted and followed; none in both
-// lists T212MatchAfter after the send → abandoned (never resent); several → it stays unknown
-// with an alert until the owner resolves it (ResolveT212Order). An order created but never
+// lists T212MatchAfter after the send → a buy is abandoned (never resent), a stop or a sale
+// stays unknown with a danger alert until it is matched or the owner resolves it (T212-s);
+// several → it stays unknown with an alert until the owner resolves it (ResolveT212Order). An order created but never
 // sent is abandoned. It returns the latest stored version and a problem ("" = resolved, or
 // legitimately waiting).
 func (s *Service) resolveT212(ctx context.Context, a domain.Account, o domain.Order) (domain.Order, string) {
@@ -1230,6 +1224,25 @@ func (s *Service) resolveT212(ctx context.Context, a domain.Account, o domain.Or
 	if s.d.Clock.Now().Sub(o.SentAt) < domain.T212MatchAfter {
 		return o, fmt.Sprintf("order %s is not matched yet", o.RequestID)
 	}
+	if o.Kind == domain.OrderStop || o.Kind == domain.OrderClose {
+		// A stop or a sale is never abandoned without an answer (re-review 2026-11-28): it may
+		// have been placed and filled unlisted (T4, T5b), and a sale after it could sell the
+		// owner's shares (D44). It stays unknown (its quantity holds further sales back) until
+		// it is matched or the owner resolves it.
+		n := o
+		if o.State != domain.OrderUnknown {
+			if m, err := s.move(ctx, o, domain.OrderUnknown, fmt.Sprintf("not found in Trading 212's order lists %s after it was sent", domain.T212MatchAfter), nil); err == nil {
+				n = m
+			}
+		}
+		if s.rt.firstWarning("order.unmatched", o.RequestID) {
+			s.orderEvent(ctx, a, domain.Long, "order.unmatched", domain.SeverityDanger, t212Verb(o)+" "+label+": not found at Trading 212",
+				fmt.Sprintf("its answer was lost and Trading 212 lists no such order %s after it was sent. cactusTrade does not take it for unplaced: "+
+					"nothing more of the position is sold and the account takes no new entries until it is matched, or the owner resolves it "+
+					"(Orders → resolve) after checking it in Trading 212. Request %s", domain.T212MatchAfter, o.RequestID))
+		}
+		return n, fmt.Sprintf("order %s is not found at Trading 212: the owner must resolve it", o.RequestID)
+	}
 	n, err := s.abandon(ctx, a, o, fmt.Sprintf("Trading 212 lists no such order %s after it was sent", domain.T212MatchAfter))
 	if err != nil {
 		return o, fmt.Sprintf("order %s: %v", o.RequestID, err)
@@ -1255,7 +1268,8 @@ func (s *Service) adoptT212(ctx context.Context, a domain.Account, o domain.Orde
 // ResolveT212Order resolves an order of ours on a Trading 212 practice account whose outcome
 // is unknown (T212-d): the owner names the Trading 212 order it is (brokerOrderID, which must
 // have the order's ticker, side, type and quantity and not be another order's), or says it
-// was not placed (notPlaced: abandoned). Owner of the account, web session. Audited.
+// was not placed (notPlaced: abandoned; refused while Trading 212 lists any order that could
+// be it). It takes the account's exit lock. Owner of the account, web session. Audited.
 func (s *Service) ResolveT212Order(ctx context.Context, p Principal, requestID string, brokerOrderID int64, notPlaced bool) (domain.Order, error) {
 	if err := s.authorize(p, domain.PermAgentControl); err != nil {
 		return domain.Order{}, err
@@ -1282,7 +1296,33 @@ func (s *Service) ResolveT212Order(ctx context.Context, p Principal, requestID s
 	if err := s.mayT212(ctx, a); err != nil {
 		return domain.Order{}, err
 	}
+	// One exit at a time per account: what the resolution settles (a stop or a sale) never
+	// races the kill or the supervisor (re-review 2026-11-28, minor 1).
+	ctx, unlock, err := s.t212ExitLock(ctx, a.ID)
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("app.ResolveT212Order: %w", err)
+	}
+	defer unlock()
+	if o, err = s.d.Store.Orders().Get(ctx, requestID); err != nil {
+		return domain.Order{}, fmt.Errorf("order %s: %w", requestID, err)
+	}
+	if o.State != domain.OrderUnknown || o.EtoroOrderID > 0 {
+		return domain.Order{}, fmt.Errorf("order %s was resolved meanwhile: %w", requestID, domain.ErrConflict)
+	}
+	cands, err := s.t212Candidates(ctx, a, o)
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("app.ResolveT212Order: %w", err)
+	}
+	claimed, err := s.t212Claimed(ctx, a, o)
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("app.ResolveT212Order: %w", err)
+	}
 	if notPlaced {
+		// Never "not placed" while Trading 212 lists an order that could be it (minor 2): it
+		// may be ours, and its fill would go unrecorded.
+		if _, res := domain.MatchT212Order(o, cands, claimed); res != domain.T212MatchNone {
+			return domain.Order{}, fmt.Errorf("an order Trading 212 lists could be this one (same ticker, side, type and quantity, sent from the API around its time): name it instead: %w", domain.ErrConflict)
+		}
 		n, err := s.abandon(ctx, a, o, "the owner resolved it: not placed at Trading 212")
 		if err != nil {
 			return o, err
@@ -1291,10 +1331,6 @@ func (s *Service) ResolveT212Order(ctx context.Context, p Principal, requestID s
 		return n, nil
 	}
 	bo, found, err := s.t212Lookup(ctx, a, brokerOrderID, o.Ticker)
-	if err != nil {
-		return domain.Order{}, fmt.Errorf("app.ResolveT212Order: %w", err)
-	}
-	claimed, err := s.t212Claimed(ctx, a, o)
 	if err != nil {
 		return domain.Order{}, fmt.Errorf("app.ResolveT212Order: %w", err)
 	}

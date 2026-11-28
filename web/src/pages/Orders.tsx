@@ -64,6 +64,7 @@ export function Orders() {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [resolving, setResolving] = useState<Order | null>(null);
+  const [settling, setSettling] = useState<Order | null>(null);
   // R50: filters, search, grouping, sort and folded groups are the user's preferences
   const { filters, setFilters, search, setSearch, groupBy, setGroupBy, sort, setSort, closed, setClosed } =
     useTableView("orders.table", { sort: newestFirst });
@@ -81,6 +82,7 @@ export function Orders() {
   const rows = useMemo(() => sortRows(applyFilters(orders ?? [], columns, filters, search), columns, sort), [orders, columns, filters, search, sort]);
   const groupCol = groupable.find((c) => c.key === groupBy);
   const unknown = (orders ?? []).filter((o) => o.resolvable);
+  const unlisted = (orders ?? []).filter((o) => o.settleable);
   const groups = useMemo(() => groupRows(rows, groupCol), [rows, groupCol]);
   const filtering = search !== "" || Object.values(filters).some(Boolean);
   const setFilter = (k: string, v: string) => setFilters((f) => ({ ...f, [k]: v }));
@@ -114,11 +116,20 @@ export function Orders() {
       {unknown.length > 0 && (
         <div className="alert alert-warning py-2 small" role="status">
           <i className="bi bi-exclamation-triangle me-1" />{unknown.length === 1 ? "A Trading 212 order's" : `${unknown.length} Trading 212 orders'`} outcome
-          is unknown: new entries on the account wait until it is matched. When more than one Trading 212 order could be it, its
-          owner says which one it is (Resolve), or that it was not placed.
+          is unknown: new entries on the account wait until it is matched. When more than one Trading 212 order could be it (or,
+          for a stop or a sale, none), its owner says which one it is (Resolve), or that it was not placed.
+        </div>
+      )}
+      {unlisted.length > 0 && (
+        <div className="alert alert-danger py-2 small" role="alert">
+          <i className="bi bi-exclamation-octagon me-1" />Trading 212 does not list {unlisted.length === 1 ? "a position" : `${unlisted.length} positions`} of
+          cactusTrade's, or its stop or sale. cactusTrade does not take it for closed: it sells nothing more of it and new entries
+          on the account wait until Trading 212 lists it. Check the account in Trading 212; if the position is really gone, its
+          owner settles it (Settle).
         </div>
       )}
       {resolving && <ResolveDialog order={resolving} onCancel={() => setResolving(null)} onDone={() => { setResolving(null); load(); }} />}
+      {settling && <SettleDialog order={settling} onCancel={() => setSettling(null)} onDone={() => { setSettling(null); load(); }} />}
       {orders && orders.length === 0 && <p className="text-secondary">No orders yet.</p>}
       {orders && orders.length > 0 && (
         <>
@@ -210,6 +221,10 @@ export function Orders() {
                             <button type="button" className="btn btn-sm btn-outline-warning ms-1 py-0" onClick={() => setResolving(o)}
                               aria-label={`Resolve order ${o.requestId}`}>Resolve</button>
                           )}
+                          {o.settleable && (
+                            <button type="button" className="btn btn-sm btn-outline-danger ms-1 py-0" onClick={() => setSettling(o)}
+                              aria-label={`Settle the position of order ${o.requestId}`}>Settle</button>
+                          )}
                         </td>
                         <td className="text-end">{o.sends}</td>
                         <td className="small">{o.reason}</td>
@@ -238,6 +253,32 @@ function summary(rows: Order[], cur?: string): string {
   return parts.join(" · ");
 }
 
+// SettleDialog lets the account's owner settle the position a Trading 212 buy opened that
+// Trading 212 does not list, or whose stop or sale it lists nowhere (re-review 2026-11-28). The
+// server checks it again against Trading 212 and refuses while a stop or sale of ours works.
+function SettleDialog({ order: o, onCancel, onDone }: { order: Order; onCancel: () => void; onDone: () => void }) {
+  const [error, setError] = useState("");
+  async function confirm() {
+    setError("");
+    try {
+      await api.settleOrder(o.requestId);
+      onDone();
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+  return (
+    <ConfirmDialog title={`Settle: ${o.kindLabel}`} confirmLabel="Settle" busyLabel="Settling…" variant="danger" icon="check2"
+      onCancel={onCancel} onConfirm={confirm}>
+      <p className="small">Trading 212 does not list the position this buy opened ({quantityText(o)} of {o.ticker}, request <code>{o.requestId}</code>),
+        or its stop or sale. Check the account in Trading 212 first: is the position gone, and is no sell order of cactusTrade's still working on it?</p>
+      <p className="small mb-0">Settling closes it in cactusTrade's records only. Nothing is sent to Trading 212, and cactusTrade never sells anything of
+        it afterwards: whatever Trading 212 still holds of {o.ticker} is yours to handle.</p>
+      {error && <div className="alert alert-danger py-1 small mt-2 mb-0" role="alert">{error}</div>}
+    </ConfirmDialog>
+  );
+}
+
 // ResolveDialog lets the account's owner say what became of a Trading 212 order whose outcome
 // is unknown (T212-d): the Trading 212 order it is, or that it was not placed. The server
 // checks the order's ticker, side, type and quantity, and that no other order of ours is it.
@@ -259,7 +300,9 @@ function ResolveDialog({ order: o, onCancel, onDone }: { order: Order; onCancel:
     <ConfirmDialog title={`Resolve: ${o.kindLabel}`} confirmLabel="Resolve" busyLabel="Resolving…" variant="warning" icon="check2"
       confirmDisabled={!valid} onCancel={onCancel} onConfirm={confirm}>
       <p className="small">Trading 212 lost its answer to this order ({quantityText(o)} of {o.ticker}, request <code>{o.requestId}</code>)
-        and more than one of its orders could be it. Look in the Trading 212 app, then say which one it is.</p>
+        and cactusTrade cannot tell which of its orders it is: more than one could be it, or (a stop or a sale) none is listed.
+        Look in the Trading 212 app, then say which one it is. "Not placed" is refused while Trading 212 lists an order that
+        could be this one: a fill of ours would go unrecorded and a later sale could sell your own shares.</p>
       <div className="form-check">
         <input className="form-check-input" type="radio" id="resolve-id" checked={how === "id"} onChange={() => setHow("id")} />
         <label className="form-check-label" htmlFor="resolve-id">It is Trading 212 order</label>

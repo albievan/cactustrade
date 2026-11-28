@@ -93,6 +93,21 @@ func (s *Service) ResolveOrder(ctx context.Context, p Principal, requestID strin
 	return v, nil
 }
 
+// SettleOrder is SettleT212Position for the web app: the buy whose position was settled, as
+// the orders page shows it (owner of the account, web session; audited).
+func (s *Service) SettleOrder(ctx context.Context, p Principal, requestID string) (OrderView, error) {
+	o, err := s.SettleT212Position(ctx, p, requestID)
+	if err != nil {
+		return OrderView{}, err
+	}
+	v := OrderView{Order: o}
+	if o.Instrument > 0 {
+		in := s.instrumentTags(ctx)(o.Instrument)
+		v.Symbol, v.Market = in.Symbol, in.Market
+	}
+	return v, nil
+}
+
 // AccountExtra is what the account list shows of an account besides itself.
 type AccountExtra struct {
 	// Currency of its money figures when known without a broker read (USD on eToro).

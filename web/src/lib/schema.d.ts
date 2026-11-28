@@ -1644,11 +1644,41 @@ export interface paths {
         /**
          * Say what became of a Trading 212 order whose outcome is unknown (owner, web UI)
          * @description T212-d: Trading 212 takes no request id, so an order whose answer was lost and that
-         *     matches more than one Trading 212 order waits for the account owner: name the Trading
-         *     212 order it is (same ticker, side, type and quantity, not another order of ours), or
-         *     say it was not placed. Audited.
+         *     matches more than one Trading 212 order (or, for a stop or a sale, none) waits for the
+         *     account owner: name the Trading 212 order it is (same ticker, side, type and quantity,
+         *     not another order of ours), or say it was not placed. "Not placed" is refused (409)
+         *     while Trading 212 lists any order that could be it. Audited.
          */
         post: operations["resolveOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orders/{requestId}/settle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Settle the Trading 212 position a buy opened that Trading 212 does not list (owner, web UI)
+         * @description Re-review 2026-11-28 (ADR-008 T212-s): a position of ours that Trading 212 does not
+         *     list, or whose stop or sale it lists nowhere, is never taken for closed by cactusTrade
+         *     (a late listing must not make it sell the owner's shares). The account owner, having
+         *     checked the account in Trading 212, settles it: the position is closed in cactusTrade's
+         *     records only, its unlisted stop or sale abandoned, nothing is sent, and cactusTrade
+         *     never sells anything of it afterwards. Refused (409) while Trading 212 still works a
+         *     stop or sale of ours on it, an order of ours on it waits to be resolved, or Trading 212
+         *     lists the position and every order of ours on it. requestId is the buy's. Audited.
+         */
+        post: operations["settleOrder"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3936,6 +3966,8 @@ export interface components {
             filledQuantity?: components["schemas"]["Decimal"];
             /** @description a Trading 212 order whose outcome is unknown and that the account owner may resolve (POST /orders/{requestId}/resolve) */
             resolvable: boolean;
+            /** @description a Trading 212 buy whose position Trading 212 does not list, or whose stop or sale it lists nowhere, that the account owner may settle (POST /orders/{requestId}/settle) */
+            settleable?: boolean;
             /** @description what the order is, worded by the server, e.g. "Buy GOOG", "Cancel request for GOOG (buy order 396359836)", "Close request for GOOG (position 3649965576)" */
             kindLabel: string;
             /** @description long, short or empty (cancel) */
@@ -7064,6 +7096,34 @@ export interface operations {
         };
         responses: {
             /** @description The order after the resolution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Order"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    settleOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The buy whose position was settled */
             200: {
                 headers: {
                     [name: string]: unknown;

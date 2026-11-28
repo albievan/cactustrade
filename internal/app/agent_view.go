@@ -427,6 +427,9 @@ type OrderView struct {
 	Symbol string
 	// Market is the exchange of the order's instrument ("" when it is not cached).
 	Market domain.Market
+	// Settleable: a Trading 212 buy whose position Trading 212 does not list, or whose stop
+	// or sale it lists nowhere; its account's owner may settle it (SettleT212Position).
+	Settleable bool
 }
 
 // subject names the order's instrument for people: its symbol, else its id; a Trading 212
@@ -608,7 +611,7 @@ func (s *Service) Orders(ctx context.Context, p Principal, accountID string, lim
 				sym = "instrument " + strconv.FormatInt(int64(o.Instrument), 10)
 			}
 		}
-		out = append(out, OrderView{Order: o, Symbol: sym, Market: m})
+		out = append(out, OrderView{Order: o, Symbol: sym, Market: m, Settleable: s.t212Settleable(ctx, o)})
 	}
 	return out, nil
 }

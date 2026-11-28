@@ -3142,6 +3142,9 @@ type Order struct {
 	Sends      int        `json:"sends"`
 	SentAt     *time.Time `json:"sentAt,omitempty"`
 
+	// Settleable a Trading 212 buy whose position Trading 212 does not list, or whose stop or sale it lists nowhere, that the account owner may settle (POST /orders/{requestId}/settle)
+	Settleable *bool `json:"settleable,omitempty"`
+
 	// State created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned
 	State string `json:"state"`
 
@@ -4830,6 +4833,9 @@ type ServerInterface interface {
 	// ResolveOrder Say what became of a Trading 212 order whose outcome is unknown (owner, web UI)
 	// (POST /api/v1/orders/{requestId}/resolve)
 	ResolveOrder(w http.ResponseWriter, r *http.Request, requestId string)
+	// SettleOrder Settle the Trading 212 position a buy opened that Trading 212 does not list (owner, web UI)
+	// (POST /api/v1/orders/{requestId}/settle)
+	SettleOrder(w http.ResponseWriter, r *http.Request, requestId string)
 	// GetOverview Every account you can view, on every platform — cash, equity, positions (viewer)
 	// (GET /api/v1/overview)
 	GetOverview(w http.ResponseWriter, r *http.Request)
@@ -7215,6 +7221,32 @@ func (siw *ServerInterfaceWrapper) ResolveOrder(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// SettleOrder operation middleware
+func (siw *ServerInterfaceWrapper) SettleOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "requestId" -------------
+	var requestId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "requestId", r.PathValue("requestId"), &requestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "requestId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SettleOrder(w, r, requestId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOverview operation middleware
 func (siw *ServerInterfaceWrapper) GetOverview(w http.ResponseWriter, r *http.Request) {
 
@@ -8464,6 +8496,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/reconcile", wrapper.ReconcileAgent)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/orders", wrapper.ListOrders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/orders/{requestId}/resolve", wrapper.ResolveOrder)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/orders/{requestId}/settle", wrapper.SettleOrder)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/decisions", wrapper.ListDecisions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/decisions/{id}", wrapper.GetDecision)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/summary", wrapper.GetHistorySummary)

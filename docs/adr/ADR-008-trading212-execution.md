@@ -30,7 +30,8 @@ switch (D43) and the defaults (D44). This ADR records how cactusTrade trades und
   *unknown*: entries on the account wait until it is matched in the open orders and the history
   (ticker, side, type, quantity, created within [send − 5 s, send + 2 min], initiated from the
   API, not claimed by another order of ours). One candidate is adopted, none after 2 minutes is
-  abandoned, two or more wait for the owner (`POST /orders/{id}/resolve`, audited).
+  abandoned for a buy (a stop or a sale stays unknown for the owner, T212-s), two or more wait
+  for the owner (`POST /orders/{id}/resolve`, audited).
 - **e – Quantities.** Whole shares unless the account's fractional switch is on; the switch is
   refused while `domain.T212FractionsVerified` is false (a reviewed code change after the
   practice run, R45.13). Quantities are truncated, never rounded up.
@@ -81,7 +82,28 @@ switch (D43) and the defaults (D44). This ADR records how cactusTrade trades und
   left, nothing more is sent for it and a danger event ("order.sale_stuck") asks a person to act
   before the close.
 
+- **s – Listed nowhere is not gone (re-review 2026-11-28).** Trading 212 may list a finished
+  order or a fresh fill late (T4, T5b unverified). A stop or a sale of ours becomes final only on
+  an answer of Trading 212's that gives its filled quantity; one it lists neither as active nor
+  in its history stays as it is (a cancelled-looking stop may have fired: a sale then would sell
+  the owner's shares), the sale waits, at most three cancels are sent for one stop, and a stop or
+  a sale whose lost answer matches nothing after 2 min stays unknown (only a buy is abandoned
+  then). A position of ours Trading 212 does not list 2 min after its fill is never settled as
+  gone: only a recorded stop or sale fill (its Sold), or its owner, closes it. Meanwhile the
+  account is not reconciled (no entries; exits run), and a danger event names it
+  ("order.unlisted" after 2 min, "order.unmatched", "position.unlisted"). The owner settles such
+  a position on the orders page (`POST /orders/{requestId}/settle` on its buy: web session,
+  audited; refused while a stop or sale of ours still works at Trading 212 or waits to be
+  resolved, or while Trading 212 lists the position and every order of ours on it): closed in
+  cactusTrade's records only, its unlisted stop or sale abandoned, nothing sent, nothing of it
+  ever sold afterwards. "Not placed" for an unknown order is refused while Trading 212 lists any
+  order that could be it. `t212Vanished`, the supervisor's stop placement and `ResolveT212Order`
+  take the account's exit lock. A fresh fill a kill or force close cannot sell yet (not listed)
+  gets its stop first.
+
 **Consequences.**
+- A position Trading 212 never lists again (sold by hand outside cactusTrade, or a fill whose
+  listing never comes) blocks entries on the account until its owner settles it (T212-s).
 - The adapter's allowlist holds exactly nine method + path pairs (`TestAllowlistExact`); no
   money, pies, limit or stop-limit path exists.
 - A lost answer can block entries until it is matched or resolved by the owner; exits continue.

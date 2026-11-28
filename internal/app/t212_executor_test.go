@@ -207,15 +207,23 @@ func TestT212ExecutorTable(t *testing.T) {
 				t.Fatalf("stop %+v: the unknown stop must hold the sale back (no double sell)", st)
 			}
 			x.clock.Advance(domain.T212MatchAfter)
-			if st, p := x.svc.resolveT212(x.ctx, x.a, st); st.State != domain.OrderAbandoned || p != "" {
+			// Never abandoned without an answer (re-review 2026-11-28): it may rest unlisted.
+			if st, p := x.svc.resolveT212(x.ctx, x.a, st); st.State != domain.OrderUnknown || p == "" || !x.hasEvent(t, "order.unmatched") {
 				t.Fatalf("resolve = %+v %q", st, p)
 			}
 			ap := x.position(t, o.EtoroOrderID)
+			if _, err := x.svc.closeT212Position(x.ctx, x.a, ap, "no stop", t212ClosePolls); err == nil || len(intentsOf(x.sim, domain.T212Sell, domain.T212Market)) != 0 {
+				t.Fatalf("sold while the stop may rest: %v", err)
+			}
+			// The owner checked Trading 212: not placed. Then it is sold.
+			if _, err := x.svc.ResolveT212Order(x.ctx, x.owner, st.RequestID, 0, true); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := x.svc.closeT212Position(x.ctx, x.a, ap, "no stop", t212ClosePolls); err != nil {
 				t.Fatal(err)
 			}
 			if x.position(t, o.EtoroOrderID).Open() || len(x.sim.Held) != 0 {
-				t.Fatal("not sold once the stop was abandoned")
+				t.Fatal("not sold once the owner resolved the stop")
 			}
 		}},
 		{"stop not listed in the open orders: sold", func(t *testing.T, x *t212X) {
@@ -499,7 +507,7 @@ func TestT212ExecutorClose(t *testing.T) {
 		}
 		x.sound(t)
 	})
-	t.Run("the position is gone: settled, nothing sold", func(t *testing.T) {
+	t.Run("the position is gone: never settled by itself, the owner settles it, nothing sold", func(t *testing.T) {
 		x, ap, _ := filled(t)
 		delete(x.sim.Held, barc)
 		// Right after the fill a missing position may only be listed late (review B2): the
@@ -511,13 +519,53 @@ func TestT212ExecutorClose(t *testing.T) {
 			t.Fatal("settled as gone right after its fill")
 		}
 		x.clock.Advance(fillVisibleAfter)
-		if _, err := x.svc.closeT212Position(x.ctx, x.a, ap, "flatten", nil); err != nil {
+		// Still not listed: no recorded stop or sale fill explains it (re-review 2026-11-28).
+		// It stays open, the account takes no entries, a danger alert names it.
+		if _, err := x.svc.closeT212Position(x.ctx, x.a, ap, "flatten", nil); !errors.Is(err, domain.ErrUnavailable) {
+			t.Fatalf("after the grace: %v", err)
+		}
+		if !x.position(t, ap.PositionID).Open() || x.svc.Reconciled(x.a.ID).OK || !x.hasEvent(t, "position.unlisted") {
+			t.Fatalf("settled as gone without a recorded fill: open %v, reconciled %+v, events %v", x.position(t, ap.PositionID).Open(), x.svc.Reconciled(x.a.ID), x.events(t))
+		}
+		if rc, err := x.svc.Reconcile(x.ctx, x.a.ID); err != nil || rc.OK {
+			t.Fatalf("reconciled with an unlisted position: %+v %v", rc, err)
+		}
+		views, err := x.svc.Orders(x.ctx, x.owner, x.a.ID, 0)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if x.position(t, ap.PositionID).Open() || len(intentsOf(x.sim, domain.T212Sell, domain.T212Market)) != 0 {
-			t.Fatal("not settled")
+		i := slices.IndexFunc(views, func(v OrderView) bool { return v.RequestID == ap.OpenRequestID })
+		if i < 0 || !views[i].Settleable {
+			t.Fatalf("the buy is not settleable: %+v", views)
+		}
+		api := x.owner
+		api.Via = ViaAPIKey
+		if _, err := x.svc.SettleT212Position(x.ctx, api, ap.OpenRequestID); !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("API key: %v", err)
+		}
+		if _, err := x.svc.SettleOrder(x.ctx, x.owner, ap.OpenRequestID); err != nil {
+			t.Fatal(err)
+		}
+		if x.position(t, ap.PositionID).Open() || len(intentsOf(x.sim, domain.T212Sell, domain.T212Market)) != 0 || audited(x.env, "t212.position_settled") != 1 {
+			t.Fatal("not settled by the owner")
+		}
+		if rc, err := x.svc.Reconcile(x.ctx, x.a.ID); err != nil || !rc.OK {
+			t.Fatalf("not reconciled after the owner settled it: %+v %v", rc, err)
+		}
+		if _, err := x.svc.SettleT212Position(x.ctx, x.owner, ap.OpenRequestID); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("settled twice: %v", err)
 		}
 		x.sound(t)
+	})
+	t.Run("the owner cannot settle a position Trading 212 lists", func(t *testing.T) {
+		x, ap, _ := filled(t)
+		x.clock.Advance(fillVisibleAfter)
+		if _, err := x.svc.SettleT212Position(x.ctx, x.owner, ap.OpenRequestID); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("settled while its stop works at Trading 212: %v", err)
+		}
+		if !x.position(t, ap.PositionID).Open() {
+			t.Fatal("settled")
+		}
 	})
 }
 

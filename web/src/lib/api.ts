@@ -318,6 +318,9 @@ export const api = {
   confirmBrokerMatch: (instrumentId: number) => request<BrokerMatch>("POST", `/api/v1/watchlist/${instrumentId}/match/confirm`),
   resolveOrder: (requestId: string, r: { brokerOrderId?: number; notPlaced?: boolean }) =>
     request<Order>("POST", `/api/v1/orders/${encodeURIComponent(requestId)}/resolve`, r),
+  // The owner settles the position a Trading 212 buy opened that Trading 212 does not list
+  // (re-review 2026-11-28): closed in cactusTrade's records only, nothing is sent.
+  settleOrder: (requestId: string) => request<Order>("POST", `/api/v1/orders/${encodeURIComponent(requestId)}/settle`),
   // The agent of the current account (PLAN 4.13). The server decides who may do what
   // (AgentPanel.controls); start and reset work only in a web session.
   agent: () => request<AgentPanel>("GET", "/api/v1/agent"),

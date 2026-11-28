@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -86,6 +87,13 @@ func (s *Service) t212Supervise(ctx context.Context, a domain.Account) (Supervis
 		i := slices.IndexFunc(ours, func(ap domain.AgentPosition) bool { return ap.PositionID == ex.PositionID })
 		if _, err := s.closeT212Position(ctx, a, ours[i], string(ex.Reason)+": "+ex.Detail, nil); err != nil {
 			rep.fail("selling position %d: %v", ex.PositionID, err)
+			if errors.Is(err, errT212NotListedYet) {
+				// Not listed yet (a fresh fill, e.g. during a kill): protected by its stop until
+				// it can be sold (re-review 2026-11-28, minor 3).
+				if perr := s.t212ProtectUnlisted(ctx, a, ours[i]); perr != nil {
+					rep.fail("protecting position %d: %v", ex.PositionID, perr)
+				}
+			}
 			continue
 		}
 		rep.Closing++
@@ -249,8 +257,9 @@ func (s *Service) t212CheckStops(ctx context.Context, a domain.Account, acct dom
 			continue // closed by its stop
 		}
 		if ok, _ := s.t212InSession(ctx, ap.Instrument, now); !ok {
-			// No market order now (T212-o): protect it with a new stop until the open.
-			if _, err := s.placeT212Stop(ctx, a, ap, s.t212StopOf(ctx, ap)); err != nil {
+			// No market order now (T212-o): protect it with a new stop until the open, under the
+			// account's exit lock (re-review 2026-11-28, minor 1).
+			if err := s.t212ProtectUnlisted(ctx, a, ap); err != nil {
 				rep.fail("placing a stop for position %d: %v", ap.PositionID, err)
 			}
 			continue
@@ -297,6 +306,13 @@ func (s *Service) t212Flatten(ctx context.Context, a domain.Account, exit domain
 	for _, ap := range ours {
 		if _, err := s.closeT212Position(ctx, a, ap, string(exit)+": "+why, nil); err != nil {
 			rep.Errors = append(rep.Errors, fmt.Sprintf("selling position %d: %v", ap.PositionID, err))
+			if errors.Is(err, errT212NotListedYet) {
+				// A fresh fill got no stop (review g) and cannot be sold before Trading 212 lists
+				// it: it gets its stop now; the supervisor sells it once listed (minor 3).
+				if perr := s.t212ProtectUnlisted(ctx, a, ap); perr != nil {
+					rep.Errors = append(rep.Errors, fmt.Sprintf("protecting position %d: %v", ap.PositionID, perr))
+				}
+			}
 			continue
 		}
 		rep.Closing++

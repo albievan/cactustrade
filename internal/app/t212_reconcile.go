@@ -13,7 +13,7 @@ import (
 // t212Reconcile matches a Trading 212 practice account with Trading 212 (PLAN R45.7): every
 // order of ours that is not final is resolved (created and never sent → abandoned; sent or
 // unknown → matched, T212-d; with an id → read); our positions are matched with the account's
-// (one it no longer holds is settled); holdings cactusTrade did not buy are left alone (OD1);
+// (one it does not list stays open and the account unreconciled, re-review 2026-11-28); holdings cactusTrade did not buy are left alone (OD1);
 // a stop of ours still active at Trading 212 for a position that is closed, or for an order we
 // gave up, is cancelled (an orphan would sell the owner's shares). Any order left unresolved,
 // any position of ours without a confirmed stop and any read error leave the account
@@ -47,8 +47,13 @@ func (s *Service) t212Reconcile(ctx context.Context, a domain.Account) (Reconcil
 				problems = append(problems, p)
 			}
 		default:
-			if _, err := s.pollT212(ctx, a, o); err != nil {
+			switch _, listed, err := s.pollT212Listed(ctx, a, o); {
+			case err != nil:
 				problems = append(problems, fmt.Sprintf("reading order %s failed: %v", o.RequestID, err))
+			case !listed:
+				// Never taken for gone (re-review 2026-11-28): the account waits until Trading 212
+				// lists it, or the owner settles its position.
+				problems = append(problems, fmt.Sprintf("order %s (Trading 212 order %d) is not listed by Trading 212", o.RequestID, o.EtoroOrderID))
 			}
 		}
 	}
@@ -69,8 +74,8 @@ func (s *Service) t212Reconcile(ctx context.Context, a domain.Account) (Reconcil
 	return s.setReconciled(ctx, a, true, ""), nil
 }
 
-// t212MatchPositions settles our positions the account no longer holds and reports the ones
-// without a confirmed stop.
+// t212MatchPositions reports our positions the account does not list (never settled as gone:
+// t212Vanished) and the ones without a confirmed stop.
 func (s *Service) t212MatchPositions(ctx context.Context, a domain.Account, acct domain.T212Account, open []domain.BrokerOrder) []string {
 	ours, err := s.d.Store.AgentPositions().ListOpen(ctx, a.ID)
 	if err != nil {
@@ -81,9 +86,13 @@ func (s *Service) t212MatchPositions(ctx context.Context, a domain.Account, acct
 		if _, held := acct.Position(ap.Ticker); !held {
 			if acct.AsOf.Sub(ap.OpenedAt) >= fillVisibleAfter {
 				s.t212Vanished(ctx, a, ap)
+				if cur, err := s.d.Store.AgentPositions().Get(ctx, a.ID, ap.PositionID); err != nil || cur.Open() {
+					problems = append(problems, fmt.Sprintf("the position in %s is not listed by Trading 212: the owner must check it", ap.Ticker))
+				}
 			}
 			continue
 		}
+		s.t212Present(t212PositionKey(a.ID, ap.PositionID))
 		stops, err := s.t212OurStops(ctx, a.ID, ap.PositionID)
 		if err != nil {
 			problems = append(problems, "reading our stops failed: "+err.Error())

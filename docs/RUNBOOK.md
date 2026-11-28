@@ -388,14 +388,31 @@ the order again (it might be doubled). The order shows **unknown** on the Orders
 entries on that account wait; exits continue.
 
 1. Usually nothing is needed: the supervisor matches it in Trading 212's order lists within two
-   minutes (adopted), or abandons it when neither list has it ("order.adopted" or the order
-   turning *abandoned* in the activity log).
+   minutes (adopted), or — a buy only — abandons it when neither list has it ("order.adopted" or
+   the order turning *abandoned* in the activity log).
 2. When more than one Trading 212 order could be it, the activity log says "more than one Trading
    212 order could be ours" and the row has a **Resolve** button (the account's owner, web UI).
-   Open the Trading 212 app → the account's orders, find the order with the same ticker, side,
-   type and quantity sent at that time, and enter its id — or choose *It was not placed* when
-   there is none. The answer is checked (ticker, side, type, quantity, not another order of
-   ours) and audited (`t212.order_resolved`).
+   A stop or a sale that neither list has after two minutes is never abandoned by itself (it may
+   have filled unlisted, and a new sale could sell your own shares): a danger event "… not found
+   at Trading 212" asks for the same. Open the Trading 212 app → the account's orders, find the
+   order with the same ticker, side, type and quantity sent at that time, and enter its id — or
+   choose *It was not placed* when there is none (refused while Trading 212 lists an order that
+   could be it). The answer is checked (ticker, side, type, quantity, not another order of ours)
+   and audited (`t212.order_resolved`).
+
+### Trading 212: a position or its stop is not listed
+
+Trading 212 may list a fill or a finished order late. cactusTrade never takes "listed nowhere"
+for gone (ADR-008 T212-s): the position stays open, nothing more of it is sold, and new entries
+on the account wait. A danger event names it ("… is not listed by Trading 212"), and the buy's
+row on the Orders page gets a **Settle** button.
+
+1. Usually nothing is needed: once Trading 212 lists it, the next supervisor pass settles it from
+   the recorded fill (or protects and sells it), and the next reconciliation lets entries resume.
+2. If it stays unlisted, open the Trading 212 app: is the position gone (e.g. sold by hand), and
+   is no sell order of cactusTrade's still working on it? Then **Settle** (the account's owner,
+   web UI; audited `t212.position_settled`). It closes the position in cactusTrade's records
+   only; nothing is sent, and cactusTrade never sells anything of it afterwards.
 
 ### Trading 212: a sale is stuck
 

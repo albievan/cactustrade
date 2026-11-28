@@ -155,4 +155,34 @@ describe("Orders", () => {
     expect(posts[0].url).toBe("/api/v1/orders/lost-1/resolve");
     expect(posts[0].body).toEqual({ notPlaced: true });
   });
+
+  it("settles a Trading 212 position Trading 212 does not list, by its owner (re-review 2026-11-28)", async () => {
+    const t212 = { ...account, id: "t1", name: "Practice", platform: "trading212", currency: "GBP" };
+    const buy = {
+      requestId: "buy-1", mode: "demo", platform: "trading212", resolvable: false, settleable: true, kind: "open", kindLabel: "Buy BARC.L (BARCl_EQ)",
+      direction: "long", instrumentId: 1, symbol: "BARC.L", market: "LSE", exchange: "London (LSE)", amountCents: 61200,
+      ticker: "BARCl_EQ", quantity: "3", state: "filled", stateLabel: "filled", reason: "filled by Trading 212", sends: 1,
+      createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:00Z",
+    };
+    const posts: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+      if (url.endsWith("/api/v1/system/status")) return json({ ...status, account: t212 });
+      if (init?.method === "POST") {
+        posts.push(url);
+        return json({ ...buy, settleable: false });
+      }
+      if (url.includes("/api/v1/orders")) return json([buy]);
+      return new Response("{}", { status: 404 });
+    });
+    render(<ModeProvider><Orders /></ModeProvider>);
+    const row = (await screen.findByText("Buy BARC.L (BARCl_EQ)")).closest("tr") as HTMLElement;
+    expect(screen.getByText(/does not take it for closed/)).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Settle the position of order buy-1" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Nothing is sent to Trading 212");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Settle$/ }));
+    await vi.waitFor(() => expect(posts).toEqual(["/api/v1/orders/buy-1/settle"]));
+  });
 });

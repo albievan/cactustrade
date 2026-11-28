@@ -91,6 +91,11 @@ type runtimeState struct {
 	lastScan map[string]time.Time
 	// t212Exits are the Trading 212 accounts' exit locks (t212ExitLock), created on first use.
 	t212Exits map[string]chan struct{}
+	// t212Unlisted is when an order of ours (t212OrderKey) or a position of ours
+	// (t212PositionKey) was first found missing from Trading 212's lists, since it last was
+	// listed (re-review 2026-11-28): such an order is never taken for gone, such a position
+	// never for closed. Created on first use.
+	t212Unlisted map[string]time.Time
 }
 
 // agentLocks are one account's agent locks. Lock order: ctl before entry, never the other
