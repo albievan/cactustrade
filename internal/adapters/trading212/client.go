@@ -1,6 +1,7 @@
 package trading212
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,8 +20,15 @@ import (
 	"github.com/albievan/cactustrade/internal/ports"
 )
 
-// maxResponse bounds a response body.
-const maxResponse = 8 << 20
+// maxResponse bounds a response body; the instrument catalogue (some 15 000 instruments) may
+// be larger.
+const (
+	maxResponse            = 8 << 20
+	maxInstrumentsResponse = 32 << 20
+)
+
+// maxMutationWait is the longest a change waits for its rate-limit window; longer → not sent.
+const maxMutationWait = 10 * time.Second
 
 // maxRateWait is the longest a request waits for a rate-limit window before it gives up
 // (the overview is interactive; the next 15-minute snapshot tries again).
@@ -39,8 +47,8 @@ type Config struct {
 	Sleep          func(context.Context, time.Duration) error
 }
 
-// Client reads Trading 212 accounts through the allowlist only. It implements
-// ports.Holdings and nothing that changes an account.
+// Client talks to Trading 212 through the allowlist only. It implements ports.Holdings (any
+// Trading 212 account, read-only) and ports.T212Broker (practice accounts only).
 type Client struct {
 	cfg        Config
 	demo, live *url.URL
@@ -129,7 +137,7 @@ func (e *APIError) Error() string {
 	case http.StatusUnauthorized:
 		s += ": the API key or secret was refused"
 	case http.StatusForbidden:
-		s += ": the API key lacks a permission (it needs account and portfolio read access)"
+		s += ": the API key lacks a permission (account and portfolio; to trade a practice account also metadata, orders:read, orders:execute and history:orders)"
 	case http.StatusRequestTimeout:
 		s += ": Trading 212 timed out"
 	case http.StatusTooManyRequests:
@@ -161,12 +169,44 @@ func (c *Client) keys(ctx context.Context, a domain.Account) (key, secret string
 	return key, secret, nil
 }
 
-// get performs one allowlisted GET and decodes the JSON answer into out. A 429 or a 5xx is
-// retried once when the wait is short; every other failure is returned at once.
+// request is one allowlisted request: its operation, the order id of a "{id}" path, and
+// its query (or the raw query of a nextPagePath) or JSON body.
+type request struct {
+	op       Op
+	id       int64
+	query    url.Values
+	rawQuery string
+	body     any
+}
+
+// target builds the request's URL on the account's host.
+func (c *Client) target(acct domain.Account, ep Endpoint, r request) string {
+	u := *c.demo
+	if acct.Mode == domain.ModeReal {
+		u = *c.live
+	}
+	u.Path, u.RawPath, u.RawQuery = ep.Path, "", r.rawQuery
+	if strings.Contains(ep.Path, "{id}") {
+		u.Path = orderPath(ep.Path, r.id)
+	}
+	if r.query != nil {
+		u.RawQuery = r.query.Encode()
+	}
+	return u.String()
+}
+
+// get performs one allowlisted read with a query and decodes the JSON answer into out.
 func (c *Client) get(ctx context.Context, op Op, query url.Values, out any) error {
-	ep, ok := Allowlist[op]
-	if !ok {
-		return fmt.Errorf("trading212: operation %q is not allowlisted", op)
+	return c.read(ctx, request{op: op, query: query}, out)
+}
+
+// read performs one allowlisted GET (for any Trading 212 account in ctx) and decodes the JSON
+// answer into out. A 429 or a 5xx is retried once when the wait is short; every other
+// failure is returned at once.
+func (c *Client) read(ctx context.Context, r request, out any) error {
+	ep, ok := Allowlist[r.op]
+	if !ok || ep.Mutates {
+		return fmt.Errorf("trading212: operation %q is not allowlisted as a read", r.op)
 	}
 	acct, err := account(ctx)
 	if err != nil {
@@ -176,21 +216,67 @@ func (c *Client) get(ctx context.Context, op Op, query url.Values, out any) erro
 	if err != nil {
 		return err
 	}
-	u := *c.demo
-	if acct.Mode == domain.ModeReal {
-		u = *c.live
-	}
-	u.Path, u.RawPath, u.RawQuery = ep.Path, "", query.Encode()
-	lim := c.limiter(acct.ID)
+	target, lim := c.target(acct, ep, r), c.limiter(acct.ID)
 	for attempt := 1; ; attempt++ {
-		retry, err := c.attempt(ctx, lim, op, ep, u.String(), key, secret, out)
+		retry, err := c.attempt(ctx, lim, r.op, ep, target, key, secret, nil, out)
 		if err == nil || !retry || attempt >= 2 {
 			return err
 		}
 	}
 }
 
-func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, target, key, secret string, out any) (retry bool, err error) {
+// mutate sends one allowlisted change for the Trading 212 PRACTICE account in ctx, once: a
+// real account is refused before its keys are read (D41 g); a rate-limit wait over
+// maxMutationWait is not sent (NotAccepted); it is never retried. Outcomes: 2xx → out;
+// 400/401/403/other 4xx → NotAccepted (Trading 212 answered and refused it); 404 →
+// NotAccepted wrapping ErrNotFound; a transport error, a timeout, 408, 429, 5xx or an
+// unreadable 2xx answer → ErrOutcomeUnknown (it may have been processed, T6b).
+func (c *Client) mutate(ctx context.Context, r request, out any) error {
+	ep, ok := Allowlist[r.op]
+	if !ok || !ep.Mutates {
+		return fmt.Errorf("trading212: operation %q is not allowlisted as a change", r.op)
+	}
+	acct, err := practice(ctx)
+	if err != nil {
+		return err
+	}
+	key, secret, err := c.keys(ctx, acct)
+	if err != nil {
+		return &domain.NotAcceptedError{Reason: "no keys: not sent", Err: err}
+	}
+	var body []byte
+	if r.body != nil {
+		if body, err = json.Marshal(r.body); err != nil {
+			return &domain.NotAcceptedError{Reason: "unencodable body: not sent", Err: err}
+		}
+	}
+	lim := c.limiter(acct.ID)
+	wait, ok := lim.Reserve(r.op, ep.Every, maxMutationWait)
+	if !ok {
+		return &domain.NotAcceptedError{RateLimited: true, RetryAfter: wait, Reason: fmt.Sprintf("Trading 212 %s: the rate limit would delay it %s: not sent", r.op, wait.Round(time.Second))}
+	}
+	if wait > 0 {
+		if err := c.cfg.Sleep(ctx, wait); err != nil {
+			return &domain.NotAcceptedError{Reason: "cancelled while waiting for the rate limit: not sent", Err: err}
+		}
+	}
+	status, data, err := c.send(ctx, lim, r.op, ep, c.target(acct, ep, r), key, secret, body)
+	switch {
+	case err != nil:
+		return errMutation(r.op, status, err)
+	case status < 200 || status > 299:
+		c.cfg.Log.WarnContext(ctx, "Trading 212 refused a change", "op", string(r.op), "status", status)
+		return errMutation(r.op, status, nil)
+	case out == nil:
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("trading212 %s: unreadable answer: %w", r.op, domain.ErrOutcomeUnknown)
+	}
+	return nil
+}
+
+func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, target, key, secret string, body []byte, out any) (retry bool, err error) {
 	wait, ok := lim.Reserve(op, ep.Every, maxRateWait)
 	if !ok {
 		return false, fmt.Errorf("trading212 %s: rate limited for another %s: %w", op, wait.Round(time.Second), domain.ErrUnavailable)
@@ -200,51 +286,73 @@ func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, 
 			return false, err
 		}
 	}
-	actx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(actx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return false, fmt.Errorf("trading212 %s: %w", op, err)
-	}
-	req.SetBasicAuth(key, secret)
-	req.Header.Set("Accept", "application/json")
-	start := c.cfg.Now()
-	resp, err := c.cfg.HTTP.Do(req)
-	if err != nil {
-		c.cfg.Log.WarnContext(ctx, "Trading 212 request failed", "op", string(op), "err", redact(err))
+	status, data, err := c.send(ctx, lim, op, ep, target, key, secret, body)
+	switch {
+	case err != nil && status == 0:
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		return true, fmt.Errorf("trading212 %s: %w: %w", op, domain.ErrUnavailable, redact(err))
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
-	c.cfg.Log.DebugContext(ctx, "Trading 212 request", "op", string(op), "status", resp.StatusCode,
-		"duration_ms", c.cfg.Now().Sub(start).Milliseconds())
-	if err != nil {
-		return true, fmt.Errorf("trading212 %s: reading the response: %w: %w", op, domain.ErrUnavailable, err)
-	}
-	if len(data) > maxResponse {
-		return false, fmt.Errorf("trading212 %s: response larger than %d bytes: %w", op, maxResponse, domain.ErrUnavailable)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		apiErr := &APIError{Op: op, Status: resp.StatusCode}
-		switch {
-		case resp.StatusCode == http.StatusTooManyRequests:
-			until := resetAt(resp.Header.Get("x-ratelimit-reset"), c.cfg.Now())
-			lim.Block(op, until)
-			c.cfg.Log.WarnContext(ctx, "Trading 212 rate limit hit", "op", string(op), "reset_in_s", until.Sub(c.cfg.Now()).Seconds())
-			return true, apiErr
-		case resp.StatusCode >= 500:
+		return true, fmt.Errorf("trading212 %s: %w: %w", op, domain.ErrUnavailable, err)
+	case err != nil:
+		return false, err
+	case status < 200 || status > 299:
+		apiErr := &APIError{Op: op, Status: status}
+		if status == http.StatusTooManyRequests || status >= 500 {
 			return true, apiErr
 		}
-		c.cfg.Log.WarnContext(ctx, "Trading 212 refused a request", "op", string(op), "status", resp.StatusCode)
+		c.cfg.Log.WarnContext(ctx, "Trading 212 refused a request", "op", string(op), "status", status)
 		return false, apiErr
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return false, fmt.Errorf("trading212 %s: unexpected response: %w: %w", op, domain.ErrUnavailable, err)
 	}
 	return false, nil
+}
+
+// send performs one HTTP request with the endpoint's method and returns its status and body
+// (status 0 when no answer came). A 429 holds the operation until Trading 212's reset.
+func (c *Client) send(ctx context.Context, lim *limiter, op Op, ep Endpoint, target, key, secret string, body []byte) (int, []byte, error) {
+	actx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
+	defer cancel()
+	var rd io.Reader = http.NoBody
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(actx, ep.Method, target, rd)
+	if err != nil {
+		return 0, nil, fmt.Errorf("trading212 %s: %w", op, err)
+	}
+	req.SetBasicAuth(key, secret)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	start := c.cfg.Now()
+	resp, err := c.cfg.HTTP.Do(req)
+	if err != nil {
+		c.cfg.Log.WarnContext(ctx, "Trading 212 request failed", "op", string(op), "err", redact(err))
+		return 0, nil, redact(err)
+	}
+	defer resp.Body.Close()
+	limit := int64(maxResponse)
+	if op == OpInstruments {
+		limit = maxInstrumentsResponse
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	c.cfg.Log.DebugContext(ctx, "Trading 212 request", "op", string(op), "status", resp.StatusCode,
+		"duration_ms", c.cfg.Now().Sub(start).Milliseconds())
+	if resp.StatusCode == http.StatusTooManyRequests {
+		until := resetAt(resp.Header.Get("x-ratelimit-reset"), c.cfg.Now())
+		lim.Block(op, until)
+		c.cfg.Log.WarnContext(ctx, "Trading 212 rate limit hit", "op", string(op), "reset_in_s", until.Sub(c.cfg.Now()).Seconds())
+	}
+	switch {
+	case err != nil:
+		return resp.StatusCode, nil, fmt.Errorf("trading212 %s: reading the response: %w: %w", op, domain.ErrUnavailable, err)
+	case int64(len(data)) > limit:
+		return resp.StatusCode, nil, fmt.Errorf("trading212 %s: response larger than %d bytes: %w", op, limit, domain.ErrUnavailable)
+	}
+	return resp.StatusCode, data, nil
 }
 
 // redact drops the URL from a transport error: it names only the host and path, never a

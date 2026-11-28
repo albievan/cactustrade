@@ -1,0 +1,16 @@
+{
+  "createdAt": "2026-11-23T15:00:00.120Z",
+  "currency": "GBX",
+  "extendedHours": false,
+  "filledQuantity": 0,
+  "filledValue": 0,
+  "id": 1001,
+  "initiatedFrom": "API",
+  "instrument": { "currency": "GBX", "isin": "GB0031348658", "name": "Barclays", "ticker": "BARCl_EQ" },
+  "quantity": 3,
+  "side": "BUY",
+  "status": "NEW",
+  "strategy": "QUANTITY",
+  "ticker": "BARCl_EQ",
+  "type": "MARKET"
+}

@@ -1,7 +1,8 @@
 # Trading 212 Public API — verified facts
 
-Verified at docs.trading212.com on **2026-11-23** (API v0, beta). cactusTrade uses it
-**read-only** (owner's decision 2026-11-23: view-only now, trading later). Re-verify before
+Verified at docs.trading212.com on **2026-11-23** (API v0, beta). cactusTrade reads every
+Trading 212 account and, since R45.8 (2026-11-28, D41–D44), may send the three order shapes and
+cancels to **practice (demo) accounts only**; a real Trading 212 account stays read-only. Re-verify before
 adding anything; a new path needs a reviewed reason and an entry in
 `internal/adapters/trading212/allowlist.go` (its test fails on any other path or method).
 
@@ -17,7 +18,7 @@ one environment. Keys are created in the app: Settings → API (Beta) → Genera
 per-scope permissions (cactusTrade needs only account and portfolio; history is optional) and an
 optional IP restriction.
 
-## Endpoints cactusTrade may call (all GET)
+## Account reads (all GET; any Trading 212 account)
 
 | Path | Limit | Used for |
 |---|---|---|
@@ -52,13 +53,15 @@ never adds amounts in different currencies.
 
 No shorts/CFDs, no idempotency key on orders, no market data, no stop-loss on a market order:
 the guardrails of `CLAUDE.md` §2 cannot be met as for eToro. The owner agreed the rules for
-Trading 212 in writing (D41–D44, 2026-11-28; CLAUDE.md §2 amended); trading is planned as R45
-(practice accounts only) and is not built yet.
+Trading 212 in writing (D41–D44, 2026-11-28; CLAUDE.md §2 amended); trading is R45
+(practice accounts only): the client's order calls exist since R45.8; wiring and the owner's
+practice run follow (R45.10, R45.13).
 
 ## Orders (re-verified 2026-11-28 at docs.trading212.com, API v0 beta — R45, not used yet)
 
-Trading is planned under D41–D44 (PLAN R45). Nothing below is called until R45.8 adds it to
-`allowlist.go`. These are the documented shapes; recorded answers from the owner's practice run
+Trading under D41–D44 (PLAN R45). R45.8 (2026-11-28) put exactly these requests in
+`allowlist.go` (9 in all with the three reads above; `TestAllowlistExact`); the client sends the
+changes for practice accounts only, once, never retried. These are the documented shapes; recorded answers from the owner's practice run
 (R45.13) replace the synthetic fixtures.
 
 | Method and path | Limit | Scope | Use (R45) |

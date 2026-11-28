@@ -1,0 +1,5 @@
+[
+  { "addedOn": "2018-07-12T08:00:00Z", "currencyCode": "GBX", "extendedHours": false, "isin": "GB0031348658", "maxOpenQuantity": 1000000, "name": "Barclays", "shortName": "BARC", "ticker": "BARCl_EQ", "type": "STOCK", "workingScheduleId": 51 },
+  { "addedOn": "2018-07-12T08:00:00Z", "currencyCode": "USD", "extendedHours": true, "isin": "US0378331005", "maxOpenQuantity": 250000.5, "name": "Apple", "shortName": "AAPL", "ticker": "AAPL_US_EQ", "type": "STOCK", "workingScheduleId": 71 },
+  { "addedOn": "2019-01-02T08:00:00Z", "currencyCode": "GBX", "extendedHours": false, "isin": "IE00B4L5Y983", "maxOpenQuantity": 50000, "name": "iShares Core MSCI World", "shortName": "SWDA", "ticker": "SWDAl_EQ", "type": "ETF", "workingScheduleId": 51 }
+]

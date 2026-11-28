@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-11-23T15:00:02Z",
+  "currency": "GBX",
+  "extendedHours": false,
+  "filledQuantity": 0,
+  "id": 1003,
+  "initiatedFrom": "API",
+  "instrument": { "currency": "GBX", "isin": "GB00B10RZP78", "name": "Unilever", "ticker": "ULVLl_EQ" },
+  "quantity": -4,
+  "side": "SELL",
+  "status": "NEW",
+  "strategy": "QUANTITY",
+  "ticker": "ULVLl_EQ",
+  "type": "MARKET"
+}

@@ -1,0 +1,53 @@
+{
+  "items": [
+    {
+      "fill": {
+        "filledAt": "2026-11-23T15:00:00.500Z",
+        "id": 50001,
+        "price": 200.5,
+        "quantity": 3,
+        "tradingMethod": "TOTV",
+        "type": "TRADE",
+        "walletImpact": {
+          "currency": "GBP",
+          "fxRate": 1,
+          "netValue": 6.05,
+          "realisedProfitLoss": 0,
+          "taxes": [
+            { "chargedAt": "2026-11-23T15:00:00.500Z", "currency": "GBP", "name": "STAMP_DUTY", "quantity": 0.03 },
+            { "chargedAt": "2026-11-23T15:00:00.500Z", "currency": "GBP", "name": "PTM_LEVY", "quantity": 0 }
+          ]
+        }
+      },
+      "order": {
+        "createdAt": "2026-11-23T15:00:00.120Z",
+        "filledQuantity": 3,
+        "filledValue": 601.5,
+        "id": 1001,
+        "initiatedFrom": "API",
+        "instrument": { "currency": "GBX", "isin": "GB0031348658", "name": "Barclays", "ticker": "BARCl_EQ" },
+        "quantity": 3,
+        "side": "BUY",
+        "status": "FILLED",
+        "ticker": "BARCl_EQ",
+        "type": "MARKET"
+      }
+    },
+    {
+      "fill": null,
+      "order": {
+        "createdAt": "2026-11-22T10:00:00Z",
+        "filledQuantity": 0,
+        "id": 990,
+        "initiatedFrom": "WEB",
+        "instrument": { "currency": "GBX", "isin": "GB0031348658", "name": "Barclays", "ticker": "BARCl_EQ" },
+        "quantity": 1,
+        "side": "BUY",
+        "status": "CANCELLED",
+        "ticker": "BARCl_EQ",
+        "type": "LIMIT"
+      }
+    }
+  ],
+  "nextPagePath": "/api/v0/equity/history/orders?cursor=990&limit=50&ticker=BARCl_EQ"
+}
