@@ -124,9 +124,11 @@ var modeSites = map[string][]string{
 	},
 	// accountMode for display and limits (review minor 5): never a permission to trade.
 	"internal/app/risk.go": {
-		`return domain.DefaultLimitsFor(accountMode(a))`,                // real accounts default to the real limits (OD25)
+		`l := domain.DefaultLimitsFor(accountMode(a))`,                  // real accounts default to the real limits (OD25)
 		`if err := l.ValidateFor(accountMode(v.Account)); err != nil {`, // real limits checked against the real ceilings (OD25)
 	},
+	// R45.5 (T212-l): a Trading 212 price source must be an eToro demo account (never real).
+	"internal/app/t212_setup.go": {`case src.Mode != domain.ModeDemo:`},
 	// R38: a minimums proposal is checked against the account's mode only to narrow it (real
 	// ceilings); approving it goes through SetRiskLimits.
 	"internal/app/minimums.go": {

@@ -82,16 +82,18 @@ func (s *Service) anyAccount(ctx context.Context, p Principal, id string, need d
 	return vs[i], nil
 }
 
-// currentAccountID is the caller's chosen account, else the first they own, else the first
-// shared with them. Only tradable (eToro) accounts can be current: a Trading 212 account is
-// shown in the overview only.
+// currentAccountID is the caller's chosen account, else the first eToro account they own,
+// else the first shared with them. A chosen account may be an eToro account or a Trading 212
+// practice account (Agentable, T212-c: chosen with SetCurrentAccount); without a choice only
+// eToro accounts are picked, so nothing changes for a user who never chose a Trading 212
+// account. Every other account is shown in the overview only.
 func (s *Service) currentAccountID(ctx context.Context, p Principal, vs []domain.AccountView) string {
-	vs = slices.DeleteFunc(slices.Clone(vs), func(v domain.AccountView) bool { return !v.Tradable() })
 	if v, err := s.d.Store.Settings().Get(ctx, currentAccountKey(p.UserID)); err == nil {
-		if slices.ContainsFunc(vs, func(a domain.AccountView) bool { return a.ID == v }) {
+		if slices.ContainsFunc(vs, func(a domain.AccountView) bool { return a.ID == v && a.Agentable() }) {
 			return v
 		}
 	}
+	vs = slices.DeleteFunc(slices.Clone(vs), func(v domain.AccountView) bool { return !v.Tradable() })
 	for _, v := range vs { // owned first, then shared
 		if v.Access == domain.AccessOwner {
 			return v.ID
@@ -108,9 +110,10 @@ func (s *Service) CurrentAccount(ctx context.Context, p Principal) (domain.Accou
 	return s.account(ctx, p, "", domain.AccessView)
 }
 
-// SetCurrentAccount switches the caller's current account.
+// SetCurrentAccount switches the caller's current account: an eToro account or a Trading 212
+// practice account (T212-c).
 func (s *Service) SetCurrentAccount(ctx context.Context, p Principal, id string) (domain.AccountView, error) {
-	v, err := s.account(ctx, p, id, domain.AccessView)
+	v, err := s.agentAccount(ctx, p, id, domain.AccessView)
 	if err != nil {
 		return domain.AccountView{}, err
 	}

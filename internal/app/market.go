@@ -120,25 +120,39 @@ func (s *Service) MarketStatus(ctx context.Context, p Principal) ([]MarketSessio
 }
 
 // SearchInstruments searches eToro with the current account's keys (trade access: it is how
-// the watchlist is built, and it spends that key's market-data quota).
+// the watchlist is built, and it spends that key's market-data quota). A Trading 212 practice
+// account searches with its eToro price source's keys (T212-l).
 func (s *Service) SearchInstruments(ctx context.Context, p Principal, query string) ([]domain.Instrument, error) {
-	v, err := s.account(ctx, p, "", domain.AccessTrade)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessTrade)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.needBroker(); err != nil {
 		return nil, err
 	}
-	res, err := s.d.Market.Search(brokerCtx(ctx, v), query)
+	mctx, err := s.marketCtx(ctx, v)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.d.Market.Search(mctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("app.SearchInstruments: %w", err)
 	}
 	return res, nil
 }
 
+// marketCtx is ctx carrying the account whose eToro keys read market data for v: v itself, or
+// for a Trading 212 practice account its price source (checked again, T212-l).
+func (s *Service) marketCtx(ctx context.Context, v domain.AccountView) (context.Context, error) {
+	if v.T212Trading() {
+		return s.t212PriceCtx(ctx, v.Account)
+	}
+	return brokerCtx(ctx, v), nil
+}
+
 // Watchlist lists the instruments the current account's agent may trade (view).
 func (s *Service) Watchlist(ctx context.Context, p Principal) ([]domain.WatchItem, error) {
-	v, err := s.account(ctx, p, "", domain.AccessView)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessView)
 	if err != nil {
 		return nil, err
 	}
@@ -182,19 +196,26 @@ func (s *Service) WatchlistCounts(ctx context.Context, p Principal) ([]Watchlist
 
 // AddToWatchlist adds a share to the current account's watchlist after checking with eToro
 // that it is a share on LSE, NYSE/NASDAQ or the ASX and can be bought as a real share, long, at
-// leverage 1 (trade access). Anything else is refused with eToro's reason (fail closed).
+// leverage 1 (trade access). Anything else is refused with eToro's reason (fail closed). On a
+// Trading 212 practice account the share also needs its Trading 212 instrument
+// (checkAndAddT212), which the owner then confirms.
 func (s *Service) AddToWatchlist(ctx context.Context, p Principal, id domain.InstrumentID) (domain.WatchItem, error) {
-	v, err := s.account(ctx, p, "", domain.AccessTrade)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessTrade)
 	if err != nil {
 		return domain.WatchItem{}, err
 	}
 	return s.addToWatchlist(ctx, v, p.Username, id)
 }
 
-// addToWatchlist is shared by the UI and the import: the eligibility path, then an audit
-// entry and a "watchlist.added" event.
+// addToWatchlist is shared by the UI and the import: the eligibility path (eToro's, or for a
+// Trading 212 practice account the match path), then an audit entry and a "watchlist.added"
+// event.
 func (s *Service) addToWatchlist(ctx context.Context, v domain.AccountView, actor string, id domain.InstrumentID) (domain.WatchItem, error) {
-	w, err := s.checkAndAddToWatchlist(ctx, v, actor, id)
+	check := s.checkAndAddToWatchlist
+	if v.T212Trading() {
+		check = s.checkAndAddT212
+	}
+	w, err := check(ctx, v, actor, id)
 	if err != nil {
 		return domain.WatchItem{}, err
 	}
@@ -255,15 +276,21 @@ func (s *Service) checkAndAddToWatchlist(ctx context.Context, v domain.AccountVi
 	return domain.WatchItem{Instrument: in, Eligibility: el, AddedBy: actor, AddedAt: now}, nil
 }
 
-// RemoveFromWatchlist removes an instrument from the current account's list (trade access).
+// RemoveFromWatchlist removes an instrument from the current account's list (trade access),
+// with its Trading 212 match on a Trading 212 practice account.
 func (s *Service) RemoveFromWatchlist(ctx context.Context, p Principal, id domain.InstrumentID) error {
-	v, err := s.account(ctx, p, "", domain.AccessTrade)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessTrade)
 	if err != nil {
 		return err
 	}
 	in, _, _ := s.d.Store.Instruments().Get(ctx, id)
 	if err := s.d.Store.Watchlist().Remove(ctx, v.ID, id); err != nil {
 		return fmt.Errorf("app.RemoveFromWatchlist: %w", err)
+	}
+	if v.T212Trading() {
+		if err := s.d.Store.InstrumentMatches().Delete(ctx, v.ID, id); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return fmt.Errorf("app.RemoveFromWatchlist: %w", err)
+		}
 	}
 	s.audit(ctx, p, "watchlist.remove", v.ID+"/"+strconv.FormatInt(int64(id), 10), in.Symbol)
 	s.emitFor(ctx, v.ID, p.Username, "watchlist.removed", domain.SeverityInfo, cmp.Or(in.Symbol, "#"+strconv.FormatInt(int64(id), 10))+" removed from the watchlist of "+v.Name, "")
@@ -286,11 +313,15 @@ func (s *Service) WatchlistQuotes(ctx context.Context, p Principal) ([]domain.Qu
 	for i, it := range items {
 		ids[i] = it.Instrument.ID
 	}
-	acct, err := s.account(ctx, p, "", domain.AccessView)
+	acct, err := s.agentAccount(ctx, p, "", domain.AccessView)
 	if err != nil {
 		return nil, err
 	}
-	qs, err := s.d.Market.Quotes(brokerCtx(ctx, acct), ids)
+	mctx, err := s.marketCtx(ctx, acct)
+	if err != nil {
+		return nil, err
+	}
+	qs, err := s.d.Market.Quotes(mctx, ids)
 	if err != nil {
 		return nil, fmt.Errorf("app.WatchlistQuotes: %w", err)
 	}
