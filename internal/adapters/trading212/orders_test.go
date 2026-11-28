@@ -414,3 +414,27 @@ func TestAccountAsOfIsTheCashRead(t *testing.T) {
 		t.Fatalf("AsOf %s, the cash was read at %s (clock now %s)", a.AsOf, start, e.now)
 	}
 }
+
+// TestRecordAnswerReadsOnly (R45.10): the probe's hook sees every read's answer and never a
+// change's.
+func TestRecordAnswerReadsOnly(t *testing.T) {
+	e := newEnv(t)
+	orderFixtures(t, e)
+	var ops []Op
+	e.c.cfg.RecordAnswer = func(op Op, body []byte) {
+		if len(body) == 0 {
+			t.Errorf("%s: empty body", op)
+		}
+		ops = append(ops, op)
+	}
+	ctx := ctxFor(demoAcct)
+	if _, err := e.c.Account(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Place(ctx, buyIn); err != nil {
+		t.Fatal(err)
+	}
+	if len(ops) != 2 || ops[0] != OpAccountSummary || ops[1] != OpPositions {
+		t.Fatalf("recorded %v", ops)
+	}
+}
