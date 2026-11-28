@@ -49,6 +49,9 @@ func (s *Service) t212Supervise(ctx context.Context, a domain.Account) (Supervis
 	} else if pf, err := s.t212Portfolio(ctx, a, acct); err != nil {
 		rep.fail("reading our positions: %v", err)
 	} else {
+		// The views use this read (no extra Trading 212 call); nothing here reads them back.
+		s.rt.views.put(a.ID, pf, s.d.Clock.Now())
+		s.rt.views.setCurrency(a.ID, acct.Currency)
 		st, err := s.observe(ctx, a, pf, l, now)
 		switch {
 		case err != nil:
@@ -106,6 +109,9 @@ func (s *Service) t212Supervise(ctx context.Context, a domain.Account) (Supervis
 // flattening) is cancelled, at most one cancel in flight per order and maxCancels in all; a
 // cancel row left unconfirmed is abandoned after lookupGiveUp.
 func (s *Service) superviseT212Orders(ctx context.Context, a domain.Account, rep *SupervisorReport) {
+	if rep.Killed || rep.flatten != "" {
+		ctx = withT212Flattening(ctx) // every position is sold next: a buy filled now gets no stop
+	}
 	orders, err := s.d.Store.Orders().ListOpen(ctx, a.ID)
 	if err != nil {
 		rep.fail("reading our orders: %v", err)
@@ -216,7 +222,7 @@ func (s *Service) t212CheckStops(ctx context.Context, a domain.Account, acct dom
 			rep.fail("reading the stops of position %d: %v", ap.PositionID, err)
 			continue
 		}
-		listed, waiting := false, false
+		listed, waiting, fired := false, false, false
 		for _, st := range stops {
 			switch {
 			case st.EtoroOrderID <= 0:
@@ -230,7 +236,7 @@ func (s *Service) t212CheckStops(ctx context.Context, a domain.Account, acct dom
 					rep.fail("reading stop %s: %v", st.RequestID, err)
 					waiting = true
 				case cur.State == domain.OrderFilled:
-					listed = true // fired: applyT212Stop settled the position
+					fired = true // applyT212Stop settled the position, unless it sold only part
 				case !cur.State.Final():
 					waiting = true
 				}
@@ -238,6 +244,9 @@ func (s *Service) t212CheckStops(ctx context.Context, a domain.Account, acct dom
 		}
 		if listed || waiting {
 			continue
+		}
+		if cur, err := s.d.Store.AgentPositions().Get(ctx, a.ID, ap.PositionID); fired && (err != nil || !cur.Open()) {
+			continue // closed by its stop
 		}
 		if ok, _ := s.t212InSession(ctx, ap.Instrument, now); !ok {
 			// No market order now (T212-o): protect it with a new stop until the open.

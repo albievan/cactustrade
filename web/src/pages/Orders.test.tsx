@@ -23,10 +23,10 @@ afterEach(() => vi.restoreAllMocks());
 describe("Orders", () => {
   it("lists the orders in a table", async () => {
     serve([
-      { requestId: "11111111-1111-4111-8111-111111111111", mode: "demo", kind: "open", kindLabel: "Short AAPL", direction: "short", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)",
+      { requestId: "11111111-1111-4111-8111-111111111111", mode: "demo", platform: "etoro", resolvable: false, kind: "open", kindLabel: "Short AAPL", direction: "short", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)",
         amountCents: 200000, entry: "100", stopLoss: "103", takeProfit: "94", state: "filled", stateLabel: "filled", reason: "", sends: 1,
         createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:01Z" },
-      { requestId: "22222222-2222-4222-8222-222222222222", mode: "demo", kind: "close", kindLabel: "Close request for instrument 1002 (position 5)", direction: "long", instrumentId: 1002, symbol: "",
+      { requestId: "22222222-2222-4222-8222-222222222222", mode: "demo", platform: "etoro", resolvable: false, kind: "close", kindLabel: "Close request for instrument 1002 (position 5)", direction: "long", instrumentId: 1002, symbol: "",
         amountCents: 0, state: "unknown", stateLabel: "unknown", reason: "answer lost", sends: 1, createdAt: "2026-11-24T14:00:00Z", updatedAt: "2026-11-24T14:00:00Z" },
     ]);
     expect(await screen.findByText("Short AAPL")).toBeInTheDocument(); // the server's wording
@@ -45,7 +45,7 @@ describe("Orders", () => {
 
   it("shows a cancel request eToro took as accepted, never filled", async () => {
     serve([
-      { requestId: "33333333-3333-4333-8333-333333333333", mode: "demo", kind: "cancel", kindLabel: "Cancel request for GOOG (buy order 396359836)",
+      { requestId: "33333333-3333-4333-8333-333333333333", mode: "demo", platform: "etoro", resolvable: false, kind: "cancel", kindLabel: "Cancel request for GOOG (buy order 396359836)",
         direction: "long", instrumentId: 1002, symbol: "GOOG", amountCents: 0, state: "filled", stateLabel: "accepted by eToro", reason: "eToro accepted the request to cancel order 396359836.", sends: 1,
         createdAt: "2026-11-24T18:51:22Z", updatedAt: "2026-11-24T18:51:22Z" },
     ]);
@@ -117,5 +117,42 @@ describe("Orders", () => {
   it("says when there are none", async () => {
     serve([]);
     expect(await screen.findByText("No orders yet.")).toBeInTheDocument();
+  });
+
+  it("shows a Trading 212 order's ticker and quantity in the account's currency, and resolves an unknown one (R45.11)", async () => {
+    const t212 = { ...account, id: "t1", name: "Practice", platform: "trading212", currency: "GBP" };
+    const lost = {
+      requestId: "lost-1", mode: "demo", platform: "trading212", resolvable: true, kind: "open", kindLabel: "Buy BARC.L (BARCl_EQ)",
+      direction: "long", instrumentId: 1, symbol: "BARC.L", market: "LSE", exchange: "London (LSE)", amountCents: 61200,
+      ticker: "BARCl_EQ", quantity: "3", state: "unknown", stateLabel: "unknown", reason: "the answer was lost", sends: 1,
+      createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:00Z",
+    };
+    const posts: { url: string; body: unknown }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+      if (url.endsWith("/api/v1/system/status")) return json({ ...status, account: t212 });
+      if (init?.method === "POST") {
+        posts.push({ url, body: JSON.parse(String(init.body)) });
+        return json({ ...lost, state: "abandoned", stateLabel: "abandoned", resolvable: false });
+      }
+      if (url.includes("/api/v1/orders")) return json([lost]);
+      return new Response("{}", { status: 404 });
+    });
+    render(<ModeProvider><Orders /></ModeProvider>);
+    const row = (await screen.findByText("Buy BARC.L (BARCl_EQ)")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("BARCl_EQ")).toBeInTheDocument();
+    expect(within(row).getByText("3")).toBeInTheDocument();
+    expect(within(row).getByText("£612.00")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("outcome is unknown");
+    fireEvent.click(within(row).getByRole("button", { name: "Resolve order lost-1" }));
+    const dialog = await screen.findByRole("dialog");
+    // an order id is required unless "not placed" is chosen
+    expect(within(dialog).getByRole("button", { name: /^Resolve$/ })).toBeDisabled();
+    fireEvent.click(within(dialog).getByLabelText("It was not placed at Trading 212"));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Resolve$/ }));
+    await vi.waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].url).toBe("/api/v1/orders/lost-1/resolve");
+    expect(posts[0].body).toEqual({ notPlaced: true });
   });
 });

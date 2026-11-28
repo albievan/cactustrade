@@ -106,6 +106,9 @@ type AgentView struct {
 	// StartAgent checks it, plus an empty watchlist and an unusable LLM reviewer. Empty while
 	// the agent runs and on a real-money account (nothing there may start before phase 7).
 	Missing []MissingItem
+	// Currency is the currency of the money figures: USD on eToro, the Trading 212 account's
+	// own ("" when it could not be read yet).
+	Currency string
 }
 
 // MissingItem is one piece of missing setup and whether the caller may fix it.
@@ -123,7 +126,7 @@ func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID st
 	if err := s.authorize(p, domain.PermView); err != nil {
 		return AgentView{}, err
 	}
-	v, err := s.account(ctx, p, accountID, domain.AccessView)
+	v, err := s.agentAccount(ctx, p, accountID, domain.AccessView)
 	if err != nil {
 		return AgentView{}, err
 	}
@@ -160,6 +163,7 @@ func (s *Service) AgentStatusView(ctx context.Context, p Principal, accountID st
 		out.Pending = len(pending)
 	}
 	out.Missing = s.missingFor(ctx, p, v, out)
+	out.Currency = s.viewCurrency(v.Account)
 	return out, nil
 }
 
@@ -181,9 +185,12 @@ type AgentCard struct {
 	// StartBlocked: as AgentView.StartBlocked.
 	StartBlocked           string
 	OpenPositions, Pending int
+	// Currency: as AgentView.Currency, without a broker read ("" = not known yet).
+	Currency string
 }
 
-// AgentCards lists the agent of every eToro account the caller can view (R23), with the
+// AgentCards lists the agent of every account the agent trades (eToro, Trading 212 practice;
+// R23, R45.9) the caller can view, with the
 // controls the caller may use there (the same rules as AgentStatusView) and whether the
 // caller may change its limits now. It reads only the database and this process's state.
 func (s *Service) AgentCards(ctx context.Context, p Principal) ([]AgentCard, error) {
@@ -195,11 +202,11 @@ func (s *Service) AgentCards(ctx context.Context, p Principal) ([]AgentCard, err
 	why := s.agentLoopBlocked()
 	out := make([]AgentCard, 0, len(vs))
 	for _, v := range vs {
-		if !v.Tradable() {
+		if !v.Agentable() {
 			continue
 		}
 		c := AgentCard{
-			Account: v, Current: v.ID == cur, State: s.agentState(ctx, v.ID), StateSince: s.agentSince(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
+			Account: v, Current: v.ID == cur, Currency: s.viewCurrency(v.Account), State: s.agentState(ctx, v.ID), StateSince: s.agentSince(ctx, v.ID), Reconciliation: s.Reconciled(v.ID),
 			LimitsBlocked: s.limitsEditBlocked(ctx, p, v), Controls: s.controlsFor(ctx, p, v),
 		}
 		c.LimitsEditable = c.LimitsBlocked == ""
@@ -344,13 +351,20 @@ func (s *Service) controlsFor(ctx context.Context, p Principal, v domain.Account
 	c.Start = s.couldStart(p, v) && !c.Gated
 	c.Kill = s.killer(p, v)
 	c.Reset = c.Kill && session && p.Role == domain.RoleAdmin
-	c.ForceClose = trade && session && p.Can(domain.PermForceClose) && v.Tradable()
+	c.ForceClose = trade && session && p.Can(domain.PermForceClose) && v.Agentable()
 	return c
 }
 
 // viewEquity reads the equity now and works out the floors and distances.
 func (s *Service) viewEquity(ctx context.Context, v domain.AccountView, out *AgentView) {
 	switch {
+	case v.T212Trading() && s.d.T212 == nil:
+		out.EquityError = "the Trading 212 client is not configured"
+		return
+	case v.T212Trading() && !s.hasKeys(ctx, v.Account):
+		out.EquityError = "the account's Trading 212 keys are not set"
+		return
+	case v.T212Trading():
 	case s.d.Broker == nil:
 		out.EquityError = "the eToro client is not configured"
 		return
@@ -415,18 +429,50 @@ type OrderView struct {
 	Market domain.Market
 }
 
-// subject names the order's instrument for people: its symbol, else its id.
+// subject names the order's instrument for people: its symbol, else its id; a Trading 212
+// order adds its ticker, e.g. "BARC.L (BARCl_EQ)".
 func (v OrderView) subject() string {
-	if v.Symbol != "" {
-		return v.Symbol
+	sub := v.Symbol
+	if sub == "" {
+		sub = "instrument " + strconv.FormatInt(int64(v.Instrument), 10)
 	}
-	return "instrument " + strconv.FormatInt(int64(v.Instrument), 10)
+	if v.Ticker != "" {
+		if v.Symbol == "" && v.Instrument <= 0 {
+			return v.Ticker
+		}
+		sub += " (" + v.Ticker + ")"
+	}
+	return sub
+}
+
+// t212 reports whether the order went to Trading 212.
+func (v OrderView) t212() bool { return v.OnPlatform() == domain.PlatformTrading212 }
+
+// broker names the order's platform for people.
+func (v OrderView) broker() string { return v.OnPlatform().Label() }
+
+// Resolvable reports whether the order is a Trading 212 order whose outcome is unknown, which
+// its account's owner may resolve (ResolveT212Order).
+func (v OrderView) Resolvable() bool {
+	return v.t212() && v.State == domain.OrderUnknown && v.EtoroOrderID <= 0
 }
 
 // KindLabel words what the order is, e.g. "Buy GOOG", "Short AAPL", "Cancel request for GOOG
 // (buy order 396359836)" or "Close request for GOOG (position 3649965576)". The web shows it
 // as it is (no wording in React).
 func (v OrderView) KindLabel() string {
+	if v.t212() {
+		switch v.Kind {
+		case domain.OrderOpen:
+			return "Buy " + v.subject()
+		case domain.OrderStop:
+			return "Sell stop for " + v.subject()
+		case domain.OrderClose:
+			return "Sell " + v.subject()
+		case domain.OrderCancel:
+			return fmt.Sprintf("Cancel request for %s (Trading 212 order %d)", v.subject(), v.TargetOrderID)
+		}
+	}
 	switch v.Kind {
 	case domain.OrderCancel:
 		target := "order"
@@ -450,13 +496,27 @@ func (v OrderView) StateLabel() string {
 		switch v.State {
 		case domain.OrderFilled:
 			if v.Kind == domain.OrderCancel {
-				return "accepted by eToro"
+				return "accepted by " + v.broker()
+			}
+			if v.t212() {
+				return "sold"
 			}
 			return "done"
 		case domain.OrderPartial:
+			if v.t212() {
+				return "partly sold"
+			}
 			return "partly done"
 		case domain.OrderRejected:
 			return "refused"
+		}
+	}
+	if v.Kind == domain.OrderStop {
+		switch v.State {
+		case domain.OrderPending:
+			return "resting at Trading 212"
+		case domain.OrderFilled:
+			return "fired (sold)"
 		}
 	}
 	return strings.ReplaceAll(string(v.State), "_", " ")
@@ -470,12 +530,13 @@ func (v OrderView) ReasonLabel() string {
 	if v.Kind != domain.OrderCancel {
 		return v.Reason
 	}
+	broker := v.broker()
 	cause := strings.TrimPrefix(v.Reason, "cancel accepted: ")
 	if rest, ok := strings.CutPrefix(cause, "pending for over "); ok {
 		if d, err := time.ParseDuration(rest); err == nil {
 			rest = humanDuration(d)
 		}
-		cause = "the order was still not filled after " + rest + " (cactusTrade cancels an entry order eToro has not filled by then, so its cash is not held up)"
+		cause = "the order was still not filled after " + rest + " (cactusTrade cancels an entry order " + broker + " has not filled by then, so its cash is not held up)"
 	}
 	target := "the order"
 	if v.TargetOrderID > 0 {
@@ -487,13 +548,13 @@ func (v OrderView) ReasonLabel() string {
 		if cause != "" {
 			why = " Why it was asked: " + cause + "."
 		}
-		return "eToro accepted the request to cancel " + target + "." + why +
+		return broker + " accepted the request to cancel " + target + "." + why +
 			" This does not mean it was cancelled: if it had already filled, it stays filled (see that order's own line)."
 	case domain.OrderRejected:
 		if cause == "" {
-			return "eToro refused the request to cancel " + target + "."
+			return broker + " refused the request to cancel " + target + "."
 		}
-		return "eToro refused the request to cancel " + target + ": " + cause
+		return broker + " refused the request to cancel " + target + ": " + cause
 	}
 	if cause == "" {
 		return ""
@@ -590,7 +651,7 @@ func (s *Service) ReleaseLeases(ctx context.Context) error {
 	}
 	var errs []error
 	for _, a := range as {
-		if !a.Tradable() {
+		if !a.Agentable() {
 			continue
 		}
 		if err := s.d.Store.AgentLeases().Release(ctx, a.ID, s.leaseHolder()); err != nil && !errors.Is(err, domain.ErrNotFound) {

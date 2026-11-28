@@ -429,6 +429,43 @@ removes this browser's copy (`cactustrade.prefs.<userId>`). The PUT has its own 
 key only, no RBAC permission; R50 decision). They are never read by the agent, the risk
 engine or authorization, and are not audited. A data reset (R49) keeps them.
 
+### Trading 212 execution (R45, ADR-008)
+
+Practice accounts only (D41 g); long only; signals and prices from eToro, cash, positions and
+orders from Trading 212.
+
+- **Port and adapter.** `ports.T212Broker` (`internal/adapters/trading212`, one `Client` that is
+  also the overview's `Holdings`): reads through `read` (a 429 or 5xx retried once), changes
+  through `mutate` (never retried; a real account refused before its keys are read). The
+  allowlist is exactly nine method + path pairs. Before any sell the adapter reads the positions
+  and the active orders fresh and refuses a quantity above what is available or held net of the
+  sells already resting. `Config.RecordAnswer` lets the read-only `t212-probe` record answers.
+- **Executor** (`t212_executor.go`): a buy stored (created, then sent) before its one `Place`,
+  followed until final, checked against the eToro quote (200 bp), then protected by a sell stop
+  for the unsold quantity and confirmed in the open orders. A close cancels the stop, confirms it
+  gone, reads the position and the account again, and sells
+  `domain.T212Sellable(bought, sold, available, resting)` — *sold* is the sum of
+  `orders.filled_micros` of the position's own stops and sales (migration 00017), written with
+  each order's state. One exit at a time per account (`t212ExitLock`). A lost answer leaves the
+  order unknown until it is matched in Trading 212's lists (`domain.MatchT212Order`) or resolved
+  by the owner (`ResolveT212Order`).
+- **Agent** (`t212_agent.go`): the same tick as eToro's at each 5-minute bar close, gated also on
+  the eToro price source, the minimum order value, a catalogue younger than 24 h, no unknown
+  order and every position stopped; the quantity and reservation follow T212-g, the cost gate
+  T212-k, and the ticker must not be held (on the fresh figures too).
+- **Supervisor** (`t212_supervisor.go`, every 10 s with the eToro ones): risk state and drawdown
+  from the account summary, stale buys cancelled, sales due before the close, every position's
+  stop checked against the open orders (a missing one → sold; out of session → placed again), a
+  vanished position settled. It stores its read in the view cache for the dashboard.
+- **Reconciliation** (`t212_reconcile.go`): part of `ReconcileAll` at start-up, before any loop;
+  orders resolved, positions matched, holdings cactusTrade did not buy left alone (OD1), orphan
+  stops of ours cancelled; any position without a confirmed stop keeps it unreconciled.
+- **Catalogue loop** (`cmd/cactustrade`): `RefreshT212InstrumentsAuto` 30 s after the start, then
+  every 12 h (a list older than 24 h stops matches and entries).
+- **Views.** The agent panel, agent cards, live view, limits view and watchlist show a practice
+  account in its own currency; the watchlist shows each share's match, which its owner confirms
+  once (D42).
+
 ## Accounts
 
 Every eToro call is made for one account: the app checks the caller's access (owner / trade /
@@ -441,11 +478,14 @@ keys (market data is the same for all).
 
 ## Platforms
 
-An account has a `platform`: `etoro` (default), `trading212`, `saxo` or `tiger`. Only eToro
-accounts are traded (`Account.Tradable()`). `app.account(...)` — the one resolver every
-trading, agent, scanner, watchlist, themes and risk use case goes through — refuses any other
-platform with `domain.ErrViewOnly` (403 "View-only account"), and a view-only account can never
-be the "current" account. Managing an account (keys, sharing, rename, delete) and the
+An account has a `platform`: `etoro` (default), `trading212`, `saxo` or `tiger`. eToro
+accounts are traded (`Account.Tradable()`), and since R45 also Trading 212 **practice**
+accounts (`Account.T212Trading()`; `Account.Agentable()` is either; see *Trading 212 execution*
+below). `app.account(...)` — the resolver of the eToro-only use cases (scanner, themes, web
+research, trade minimums, the real gate) — refuses any other platform with `domain.ErrViewOnly`
+(403 "View-only account"); `app.agentAccount(...)` — the agent, its controls and views, orders,
+decisions, risk limits and the watchlist — also lets a Trading 212 practice account through. A
+real Trading 212, Saxo or Tiger account is view-only and can never be the "current" account. Managing an account (keys, sharing, rename, delete) and the
 *Overview* (`app.Overview`, `app.EquityHistory`) work on every platform. As defence in depth the
 eToro client and price stream refuse a non-eToro account before any I/O, and each view-only
 client refuses an account of any other platform, so no key ever reaches another broker.

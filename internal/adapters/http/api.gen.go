@@ -284,6 +284,27 @@ func (e BackupStatusRecipientSource) Valid() bool {
 	}
 }
 
+// Defines values for BrokerMatchStatus.
+const (
+	Confirmed   BrokerMatchStatus = "confirmed"
+	Unconfirmed BrokerMatchStatus = "unconfirmed"
+	Unusable    BrokerMatchStatus = "unusable"
+)
+
+// Valid indicates whether the value is a known member of the BrokerMatchStatus enum.
+func (e BrokerMatchStatus) Valid() bool {
+	switch e {
+	case Confirmed:
+		return true
+	case Unconfirmed:
+		return true
+	case Unusable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CredentialSource.
 const (
 	CredentialSourceEnv CredentialSource = "env"
@@ -1066,8 +1087,14 @@ func (e PreviewStatementParamsExchange) Valid() bool {
 
 // Account defines model for Account.
 type Account struct {
-	Access    AccountAccess `json:"access"`
-	CreatedAt time.Time     `json:"createdAt"`
+	Access AccountAccess `json:"access"`
+
+	// AgentTradable cactusTrade's agent can trade it: an eToro account, or a Trading 212 practice account (a real Trading 212 account is view-only)
+	AgentTradable *bool     `json:"agentTradable,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+
+	// Currency the currency of its money figures when known (USD on eToro)
+	Currency *string `json:"currency,omitempty"`
 
 	// EnvKeys uses the deployment's ETORO_DEMO_PUB / _PK
 	EnvKeys   bool        `json:"envKeys"`
@@ -1077,8 +1104,11 @@ type Account struct {
 	OwnerId   string      `json:"ownerId"`
 	OwnerName string      `json:"ownerName"`
 
-	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+	// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
 	Platform Platform `json:"platform"`
+
+	// PriceSourceAccountId Trading 212 practice account: the eToro demo account whose prices feed it (absent = none)
+	PriceSourceAccountId *string `json:"priceSourceAccountId,omitempty"`
 }
 
 // AccountAccess defines model for Account.Access.
@@ -1197,6 +1227,9 @@ type AgentCard struct {
 	// Controls The agent actions the caller may take on this account
 	Controls AgentControls `json:"controls"`
 
+	// Currency the currency of the account's money figures when known (USD on eToro)
+	Currency *string `json:"currency,omitempty"`
+
 	// Current the caller's current account (the limits form edits it)
 	Current bool `json:"current"`
 	Killed  bool `json:"killed"`
@@ -1256,6 +1289,9 @@ type AgentPanel struct {
 
 	// Controls The agent actions the caller may take on this account
 	Controls AgentControls `json:"controls"`
+
+	// Currency the currency of the money figures (USD on eToro; the Trading 212 account's own, empty when it could not be read)
+	Currency string `json:"currency"`
 
 	// DailyFloorCents US dollars in cents (the eToro account currency is USD)
 	DailyFloorCents *Cents `json:"dailyFloorCents,omitempty"`
@@ -1787,6 +1823,33 @@ type BrokerCheck struct {
 	Positions     *int `json:"positions,omitempty"`
 }
 
+// BrokerMatch The Trading 212 instrument matched to a watchlist share of a Trading 212 practice account (D42)
+type BrokerMatch struct {
+	ConfirmedAt *time.Time `json:"confirmedAt,omitempty"`
+
+	// Currency the instrument's currency at Trading 212 (GBX, USD …)
+	Currency *string `json:"currency,omitempty"`
+
+	// InstrumentId the eToro instrument
+	InstrumentId int64  `json:"instrumentId"`
+	Isin         string `json:"isin"`
+
+	// Name Trading 212's name of the instrument (absent when it is no longer listed)
+	Name *string `json:"name,omitempty"`
+
+	// Reason why it is not tradable (absent when confirmed)
+	Reason *string `json:"reason,omitempty"`
+
+	// Status unconfirmed: the owner must confirm it before anything is traded; confirmed: tradable; unusable: confirmed but no longer tradable (see reason)
+	Status BrokerMatchStatus `json:"status"`
+
+	// Ticker Trading 212's ticker, e.g. BARCl_EQ
+	Ticker string `json:"ticker"`
+}
+
+// BrokerMatchStatus unconfirmed: the owner must confirm it before anything is traded; confirmed: tradable; unusable: confirmed but no longer tradable (see reason)
+type BrokerMatchStatus string
+
 // Cents US dollars in cents (the eToro account currency is USD)
 type Cents = int64
 
@@ -1810,7 +1873,7 @@ type CreateAccountRequest struct {
 	Mode TradingMode `json:"mode"`
 	Name string      `json:"name"`
 
-	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+	// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
 	Platform *Platform `json:"platform,omitempty"`
 }
 
@@ -2094,7 +2157,7 @@ type EquitySeries struct {
 	Mode      TradingMode `json:"mode"`
 	Name      string      `json:"name"`
 
-	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+	// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
 	Platform Platform      `json:"platform"`
 	Points   []EquityPoint `json:"points"`
 }
@@ -2394,7 +2457,7 @@ type Holdings struct {
 	// cents, GBP pence…), whole units for JPY and KRW.
 	Invested MinorUnits `json:"invested"`
 
-	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+	// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
 	Platform  Platform  `json:"platform"`
 	Positions []Holding `json:"positions"`
 
@@ -2680,8 +2743,11 @@ type LiveSnapshot struct {
 	Account Account `json:"account"`
 
 	// At when the snapshot was built
-	At         time.Time `json:"at"`
-	DayStopped bool      `json:"dayStopped"`
+	At time.Time `json:"at"`
+
+	// Currency the currency of the money figures when known (USD on eToro)
+	Currency   *string `json:"currency,omitempty"`
+	DayStopped bool    `json:"dayStopped"`
 
 	// Figures The account's figures and its distance to every limit the risk engine applies, from
 	// the cached portfolio (`asOf`). Distances are the amounts left before a limit refuses
@@ -3042,27 +3108,39 @@ type Order struct {
 	EtoroOrderId *int64   `json:"etoroOrderId,omitempty"`
 
 	// Exchange the exchange named for people, e.g. Sydney (ASX); empty when unknown
-	Exchange     string `json:"exchange"`
-	InstrumentId int64  `json:"instrumentId"`
+	Exchange string `json:"exchange"`
 
-	// Kind open, close or cancel
+	// FilledQuantity An exact decimal (prices and units, up to 6 places)
+	FilledQuantity *Decimal `json:"filledQuantity,omitempty"`
+	InstrumentId   int64    `json:"instrumentId"`
+
+	// Kind open, close, cancel or stop (a Trading 212 sell stop)
 	Kind string `json:"kind"`
 
 	// KindLabel what the order is, worded by the server, e.g. "Buy GOOG", "Cancel request for GOOG (buy order 396359836)", "Close request for GOOG (position 3649965576)"
 	KindLabel string `json:"kindLabel"`
 
 	// Market the exchange's calendar market of the order's share (LSE, NYSE, ASX); empty when the instrument is not cached
-	Market     string      `json:"market"`
-	Mode       TradingMode `json:"mode"`
-	PositionId *int64      `json:"positionId,omitempty"`
+	Market string      `json:"market"`
+	Mode   TradingMode `json:"mode"`
+
+	// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
+	Platform   Platform `json:"platform"`
+	PositionId *int64   `json:"positionId,omitempty"`
+
+	// Quantity An exact decimal (prices and units, up to 6 places)
+	Quantity *Decimal `json:"quantity,omitempty"`
 
 	// Reason why the order is in its state, worded by the server; a cancel says what was asked of eToro, why cactusTrade asked, and that an accepted cancel does not mean the order was cancelled
 	Reason string `json:"reason"`
 
-	// RequestId our x-request-id, stored before the order is sent
-	RequestId string     `json:"requestId"`
-	Sends     int        `json:"sends"`
-	SentAt    *time.Time `json:"sentAt,omitempty"`
+	// RequestId our x-request-id, stored before the order is sent (Trading 212 never sees it)
+	RequestId string `json:"requestId"`
+
+	// Resolvable a Trading 212 order whose outcome is unknown and that the account owner may resolve (POST /orders/{requestId}/resolve)
+	Resolvable bool       `json:"resolvable"`
+	Sends      int        `json:"sends"`
+	SentAt     *time.Time `json:"sentAt,omitempty"`
 
 	// State created, sent, pending, filled, partially_filled, rejected, cancelled, unknown or abandoned
 	State string `json:"state"`
@@ -3075,8 +3153,11 @@ type Order struct {
 	Symbol   string   `json:"symbol"`
 
 	// TakeProfit An exact decimal (prices and units, up to 6 places)
-	TakeProfit *Decimal  `json:"takeProfit,omitempty"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	TakeProfit *Decimal `json:"takeProfit,omitempty"`
+
+	// Ticker Trading 212's instrument (absent on eToro)
+	Ticker    *string   `json:"ticker,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // OutboxMail defines model for OutboxMail.
@@ -3108,7 +3189,7 @@ type PasswordResetRequest struct {
 	Username string `json:"username"`
 }
 
-// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
 type Platform string
 
 // PlatformInfo defines model for PlatformInfo.
@@ -3118,7 +3199,7 @@ type PlatformInfo struct {
 	Credentials []CredentialSpec `json:"credentials"`
 	Label       string           `json:"label"`
 
-	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+	// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
 	Platform Platform `json:"platform"`
 
 	// ViewOnly cactusTrade shows the platform's accounts but never trades them
@@ -3189,6 +3270,12 @@ type Preferences map[string]interface{}
 
 // PreferencesPatch Keys to set (any allowed value) or delete (null)
 type PreferencesPatch map[string]*interface{}
+
+// PriceSourceRequest defines model for PriceSourceRequest.
+type PriceSourceRequest struct {
+	// AccountId an eToro demo account of the same owner with keys; empty removes the price source
+	AccountId string `json:"accountId"`
+}
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -3469,6 +3556,15 @@ type ResetKillRequest struct {
 	Confirm string `json:"confirm"`
 }
 
+// ResolveOrderRequest defines model for ResolveOrderRequest.
+type ResolveOrderRequest struct {
+	// BrokerOrderId the Trading 212 order it is
+	BrokerOrderId *int64 `json:"brokerOrderId,omitempty"`
+
+	// NotPlaced it was not placed at Trading 212 (abandoned)
+	NotPlaced *bool `json:"notPlaced,omitempty"`
+}
+
 // Review defines model for Review.
 type Review struct {
 	At        time.Time        `json:"at"`
@@ -3525,8 +3621,14 @@ type RiskLimits struct {
 	MaxQuoteAgeSeconds int `json:"maxQuoteAgeSeconds"`
 
 	// MaxShortBp all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %)
-	MaxShortBp                int `json:"maxShortBp"`
-	NoEntryBeforeCloseMinutes int `json:"noEntryBeforeCloseMinutes"`
+	MaxShortBp int `json:"maxShortBp"`
+
+	// MinOrderValueCents Trading 212: the smallest order value, in the account's minor units (required, > 0 and at most the budget when the budget is set); eToro: absent or 0
+	MinOrderValueCents        *int64 `json:"minOrderValueCents,omitempty"`
+	NoEntryBeforeCloseMinutes int    `json:"noEntryBeforeCloseMinutes"`
+
+	// T212Fractional Trading 212: fractional quantities (refused while fractions are not verified on a practice account); eToro: absent or false
+	T212Fractional *bool `json:"t212Fractional,omitempty"`
 
 	// TradingBudgetCents US dollars in cents (the eToro account currency is USD)
 	TradingBudgetCents Cents `json:"tradingBudgetCents"`
@@ -3534,16 +3636,22 @@ type RiskLimits struct {
 
 // RiskLimitsChange A change of limits: `preset` alone, or every limit of RiskLimits (a custom set).
 type RiskLimitsChange struct {
-	DailyLossBp               *int          `json:"dailyLossBp,omitempty"`
-	DrawdownBp                *int          `json:"drawdownBp,omitempty"`
-	FlattenBeforeCloseMinutes *int          `json:"flattenBeforeCloseMinutes,omitempty"`
-	MaxOpenPositions          *int          `json:"maxOpenPositions,omitempty"`
-	MaxPortfolioAgeSeconds    *int          `json:"maxPortfolioAgeSeconds,omitempty"`
-	MaxPositionBp             *int          `json:"maxPositionBp,omitempty"`
-	MaxQuoteAgeSeconds        *int          `json:"maxQuoteAgeSeconds,omitempty"`
-	MaxShortBp                *int          `json:"maxShortBp,omitempty"`
+	DailyLossBp               *int `json:"dailyLossBp,omitempty"`
+	DrawdownBp                *int `json:"drawdownBp,omitempty"`
+	FlattenBeforeCloseMinutes *int `json:"flattenBeforeCloseMinutes,omitempty"`
+	MaxOpenPositions          *int `json:"maxOpenPositions,omitempty"`
+	MaxPortfolioAgeSeconds    *int `json:"maxPortfolioAgeSeconds,omitempty"`
+	MaxPositionBp             *int `json:"maxPositionBp,omitempty"`
+	MaxQuoteAgeSeconds        *int `json:"maxQuoteAgeSeconds,omitempty"`
+	MaxShortBp                *int `json:"maxShortBp,omitempty"`
+
+	// MinOrderValueCents Trading 212 (required there); absent or 0 on eToro
+	MinOrderValueCents        *int64        `json:"minOrderValueCents,omitempty"`
 	NoEntryBeforeCloseMinutes *int          `json:"noEntryBeforeCloseMinutes,omitempty"`
 	Preset                    *RiskPresetId `json:"preset,omitempty"`
+
+	// T212Fractional Trading 212 fractional quantities (refused while unverified); absent = off
+	T212Fractional *bool `json:"t212Fractional,omitempty"`
 
 	// TradingBudgetCents US dollars in cents (the eToro account currency is USD)
 	TradingBudgetCents *Cents `json:"tradingBudgetCents,omitempty"`
@@ -3554,6 +3662,9 @@ type RiskLimitsView struct {
 	// CanEdit the caller may change the limits now (same rules as the PUT)
 	CanEdit bool `json:"canEdit"`
 
+	// Currency the currency of the money figures (USD on eToro; the Trading 212 account's own; absent when it could not be read)
+	Currency *string `json:"currency,omitempty"`
+
 	// DailyLossBp stop new entries at this loss from the start-of-day equity (bp; 200 = 2 %)
 	DailyLossBp int `json:"dailyLossBp"`
 
@@ -3563,19 +3674,31 @@ type RiskLimitsView struct {
 	// EditBlockedReason why not, for people (absent when canEdit)
 	EditBlockedReason         *string `json:"editBlockedReason,omitempty"`
 	FlattenBeforeCloseMinutes int     `json:"flattenBeforeCloseMinutes"`
-	MaxOpenPositions          int     `json:"maxOpenPositions"`
-	MaxPortfolioAgeSeconds    int     `json:"maxPortfolioAgeSeconds"`
+
+	// FractionsVerified Trading 212 fractional quantities are verified, so the switch may be turned on
+	FractionsVerified      *bool `json:"fractionsVerified,omitempty"`
+	MaxOpenPositions       int   `json:"maxOpenPositions"`
+	MaxPortfolioAgeSeconds int   `json:"maxPortfolioAgeSeconds"`
 
 	// MaxPositionBp largest position as a share of equity (bp; 0 = off)
 	MaxPositionBp      int `json:"maxPositionBp"`
 	MaxQuoteAgeSeconds int `json:"maxQuoteAgeSeconds"`
 
 	// MaxShortBp all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %)
-	MaxShortBp                int `json:"maxShortBp"`
-	NoEntryBeforeCloseMinutes int `json:"noEntryBeforeCloseMinutes"`
+	MaxShortBp int `json:"maxShortBp"`
+
+	// MinOrderValueCents Trading 212: the smallest order value, in the account's minor units (required, > 0 and at most the budget when the budget is set); eToro: absent or 0
+	MinOrderValueCents        *int64 `json:"minOrderValueCents,omitempty"`
+	NoEntryBeforeCloseMinutes int    `json:"noEntryBeforeCloseMinutes"`
+
+	// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
+	Platform *Platform `json:"platform,omitempty"`
 
 	// Preset the preset the limits match, or custom
 	Preset RiskPresetMatch `json:"preset"`
+
+	// T212Fractional Trading 212: fractional quantities (refused while fractions are not verified on a practice account); eToro: absent or false
+	T212Fractional *bool `json:"t212Fractional,omitempty"`
 
 	// TradingBudgetCents US dollars in cents (the eToro account currency is USD)
 	TradingBudgetCents Cents `json:"tradingBudgetCents"`
@@ -3663,7 +3786,7 @@ type StatementAccountRef struct {
 	Mode TradingMode `json:"mode"`
 	Name string      `json:"name"`
 
-	// Platform eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+	// Platform eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
 	Platform Platform `json:"platform"`
 }
 
@@ -3802,6 +3925,18 @@ type SystemStatus struct {
 
 // SystemStatusDatabase defines model for SystemStatus.Database.
 type SystemStatusDatabase string
+
+// T212Catalogue defines model for T212Catalogue.
+type T212Catalogue struct {
+	// Count instruments stored by this refresh (0 when only read)
+	Count int `json:"count"`
+
+	// FetchedAt when the stored list was fetched (absent: never)
+	FetchedAt *time.Time `json:"fetchedAt,omitempty"`
+
+	// Stale missing or older than 24 h: no matches and no entries until it is refreshed
+	Stale bool `json:"stale"`
+}
 
 // TableCounts rows per table, by table name
 type TableCounts map[string]int64
@@ -3957,9 +4092,12 @@ type WatchHolding struct {
 
 // WatchItem defines model for WatchItem.
 type WatchItem struct {
-	AddedAt     time.Time   `json:"addedAt"`
-	AddedBy     string      `json:"addedBy"`
-	Eligibility Eligibility `json:"eligibility"`
+	AddedAt time.Time `json:"addedAt"`
+	AddedBy string    `json:"addedBy"`
+
+	// BrokerMatch The Trading 212 instrument matched to a watchlist share of a Trading 212 practice account (D42)
+	BrokerMatch *BrokerMatch `json:"brokerMatch,omitempty"`
+	Eligibility Eligibility  `json:"eligibility"`
 
 	// Holding What the account holds of one instrument, from the portfolio view cache (a view only)
 	Holding    *WatchHolding `json:"holding,omitempty"`
@@ -4318,6 +4456,9 @@ type RenameAccountJSONRequestBody = RenameAccountRequest
 // SetAccountKeysJSONRequestBody defines body for SetAccountKeys for application/json ContentType.
 type SetAccountKeysJSONRequestBody = SetAccountKeysRequest
 
+// SetPriceSourceJSONRequestBody defines body for SetPriceSource for application/json ContentType.
+type SetPriceSourceJSONRequestBody = PriceSourceRequest
+
 // ArmRealGateJSONRequestBody defines body for ArmRealGate for application/json ContentType.
 type ArmRealGateJSONRequestBody = ArmRealRequest
 
@@ -4387,6 +4528,9 @@ type SetMyPreferencesJSONRequestBody = PreferencesPatch
 // SetMyProfileJSONRequestBody defines body for SetMyProfile for application/json ContentType.
 type SetMyProfileJSONRequestBody = ProfileInput
 
+// ResolveOrderJSONRequestBody defines body for ResolveOrder for application/json ContentType.
+type ResolveOrderJSONRequestBody = ResolveOrderRequest
+
 // RequestPasswordResetJSONRequestBody defines body for RequestPasswordReset for application/json ContentType.
 type RequestPasswordResetJSONRequestBody = PasswordResetRequest
 
@@ -4455,6 +4599,9 @@ type ServerInterface interface {
 	// SetAccountKeys Store the account's credentials, write-only (owner, web UI); an empty value keeps the stored one
 	// (PUT /api/v1/accounts/{accountId}/keys)
 	SetAccountKeys(w http.ResponseWriter, r *http.Request, accountId string)
+	// SetPriceSource Choose the eToro demo account whose prices feed a Trading 212 practice account (owner, web UI, agent stopped)
+	// (PUT /api/v1/accounts/{accountId}/price-source)
+	SetPriceSource(w http.ResponseWriter, r *http.Request, accountId string)
 	// GetRealGate The real-trading gate of a real-money account, its checklist and the demo evidence (view access)
 	// (GET /api/v1/accounts/{accountId}/real-gate)
 	GetRealGate(w http.ResponseWriter, r *http.Request, accountId string, params GetRealGateParams)
@@ -4479,6 +4626,12 @@ type ServerInterface interface {
 	// UnshareAccount Remove a user's access (owner, web UI)
 	// (DELETE /api/v1/accounts/{accountId}/shares/{userId})
 	UnshareAccount(w http.ResponseWriter, r *http.Request, accountId string, userId string)
+	// GetT212Catalogue The age of the stored Trading 212 instrument list (viewer of a Trading 212 practice account)
+	// (GET /api/v1/accounts/{accountId}/t212/instruments)
+	GetT212Catalogue(w http.ResponseWriter, r *http.Request, accountId string)
+	// RefreshT212Catalogue Fetch Trading 212's instrument list with this practice account's keys (owner, web UI; at most once per 50 s)
+	// (POST /api/v1/accounts/{accountId}/t212/instruments/refresh)
+	RefreshT212Catalogue(w http.ResponseWriter, r *http.Request, accountId string)
 	// TestAccount Test the account's eToro connection (owner; one read-only call)
 	// (POST /api/v1/accounts/{accountId}/test)
 	TestAccount(w http.ResponseWriter, r *http.Request, accountId string)
@@ -4674,6 +4827,9 @@ type ServerInterface interface {
 	// ListOrders The account's orders to eToro, newest first (viewer)
 	// (GET /api/v1/orders)
 	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
+	// ResolveOrder Say what became of a Trading 212 order whose outcome is unknown (owner, web UI)
+	// (POST /api/v1/orders/{requestId}/resolve)
+	ResolveOrder(w http.ResponseWriter, r *http.Request, requestId string)
 	// GetOverview Every account you can view, on every platform — cash, equity, positions (viewer)
 	// (GET /api/v1/overview)
 	GetOverview(w http.ResponseWriter, r *http.Request)
@@ -4827,6 +4983,9 @@ type ServerInterface interface {
 	// RemoveFromWatchlist Remove an instrument (admin)
 	// (DELETE /api/v1/watchlist/{instrumentId})
 	RemoveFromWatchlist(w http.ResponseWriter, r *http.Request, instrumentId int64)
+	// ConfirmBrokerMatch Confirm the Trading 212 instrument matched to a watchlist share (owner of the current Trading 212 practice account, web UI)
+	// (POST /api/v1/watchlist/{instrumentId}/match/confirm)
+	ConfirmBrokerMatch(w http.ResponseWriter, r *http.Request, instrumentId int64)
 	// Healthz Liveness (the process is serving)
 	// (GET /healthz)
 	Healthz(w http.ResponseWriter, r *http.Request)
@@ -4981,6 +5140,32 @@ func (siw *ServerInterfaceWrapper) SetAccountKeys(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetAccountKeys(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetPriceSource operation middleware
+func (siw *ServerInterfaceWrapper) SetPriceSource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetPriceSource(w, r, accountId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5214,6 +5399,58 @@ func (siw *ServerInterfaceWrapper) UnshareAccount(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UnshareAccount(w, r, accountId, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetT212Catalogue operation middleware
+func (siw *ServerInterfaceWrapper) GetT212Catalogue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetT212Catalogue(w, r, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshT212Catalogue operation middleware
+func (siw *ServerInterfaceWrapper) RefreshT212Catalogue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", r.PathValue("accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshT212Catalogue(w, r, accountId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6952,6 +7189,32 @@ func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ResolveOrder operation middleware
+func (siw *ServerInterfaceWrapper) ResolveOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "requestId" -------------
+	var requestId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "requestId", r.PathValue("requestId"), &requestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "requestId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveOrder(w, r, requestId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOverview operation middleware
 func (siw *ServerInterfaceWrapper) GetOverview(w http.ResponseWriter, r *http.Request) {
 
@@ -7932,6 +8195,32 @@ func (siw *ServerInterfaceWrapper) RemoveFromWatchlist(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ConfirmBrokerMatch operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmBrokerMatch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "instrumentId" -------------
+	var instrumentId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "instrumentId", r.PathValue("instrumentId"), &instrumentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "instrumentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmBrokerMatch(w, r, instrumentId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Healthz operation middleware
 func (siw *ServerInterfaceWrapper) Healthz(w http.ResponseWriter, r *http.Request) {
 
@@ -8115,6 +8404,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/keys", wrapper.GetAccountKeys)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/keys", wrapper.SetAccountKeys)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts/{accountId}/test", wrapper.TestAccount)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/price-source", wrapper.SetPriceSource)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/t212/instruments", wrapper.GetT212Catalogue)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/accounts/{accountId}/t212/instruments/refresh", wrapper.RefreshT212Catalogue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ListAccountShares)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares", wrapper.ShareAccount)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/accounts/{accountId}/shares/{userId}", wrapper.UnshareAccount)
@@ -8142,6 +8434,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist/import", wrapper.ImportWatchlist)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/watchlist/platform", wrapper.ListPlatformWatchlists)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist/platform/{watchlistId}/import", wrapper.ImportPlatformWatchlist)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/watchlist/{instrumentId}/match/confirm", wrapper.ConfirmBrokerMatch)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/watchlist/{instrumentId}", wrapper.RemoveFromWatchlist)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/reload", wrapper.ReloadSettings)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/restart", wrapper.RestartServer)
@@ -8170,6 +8463,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/reset", wrapper.ResetKill)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/agent/reconcile", wrapper.ReconcileAgent)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/orders", wrapper.ListOrders)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/orders/{requestId}/resolve", wrapper.ResolveOrder)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/decisions", wrapper.ListDecisions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/decisions/{id}", wrapper.GetDecision)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/history/summary", wrapper.GetHistorySummary)

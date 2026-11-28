@@ -84,6 +84,9 @@ type LiveSnapshot struct {
 	KillReason     string
 	DayStopped     bool
 	Lease          LeaseStatus
+	// Currency of the money figures: USD on eToro, the Trading 212 account's own ("" = not
+	// known yet).
+	Currency string
 }
 
 // LiveSnapshot returns the live view of an account the caller can view (accountID "" = the
@@ -94,12 +97,12 @@ func (s *Service) LiveSnapshot(ctx context.Context, p Principal, accountID strin
 	if err := s.authorize(p, domain.PermView); err != nil {
 		return LiveSnapshot{}, err
 	}
-	v, err := s.account(ctx, p, accountID, domain.AccessView)
+	v, err := s.agentAccount(ctx, p, accountID, domain.AccessView)
 	if err != nil {
 		return LiveSnapshot{}, err
 	}
 	now := s.d.Clock.Now()
-	out := LiveSnapshot{Account: v, At: now.UTC(), State: s.agentState(ctx, v.ID), Reconciliation: s.Reconciled(v.ID)}
+	out := LiveSnapshot{Account: v, At: now.UTC(), State: s.agentState(ctx, v.ID), Reconciliation: s.Reconciled(v.ID), Currency: s.viewCurrency(v.Account)}
 	rs, err := s.d.Store.RiskStates().Get(ctx, v.ID)
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
@@ -149,11 +152,17 @@ func (s *Service) WarmLiveView(ctx context.Context, p Principal, accountID strin
 	if err := s.authorize(p, domain.PermView); err != nil {
 		return err
 	}
-	v, err := s.account(ctx, p, accountID, domain.AccessView)
+	v, err := s.agentAccount(ctx, p, accountID, domain.AccessView)
 	if err != nil {
 		return err
 	}
 	switch {
+	case v.T212Trading() && s.d.T212 == nil:
+		return fmt.Errorf("the Trading 212 client is not configured: %w", domain.ErrUnavailable)
+	case v.T212Trading():
+		if !s.hasKeys(ctx, v.Account) {
+			return fmt.Errorf("the account's Trading 212 keys are not set: %w", domain.ErrUnavailable)
+		}
 	case s.d.Broker == nil:
 		return fmt.Errorf("the eToro client is not configured: %w", domain.ErrUnavailable)
 	case !s.hasKeys(ctx, v.Account):

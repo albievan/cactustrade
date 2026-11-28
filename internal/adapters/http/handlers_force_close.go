@@ -25,6 +25,9 @@ func (s *Server) ListAgents(w http.ResponseWriter, r *http.Request) {
 			Reconciliation: toReconciliation(c.Reconciliation), LimitsEditable: c.LimitsEditable,
 			Controls: toControls(c.Controls, c.StartBlocked), OpenPositions: c.OpenPositions, PendingOrders: c.Pending,
 		}
+		if c.Currency != "" {
+			x.Currency = ptr(c.Currency)
+		}
 		if c.LimitsBlocked != "" {
 			x.LimitsBlockedReason = ptr(c.LimitsBlocked)
 		}

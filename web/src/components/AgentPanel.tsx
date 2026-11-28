@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, errorText, usd, type AgentPanel as Panel, type Missing } from "../lib/api";
+import { amount, api, errorText, platformLabel, type AgentPanel as Panel, type Missing } from "../lib/api";
 import type { Live } from "../lib/live";
 import { useRefreshMode } from "../lib/mode";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -110,7 +110,7 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
                 onClick={() => void act("stop", api.stopAgent, "The agent is stopped: no new entries; exits continue.")}>
                 <i className="bi bi-stop-fill" />
               </button>
-              <button className="btn btn-outline-secondary" title="Reconcile with eToro now (read-only)" aria-label="Reconcile with eToro"
+              <button className="btn btn-outline-secondary" title={`Reconcile with ${platformLabel[p.account.platform]} now (read-only)`} aria-label={`Reconcile with ${platformLabel[p.account.platform]}`}
                 disabled={off || !c.pause}
                 onClick={() => void act("reconcile", api.reconcileAgent, "Reconciliation ran.")}>
                 <i className="bi bi-arrow-repeat" />
@@ -142,6 +142,7 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
                 {p.reconciliation.ok ? "reconciled" : "not reconciled"}
               </span>
               {p.dayStopped && <span className="badge text-bg-warning">daily limit reached</span>}
+              {p.account.platform === "trading212" && <span className="badge text-bg-primary">Trading 212 practice · {p.currency || "currency unknown"}</span>}
               <StateSince state={p.state} since={p.stateSince} />
             </div>
             {gated && (
@@ -186,15 +187,15 @@ export function AgentPanel({ live }: { live?: Pick<Live, "snapshot" | "refresh">
                 {p.reconciliation.at && <> · {new Date(p.reconciliation.at).toLocaleTimeString()}</>}
                 {!p.reconciliation.ok && p.reconciliation.reason && <div className="text-secondary">{p.reconciliation.reason}</div>}
               </Fact>
-              <Fact label="Equity">{p.equityKnown ? usd(p.equityCents) : <span className="text-secondary">{p.equityError || "unknown"}</span>}</Fact>
+              <Fact label="Equity">{p.equityKnown ? amount(p.equityCents, p.currency) : <span className="text-secondary">{p.equityError || "unknown"}</span>}</Fact>
               <Fact label="To the daily loss limit">
                 {p.toDailyFloorCents !== undefined
-                  ? <>{usd(p.toDailyFloorCents)} <span className="text-secondary">(floor {usd(p.dailyFloorCents)})</span></>
+                  ? <>{amount(p.toDailyFloorCents, p.currency)} <span className="text-secondary">(floor {amount(p.dailyFloorCents, p.currency)})</span></>
                   : <span className="text-secondary">not known yet today</span>}
               </Fact>
               <Fact label="To the drawdown kill switch">
                 {p.toDrawdownFloorCents !== undefined
-                  ? <>{usd(p.toDrawdownFloorCents)} <span className="text-secondary">(floor {usd(p.drawdownFloorCents)})</span></>
+                  ? <>{amount(p.toDrawdownFloorCents, p.currency)} <span className="text-secondary">(floor {amount(p.drawdownFloorCents, p.currency)})</span></>
                   : <span className="text-secondary">unknown</span>}
               </Fact>
               <Fact label="Open positions / orders">{p.openPositions} / {p.pendingOrders}</Fact>

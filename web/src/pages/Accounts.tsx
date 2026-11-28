@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  api, errorText, platformBadge, platformLabel, usd, viewOnly,
+  agentTradable, api, errorText, platformBadge, platformLabel, usd, viewOnly,
   type Account, type AccountHoldings, type AccountKeys, type AccountShare, type BrokerCheck, type CredentialSpec, type Platform, type PlatformInfo,
 } from "../lib/api";
 import { useSession } from "../lib/session";
@@ -8,9 +8,10 @@ import { useRefreshMode } from "../lib/mode";
 import { ProblemAlert } from "../components/ProblemAlert";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { AccountFigures } from "../components/AccountFigures";
+import { T212Setup } from "../components/T212Setup";
 
-// Each user's trading platform accounts (eToro, and the view-only Trading 212, Saxo and Tiger
-// Brokers) and the ones shared with them, as a grid of cards. Every credential field comes
+// Each user's trading platform accounts (eToro, Trading 212 — practice accounts traded, real ones
+// view-only — and the view-only Saxo and Tiger Brokers) and the ones shared with them, as a grid of cards. Every credential field comes
 // from the platform's credential list (GET /api/v1/platforms); values are write-only.
 
 type Specs = Partial<Record<Platform, PlatformInfo>>;
@@ -23,9 +24,10 @@ function PlatformHelp({ platform, redirectUri }: { platform: Platform; redirectU
     case "trading212":
       return (
         <div className="form-text">
-          Trading 212 app → Settings → API (Beta) → Generate API key; give it only read permissions (account, portfolio,
-          history); the IP restriction is optional. Use a demo key for a demo account, a live key for a real one.
-          View-only: cactusTrade does not trade Trading 212 accounts.
+          Trading 212 app → Settings → API (Beta) → Generate API key; the IP restriction is optional. A <strong>practice</strong>
+          (demo) account is traded: generate a practice key with the read permissions (account, portfolio, metadata, orders
+          read, history orders) <em>and Orders execute</em>. A <strong>real</strong> account stays view-only: give its live key
+          read permissions only. Then choose the account&apos;s eToro price source and refresh the instrument list on its card.
         </div>
       );
     case "saxo":
@@ -130,9 +132,10 @@ export function Accounts() {
       </p>
       <ul className="text-secondary small">
         <li><strong>eToro</strong> — Public API Key + User Key (eToro: Settings → Trading → API Key Management → Create New
-          Key). The watchlist, risk limits, agent and events belong to the account. The only platform cactusTrade trades.</li>
-        <li><strong>Trading 212</strong> — API key + API secret (Trading 212 app → Settings → API (Beta) → Generate API key,
-          with read-only permissions). View-only: shown on the Overview page, never traded.</li>
+          Key). The watchlist, risk limits, agent and events belong to the account.</li>
+        <li><strong>Trading 212</strong> — API key + API secret (Trading 212 app → Settings → API (Beta) → Generate API key).
+          A practice account is traded (long only, its prices from an eToro demo account); a real account is view-only:
+          shown on the Overview page, never traded.</li>
         <li><strong>Saxo</strong> — app key + app secret of a Code Flow app, then <em>Connect to Saxo</em> (or a 24-hour
           developer token for SIM). View-only.</li>
         <li><strong>Tiger Brokers</strong> — Tiger ID, account number and an RSA private key whose public key is uploaded in
@@ -143,7 +146,7 @@ export function Accounts() {
       {can("agent.control") && <CreateAccount specs={specs} onCreated={load} />}
       {accounts.length === 0 && <p className="text-secondary">No accounts yet.</p>}
       <div className="row row-cols-1 row-cols-md-2 row-cols-xxl-3 g-3">
-        {accounts.map((a) => <AccountCard key={a.id} a={a} spec={specs[a.platform]} onChange={load} openKeys={a.id === openKeys}
+        {accounts.map((a) => <AccountCard key={a.id} a={a} accounts={accounts} spec={specs[a.platform]} onChange={load} openKeys={a.id === openKeys}
           figures={figures === null ? undefined : figures[a.id] ?? null} />)}
       </div>
     </>
@@ -189,7 +192,7 @@ function CreateAccount({ specs, onCreated }: { specs: Specs; onCreated: () => vo
         <div className="col-md-3">
           <label className="form-label fw-semibold" htmlFor="acct-platform">Platform</label>
           <select id="acct-platform" className="form-select" value={platform} onChange={(e) => { setPlatform(e.target.value as Platform); setValues({}); }}>
-            {choices.map((p) => <option key={p} value={p}>{platformLabel[p]}{viewOnly(p) ? " (view-only)" : ""}</option>)}
+            {choices.map((p) => <option key={p} value={p}>{platformLabel[p]}{p === "trading212" ? " (practice traded, real view-only)" : viewOnly(p) ? " (view-only)" : ""}</option>)}
           </select>
         </div>
         <div className="col-md-5">
@@ -245,11 +248,13 @@ function KeyStatus({ keys, platform }: { keys: AccountKeys | null; platform: Pla
   );
 }
 
-function AccountCard({ a, spec, onChange, openKeys, figures }: {
-  a: Account; spec?: PlatformInfo; onChange: () => void; openKeys?: boolean; figures?: AccountHoldings | null;
+function AccountCard({ a, accounts, spec, onChange, openKeys, figures }: {
+  a: Account; accounts: Account[]; spec?: PlatformInfo; onChange: () => void; openKeys?: boolean; figures?: AccountHoldings | null;
 }) {
   const owner = a.access === "owner";
-  const vo = viewOnly(a.platform);
+  const vo = !agentTradable(a); // view-only: the agent does not trade it (the server says which)
+  const t212 = a.platform === "trading212" && !vo;
+  const testable = a.platform === "etoro"; // the connection test reads eToro
   const saxo = a.platform === "saxo";
   const [keys, setKeys] = useState<AccountKeys | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -285,8 +290,8 @@ function AccountCard({ a, spec, onChange, openKeys, figures }: {
       <div className={"card h-100 " + (a.mode === "real" ? "border-danger" : "")}><div className="card-body d-flex gap-3">
         {owner && (
           <div className="btn-group-vertical btn-group-sm align-self-start" role="group" aria-label={`Actions for ${a.name}`}>
-            <button className="btn btn-outline-success" disabled={busy || vo}
-              title={vo ? `Test connection (not for view-only ${platformLabel[a.platform]} accounts; see the Overview)` : "Test connection"}
+            <button className="btn btn-outline-success" disabled={busy || !testable}
+              title={!testable ? `Test connection (eToro accounts only; a ${platformLabel[a.platform]} account's figures are on the Overview)` : "Test connection"}
               aria-label={`Test connection of ${a.name}`} onClick={() => void run(async () => setCheck(await api.testAccount(a.id)))}>
               <i className="bi bi-plug" /></button>
             {saxo && (
@@ -324,7 +329,8 @@ function AccountCard({ a, spec, onChange, openKeys, figures }: {
               Shared with: {shares.length === 0 ? <span className="text-secondary">nobody</span> : shares.map((s) => `${s.username} (${s.access})`).join(", ")}
             </div>
           )}
-          {vo && <div className="small text-secondary mb-2">View-only: cactusTrade does not trade {platformLabel[a.platform]} accounts.</div>}
+          {vo && <div className="small text-secondary mb-2">View-only: cactusTrade does not trade {a.platform === "trading212" ? "real-money Trading 212" : platformLabel[a.platform]} accounts.</div>}
+          {t212 && <T212Setup account={a} accounts={accounts} owner={owner} onChanged={onChange} />}
           {owner && saxo && (
             <div className="small mb-2">
               <button className="btn btn-sm btn-primary me-2" disabled={busy} onClick={connect}>Connect to Saxo</button>

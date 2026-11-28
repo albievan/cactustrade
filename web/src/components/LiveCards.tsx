@@ -1,6 +1,6 @@
 import { dateTime, hourMinute } from "../lib/format";
 import type { ReactNode } from "react";
-import { platformBadge, platformLabel, usd, type Account, type Order } from "../lib/api";
+import { amount, platformBadge, platformLabel, type Account, type Order } from "../lib/api";
 import type { Live, LiveFigures, LiveRegime, LiveSnapshot } from "../lib/live";
 import type { RegimeText } from "../lib/api";
 import { FixButton } from "./FixButton";
@@ -57,17 +57,18 @@ export function LiveEnded({ reason }: { reason: string }) {
 // LiveStats is the row of headline figures.
 export function LiveStats({ snapshot }: { snapshot: LiveSnapshot | null }) {
   const f = snapshot?.figures;
+  const cur = snapshot?.currency; // the account's currency (USD on eToro, R45.11)
   return (
     <div className="row g-3 mb-4">
-      <Stat label="Equity" icon="bi-graph-up" value={f ? usd(f.equityCents) : "—"}
+      <Stat label="Equity" icon="bi-graph-up" value={f ? amount(f.equityCents, cur) : "—"}
         sub={snapshot?.portfolioAt ? <>as of {clock(snapshot.portfolioAt)}</> : snapshot ? "no portfolio read yet" : "waiting for the live view"} />
-      <Stat label="Cash left" icon="bi-cash-coin" value={f ? usd(f.cashLeftCents) : "—"}
-        sub={f ? <>cash {usd(f.cashCents)} · reserved {usd(f.reservedCents)}</> : null} />
-      <Stat label="Trading budget left" icon="bi-wallet2" value={f ? usd(f.budgetLeftCents) : "—"}
-        sub={f ? <>used {usd(f.budgetUsedCents)} of {usd(f.budgetCents)}</> : null} />
-      <Stat label="Day P&L" icon="bi-calendar-day" value={f ? (f.dayKnown ? usd(f.dayPnlCents) : "—") : "—"}
+      <Stat label="Cash left" icon="bi-cash-coin" value={f ? amount(f.cashLeftCents, cur) : "—"}
+        sub={f ? <>cash {amount(f.cashCents, cur)} · reserved {amount(f.reservedCents, cur)}</> : null} />
+      <Stat label="Trading budget left" icon="bi-wallet2" value={f ? amount(f.budgetLeftCents, cur) : "—"}
+        sub={f ? <>used {amount(f.budgetUsedCents, cur)} of {amount(f.budgetCents, cur)}</> : null} />
+      <Stat label="Day P&L" icon="bi-calendar-day" value={f ? (f.dayKnown ? amount(f.dayPnlCents, cur) : "—") : "—"}
         valueClass={f?.dayKnown ? (f.dayPnlCents < 0 ? "text-danger" : "") : ""}
-        sub={f ? (f.dayKnown ? <>since the start of the risk day ({usd(f.startOfDayCents)})</> : "not known yet today") : null} />
+        sub={f ? (f.dayKnown ? <>since the start of the risk day ({amount(f.startOfDayCents, cur)})</> : "not known yet today") : null} />
     </div>
   );
 }
@@ -94,7 +95,7 @@ function share(part: number, whole: number): number {
 
 // LimitBars shows how far the account is from every limit the risk engine applies. A
 // distance at or below 0 means the risk engine refuses new entries (the server decides).
-export function LimitBars({ figures, accountId }: { figures?: LiveFigures; accountId: string }) {
+export function LimitBars({ figures, accountId, currency: cur }: { figures?: LiveFigures; accountId: string; currency?: string }) {
   return (
     <div className="card h-100"><div className="card-body">
       <h2 className="h5">Distance to the limits</h2>
@@ -102,10 +103,10 @@ export function LimitBars({ figures, accountId }: { figures?: LiveFigures; accou
       {figures && (
         <div className="d-flex flex-column gap-2 small">
           <Bar label="Cash left" left={figures.cashLeftCents} whole={figures.cashCents}
-            text={<>{usd(figures.cashLeftCents)} of {usd(figures.cashCents)}</>} />
+            text={<>{amount(figures.cashLeftCents, cur)} of {amount(figures.cashCents, cur)}</>} />
           {figures.budgetCents > 0
             ? <Bar label="Trading budget left" left={figures.budgetLeftCents} whole={figures.budgetCents}
-                text={<>{usd(figures.budgetLeftCents)} of {usd(figures.budgetCents)}</>} />
+                text={<>{amount(figures.budgetLeftCents, cur)} of {amount(figures.budgetCents, cur)}</>} />
             : (
               <div className="d-flex flex-wrap align-items-center gap-2">
                 <span className="fw-semibold">Trading budget</span>
@@ -115,16 +116,16 @@ export function LimitBars({ figures, accountId }: { figures?: LiveFigures; accou
             )}
           {figures.dayKnown
             ? <Bar label="To the daily loss limit" left={figures.toDailyFloorCents} whole={figures.startOfDayCents - figures.dailyFloorCents}
-                text={<>{usd(figures.toDailyFloorCents)} <span className="text-secondary">(floor {usd(figures.dailyFloorCents)})</span></>}
+                text={<>{amount(figures.toDailyFloorCents, cur)} <span className="text-secondary">(floor {amount(figures.dailyFloorCents, cur)})</span></>}
                 note={figures.dayStopped ? "daily limit reached" : undefined} />
             : <Plain label="To the daily loss limit" text="not known yet today" />}
           <Bar label="To the drawdown kill switch" left={figures.toDrawdownFloorCents} whole={figures.highWaterMarkCents - figures.drawdownFloorCents}
-            text={<>{usd(figures.toDrawdownFloorCents)} <span className="text-secondary">(floor {usd(figures.drawdownFloorCents)})</span></>}
+            text={<>{amount(figures.toDrawdownFloorCents, cur)} <span className="text-secondary">(floor {amount(figures.drawdownFloorCents, cur)})</span></>}
             note={figures.killed ? "kill switch on" : undefined} />
           <Bar label="Position slots left" left={figures.slotsLeft} whole={figures.cap}
             text={<>{figures.slotsLeft} of {figures.cap} <span className="text-secondary">({figures.open} open or pending)</span></>} />
           <Bar label="Short exposure left" left={figures.shortLeftCents} whole={figures.shortCapCents}
-            text={<>{usd(figures.shortLeftCents)} of {usd(figures.shortCapCents)} <span className="text-secondary">(used {usd(figures.shortUsedCents)})</span></>} />
+            text={<>{amount(figures.shortLeftCents, cur)} of {amount(figures.shortCapCents, cur)} <span className="text-secondary">(used {amount(figures.shortUsedCents, cur)})</span></>} />
           {figures.markets.map((m) => (
             <Plain key={m.market} label={marketName[m.market] ?? m.market}
               text={m.trading && m.noEntryAt && m.flattenAt
@@ -165,6 +166,7 @@ function Plain({ label, text }: { label: string; text: ReactNode }) {
 // LivePositions lists every position of the account; only cactusTrade's own are ever closed by it.
 export function LivePositions({ snapshot }: { snapshot: LiveSnapshot | null }) {
   const ps = snapshot?.positions ?? [];
+  const cur = snapshot?.currency;
   return (
     <div className="card mb-4"><div className="card-body">
       <h2 className="h5">Open positions</h2>
@@ -193,8 +195,8 @@ export function LivePositions({ snapshot }: { snapshot: LiveSnapshot | null }) {
                   <td className="small text-nowrap">{new Date(p.openedAt).toLocaleString()}</td>
                   <td className="text-end">{p.openRate}</td>
                   <td className="text-end">{p.units}</td>
-                  <td className="text-end">{usd(p.amountCents)}</td>
-                  <td className={"text-end " + (p.unrealisedPnlCents < 0 ? "text-danger" : "")}>{usd(p.unrealisedPnlCents)}</td>
+                  <td className="text-end">{amount(p.amountCents, cur)}</td>
+                  <td className={"text-end " + (p.unrealisedPnlCents < 0 ? "text-danger" : "")}>{amount(p.unrealisedPnlCents, cur)}</td>
                   <td className="text-end">{p.stopLossRate ?? "—"}</td>
                   <td className="text-end">{p.takeProfitRate ?? "—"}</td>
                   <td className="small">{p.flattenAt ? clock(p.flattenAt) : "—"}</td>
@@ -214,7 +216,8 @@ export function LivePositions({ snapshot }: { snapshot: LiveSnapshot | null }) {
 // OrderFeed is the orders and fills feed (the events are in the activity log, R26): each line
 // shows its direction (long or short), the feed can show long or short orders only, and
 // identical requests in a row (e.g. a cancel repeated every minute) are folded into one line.
-export function OrderFeed({ orders, account }: { orders: Order[]; account?: Account }) {
+export function OrderFeed({ orders, account, currency }: { orders: Order[]; account?: Account; currency?: string }) {
+  const cur = currency ?? account?.currency;
   const [only, setOnly] = usePref<"" | "long" | "short">("dashboard.orders.side", "", isSide); // R50
   const count = (d: string) => orders.filter((o) => o.direction === d).length;
   const lines = foldRepeats(only ? orders.filter((o) => o.direction === only) : orders);
@@ -243,8 +246,10 @@ export function OrderFeed({ orders, account }: { orders: Order[]; account?: Acco
               {account && <AccountTag account={account} small />}
               <DirectionBadge direction={o.direction} />
               {o.exchange && <span className="badge text-bg-light border" title={`Exchange: ${o.exchange}`}>{o.exchange}</span>}
+              {o.platform === "trading212" && <span className={"badge " + platformBadge.trading212}>{platformLabel.trading212}</span>}
               <span className="fw-semibold">{o.kindLabel}</span>
-              {o.kind === "open" && <span>{usd(o.amountCents)}</span>}
+              {o.quantity && <span title="Share quantity">{o.quantity} {o.quantity === "1" ? "share" : "shares"}</span>}
+              {o.kind === "open" && <span>{amount(o.amountCents, cur)}</span>}
               <span className={"badge " + (orderBadge[o.state] ?? "text-bg-secondary")}>{o.stateLabel}</span>
               {times > 1 && <span className="badge text-bg-light" title={`${times} identical requests in a row`}>×{times}</span>}
             </li>

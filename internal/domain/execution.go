@@ -21,10 +21,20 @@ type AgentPosition struct {
 	// position has no position id of its own: PositionID is the buy order's id.
 	Ticker   string
 	Quantity Micros
+	// Sold is how much of Quantity cactusTrade's own stops and sales of this Trading 212
+	// position have sold so far: the sum of their Order.Filled, read by the repository, never
+	// written on the position (each fill is stored with its order in one write, so a crash
+	// cannot lose it). 0 on eToro.
+	Sold Micros
 }
 
 // Open reports whether the position is still open as far as cactusTrade knows.
 func (p AgentPosition) Open() bool { return p.ClosedAt.IsZero() }
+
+// Unsold is what cactusTrade bought of a Trading 212 position and has not sold yet (never
+// below 0): the most any later stop or sale of it may sell (D44: only what cactusTrade bought
+// is ever sold, never the owner's own shares in the same ticker).
+func (p AgentPosition) Unsold() Micros { return max(p.Quantity-p.Sold, 0) }
 
 // AccountRiskState is an account's persisted risk state. Reserved amounts in State are not
 // stored: they come from the account's own orders (Reservations).

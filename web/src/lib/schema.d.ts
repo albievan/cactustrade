@@ -494,6 +494,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/accounts/{accountId}/price-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Choose the eToro demo account whose prices feed a Trading 212 practice account (owner, web UI, agent stopped)
+         * @description Trading 212 publishes no market data: signals, entry and stop prices of a Trading 212
+         *     practice account come from eToro data of the matched share, read with the keys of an
+         *     eToro demo account of the same owner (D44, at the owner's risk). An empty accountId
+         *     removes the price source (then nothing is entered). Audited.
+         */
+        put: operations["setPriceSource"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/{accountId}/t212/instruments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        /** The age of the stored Trading 212 instrument list (viewer of a Trading 212 practice account) */
+        get: operations["getT212Catalogue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/{accountId}/t212/instruments/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fetch Trading 212's instrument list with this practice account's keys (owner, web UI; at most once per 50 s) */
+        post: operations["refreshT212Catalogue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/accounts/{accountId}/shares": {
         parameters: {
             query?: never;
@@ -1031,6 +1094,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/watchlist/{instrumentId}/match/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instrumentId: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm the Trading 212 instrument matched to a watchlist share (owner of the current Trading 212 practice account, web UI)
+         * @description D42: the match (market, ticker suffix, symbol, currency and type) is checked again on
+         *     the stored catalogue; when it no longer gives the same ticker and ISIN, nothing is
+         *     confirmed (409). Audited.
+         */
+        post: operations["confirmBrokerMatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/watchlist/{instrumentId}": {
         parameters: {
             query?: never;
@@ -1537,6 +1624,31 @@ export interface paths {
         get: operations["listOrders"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orders/{requestId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Say what became of a Trading 212 order whose outcome is unknown (owner, web UI)
+         * @description T212-d: Trading 212 takes no request id, so an order whose answer was lost and that
+         *     matches more than one Trading 212 order waits for the account owner: name the Trading
+         *     212 order it is (same ticker, side, type and quantity, not another order of ours), or
+         *     say it was not placed. Audited.
+         */
+        post: operations["resolveOrder"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2762,6 +2874,31 @@ export interface components {
             /** @description the account's theme this share is in (absent = none; R27) */
             themeId?: string;
             holding?: components["schemas"]["WatchHolding"];
+            brokerMatch?: components["schemas"]["BrokerMatch"];
+        };
+        /** @description The Trading 212 instrument matched to a watchlist share of a Trading 212 practice account (D42) */
+        BrokerMatch: {
+            /**
+             * Format: int64
+             * @description the eToro instrument
+             */
+            instrumentId: number;
+            /** @description Trading 212's ticker, e.g. BARCl_EQ */
+            ticker: string;
+            isin: string;
+            /** @description Trading 212's name of the instrument (absent when it is no longer listed) */
+            name?: string;
+            /** @description the instrument's currency at Trading 212 (GBX, USD …) */
+            currency?: string;
+            /**
+             * @description unconfirmed: the owner must confirm it before anything is traded; confirmed: tradable; unusable: confirmed but no longer tradable (see reason)
+             * @enum {string}
+             */
+            status: "unconfirmed" | "confirmed" | "unusable";
+            /** @description why it is not tradable (absent when confirmed) */
+            reason?: string;
+            /** Format: date-time */
+            confirmedAt?: string;
         };
         /** @description What the account holds of one instrument, from the portfolio view cache (a view only) */
         WatchHolding: {
@@ -2967,6 +3104,13 @@ export interface components {
             maxQuoteAgeSeconds: number;
             /** @description all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %) */
             maxShortBp: number;
+            /**
+             * Format: int64
+             * @description Trading 212: the smallest order value, in the account's minor units (required, > 0 and at most the budget when the budget is set); eToro: absent or 0
+             */
+            minOrderValueCents?: number;
+            /** @description Trading 212: fractional quantities (refused while fractions are not verified on a practice account); eToro: absent or false */
+            t212Fractional?: boolean;
         };
         /** @description The limits as GET returns them, with whether the caller may change them now (not part of the PUT body) */
         RiskLimitsView: components["schemas"]["RiskLimits"] & {
@@ -2975,6 +3119,11 @@ export interface components {
             /** @description why not, for people (absent when canEdit) */
             editBlockedReason?: string;
             preset: components["schemas"]["RiskPresetMatch"];
+            platform?: components["schemas"]["Platform"];
+            /** @description the currency of the money figures (USD on eToro; the Trading 212 account's own; absent when it could not be read) */
+            currency?: string;
+            /** @description Trading 212 fractional quantities are verified, so the switch may be turned on */
+            fractionsVerified?: boolean;
         };
         /** @enum {string} */
         RiskPresetId: "low" | "low_medium" | "medium" | "medium_high" | "high";
@@ -2996,6 +3145,13 @@ export interface components {
             maxPortfolioAgeSeconds?: number;
             maxQuoteAgeSeconds?: number;
             maxShortBp?: number;
+            /**
+             * Format: int64
+             * @description Trading 212 (required there); absent or 0 on eToro
+             */
+            minOrderValueCents?: number;
+            /** @description Trading 212 fractional quantities (refused while unverified); absent = off */
+            t212Fractional?: boolean;
         };
         RiskPreset: {
             id: components["schemas"]["RiskPresetId"];
@@ -3208,7 +3364,7 @@ export interface components {
             callId?: string;
         };
         /**
-         * @description eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+         * @description eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
          * @enum {string}
          */
         Platform: "etoro" | "trading212" | "saxo" | "tiger";
@@ -3260,6 +3416,36 @@ export interface components {
             access: "view" | "trade" | "owner";
             /** Format: date-time */
             createdAt: string;
+            /** @description cactusTrade's agent can trade it: an eToro account, or a Trading 212 practice account (a real Trading 212 account is view-only) */
+            agentTradable?: boolean;
+            /** @description the currency of its money figures when known (USD on eToro) */
+            currency?: string;
+            /** @description Trading 212 practice account: the eToro demo account whose prices feed it (absent = none) */
+            priceSourceAccountId?: string;
+        };
+        PriceSourceRequest: {
+            /** @description an eToro demo account of the same owner with keys; empty removes the price source */
+            accountId: string;
+        };
+        T212Catalogue: {
+            /**
+             * Format: date-time
+             * @description when the stored list was fetched (absent: never)
+             */
+            fetchedAt?: string;
+            /** @description instruments stored by this refresh (0 when only read) */
+            count: number;
+            /** @description missing or older than 24 h: no matches and no entries until it is refreshed */
+            stale: boolean;
+        };
+        ResolveOrderRequest: {
+            /**
+             * Format: int64
+             * @description the Trading 212 order it is
+             */
+            brokerOrderId?: number;
+            /** @description it was not placed at Trading 212 (abandoned) */
+            notPlaced?: boolean;
         };
         CreateAccountRequest: {
             name: string;
@@ -3617,6 +3803,8 @@ export interface components {
         };
         AgentCard: {
             account: components["schemas"]["Account"];
+            /** @description the currency of the account's money figures when known (USD on eToro) */
+            currency?: string;
             /** @description the caller's current account (the limits form edits it) */
             current: boolean;
             state: components["schemas"]["AgentState"];
@@ -3693,6 +3881,8 @@ export interface components {
         };
         AgentPanel: {
             account: components["schemas"]["Account"];
+            /** @description the currency of the money figures (USD on eToro; the Trading 212 account's own, empty when it could not be read) */
+            currency: string;
             state: components["schemas"]["AgentState"];
             /**
              * Format: date-time
@@ -3734,11 +3924,18 @@ export interface components {
             missing: components["schemas"]["MissingItem"][];
         };
         Order: {
-            /** @description our x-request-id, stored before the order is sent */
+            /** @description our x-request-id, stored before the order is sent (Trading 212 never sees it) */
             requestId: string;
             mode: components["schemas"]["TradingMode"];
-            /** @description open, close or cancel */
+            platform: components["schemas"]["Platform"];
+            /** @description open, close, cancel or stop (a Trading 212 sell stop) */
             kind: string;
+            /** @description Trading 212's instrument (absent on eToro) */
+            ticker?: string;
+            quantity?: components["schemas"]["Decimal"];
+            filledQuantity?: components["schemas"]["Decimal"];
+            /** @description a Trading 212 order whose outcome is unknown and that the account owner may resolve (POST /orders/{requestId}/resolve) */
+            resolvable: boolean;
             /** @description what the order is, worded by the server, e.g. "Buy GOOG", "Cancel request for GOOG (buy order 396359836)", "Close request for GOOG (position 3649965576)" */
             kindLabel: string;
             /** @description long, short or empty (cancel) */
@@ -4097,6 +4294,8 @@ export interface components {
         /** @description An account's live view (the `snapshot` message of GET /api/v1/live) */
         LiveSnapshot: {
             account: components["schemas"]["Account"];
+            /** @description the currency of the money figures when known (USD on eToro) */
+            currency?: string;
             /**
              * Format: date-time
              * @description when the snapshot was built
@@ -5358,6 +5557,89 @@ export interface operations {
             503: components["responses"]["Problem"];
         };
     };
+    setPriceSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Set */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+        };
+    };
+    getT212Catalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Catalogue status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["T212Catalogue"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+        };
+    };
+    refreshT212Catalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refreshed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["T212Catalogue"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
     listAccountShares: {
         parameters: {
             query?: never;
@@ -6042,6 +6324,34 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    confirmBrokerMatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instrumentId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Confirmed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrokerMatch"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };
     };
@@ -6736,6 +7046,38 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    resolveOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveOrderRequest"];
+            };
+        };
+        responses: {
+            /** @description The order after the resolution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Order"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
         };
     };
     listDecisions: {

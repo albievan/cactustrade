@@ -10,6 +10,8 @@
 //	cactustrade etoro-probe --account ID --symbol SYM [--raw] [--record DIR]
 //	                                        what eToro says about one share (read-only, PLAN 2.7)
 //	cactustrade etoro-lookup --account ID --order-id N   eToro's answer about one order (read-only)
+//	cactustrade t212-probe --account ID [--ticker T] [--raw] [--record DIR]
+//	                                        what a Trading 212 practice account shows (read-only, R45.10)
 //	cactustrade llm-test [--profile NAME]   test an LLM reviewer profile (one made-up review)
 //	cactustrade backup --out FILE           encrypted standalone backup (age; PLAN 7.6a)
 //	cactustrade restore --in FILE --yes     restore a standalone backup (server stopped)
@@ -99,6 +101,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return etoroLookupCmd(ctx, args, getenv, out)
 	case "etoro-probe":
 		return etoroProbeCmd(ctx, args, getenv, out)
+	case "t212-probe":
+		return t212ProbeCmd(ctx, args, getenv, out)
 	case "backup":
 		return backupCmd(ctx, args, getenv, out, time.Now)
 	case "restore":
@@ -122,7 +126,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		}
 		return err
 	}
-	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest, etoro-probe, etoro-lookup, llm-test, backup, restore, encrypt, decrypt, secrets)", cmd)
+	return fmt.Errorf("unknown command %q (serve, version, healthcheck, migrate, backtest, etoro-probe, etoro-lookup, t212-probe, llm-test, backup, restore, encrypt, decrypt, secrets)", cmd)
 }
 
 // newLogger writes JSON lines to stdout; every line logged with a context names the account
@@ -250,7 +254,9 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		return streamAccount(ctx, store, secrets)
 	})
 	feed := etoro.NewFeed(broker, stream, 30*time.Second)
-	// Trading 212: read-only (account summary and positions), shown in the overview only.
+	// Trading 212 (R45, D41-D44): every account's summary and positions for the overview
+	// (Holdings), and orders on PRACTICE accounts only (T212Broker; a real Trading 212 account
+	// is refused in the adapter before its keys are read, and everywhere else).
 	t212, err := trading212.New(trading212.Config{HTTP: &http.Client{Timeout: 30 * time.Second}, Secrets: secrets, Log: log})
 	if err != nil {
 		return err
@@ -285,7 +291,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	svc, err = app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.NewLimited(argon2.New(argon2.Default), argon2.DefaultSlots, argon2.DefaultWait),
 		Random: system.Random{}, Clock: clock, Log: log,
-		Broker: broker, Market: feed, Calendar: cal,
+		Broker: broker, Market: feed, Calendar: cal, T212: t212,
 		Holdings: map[domain.Platform]ports.Holdings{
 			domain.PlatformTrading212: t212, domain.PlatformSaxo: saxoClient, domain.PlatformTiger: tigerClient,
 		},

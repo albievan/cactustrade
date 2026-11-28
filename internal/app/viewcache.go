@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 )
 
 // The portfolio view cache (PLAN 6.6a). It keeps the last portfolio read per account, so
@@ -25,6 +26,9 @@ type viewCache struct {
 	mu      sync.Mutex
 	entries map[string]viewEntry
 	flights map[string]*viewFlight
+	// currency is each Trading 212 account's currency as its latest read reported it (views
+	// only: R45.9 shows money in the account's currency).
+	currency map[string]string
 }
 
 // viewEntry is a portfolio and when it was read.
@@ -42,7 +46,33 @@ type viewFlight struct {
 }
 
 func newViewCache() *viewCache {
-	return &viewCache{entries: map[string]viewEntry{}, flights: map[string]*viewFlight{}}
+	return &viewCache{entries: map[string]viewEntry{}, flights: map[string]*viewFlight{}, currency: map[string]string{}}
+}
+
+// setCurrency remembers an account's currency ("" is ignored).
+func (c *viewCache) setCurrency(accountID, currency string) {
+	if currency == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.currency[accountID] = currency
+}
+
+// currencyOf is the remembered currency of an account ("" = not known yet).
+func (c *viewCache) currencyOf(accountID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.currency[accountID]
+}
+
+// viewCurrency is the currency of an account's money figures as views show them, without
+// any broker read: USD on eToro, the remembered one on Trading 212 ("" = not known yet).
+func (s *Service) viewCurrency(a domain.Account) string {
+	if a.OnPlatform() == domain.PlatformTrading212 {
+		return s.rt.views.currencyOf(a.ID)
+	}
+	return "USD"
 }
 
 // put stores a portfolio read at at, unless a newer one is already stored.
@@ -88,7 +118,7 @@ func (s *Service) viewPortfolio(ctx context.Context, v domain.AccountView) (doma
 	c.mu.Unlock()
 
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentViewTimeout)
-	f.pf, f.err = s.d.Broker.Portfolio(brokerCtx(rctx, v))
+	f.pf, f.err = s.viewRead(rctx, v)
 	cancel()
 	f.at = s.d.Clock.Now()
 
@@ -102,4 +132,22 @@ func (s *Service) viewPortfolio(ctx context.Context, v domain.AccountView) (doma
 	c.mu.Unlock()
 	close(f.done)
 	return f.pf, f.at, f.err
+}
+
+// viewRead reads an account's portfolio for a view: eToro's portfolio, or a Trading 212
+// practice account's summary and positions weighed as the risk engine weighs them (its
+// currency remembered for the views).
+func (s *Service) viewRead(ctx context.Context, v domain.AccountView) (domain.Portfolio, error) {
+	if !v.T212Trading() {
+		return s.d.Broker.Portfolio(brokerCtx(ctx, v))
+	}
+	if err := s.needT212(); err != nil {
+		return domain.Portfolio{}, err
+	}
+	acct, err := s.d.T212.Account(ports.WithAccount(ctx, v.Account))
+	if err != nil {
+		return domain.Portfolio{}, err
+	}
+	s.rt.views.setCurrency(v.ID, acct.Currency)
+	return s.t212Portfolio(ctx, v.Account, acct)
 }

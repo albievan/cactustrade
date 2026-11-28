@@ -45,6 +45,9 @@ type Config struct {
 	RequestTimeout time.Duration
 	Now            func() time.Time
 	Sleep          func(context.Context, time.Duration) error
+	// RecordAnswer, when set, receives every successful READ's answer as received (the
+	// t212-probe's --record, sanitised there; R45.10). Changes are never recorded.
+	RecordAnswer func(op Op, body []byte)
 }
 
 // Client talks to Trading 212 through the allowlist only. It implements ports.Holdings (any
@@ -305,6 +308,9 @@ func (c *Client) attempt(ctx context.Context, lim *limiter, op Op, ep Endpoint, 
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return false, fmt.Errorf("trading212 %s: unexpected response: %w: %w", op, domain.ErrUnavailable, err)
+	}
+	if c.cfg.RecordAnswer != nil && !ep.Mutates {
+		c.cfg.RecordAnswer(op, data)
 	}
 	return false, nil
 }

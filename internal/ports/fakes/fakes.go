@@ -80,6 +80,8 @@ type SecretStore struct {
 	at   map[domain.CredentialName]time.Time
 	Now  func() time.Time
 	Err  error
+	// Gets counts the Get calls (a test can assert that no key was read).
+	Gets int
 }
 
 // Put stores a value.
@@ -103,6 +105,7 @@ func (s *SecretStore) Put(_ context.Context, n domain.CredentialName, v string) 
 func (s *SecretStore) Get(_ context.Context, n domain.CredentialName) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.Gets++
 	v, ok := s.vals[n]
 	if !ok {
 		return "", domain.ErrNotFound

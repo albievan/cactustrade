@@ -116,14 +116,15 @@ func (l RiskLimits) ValidateForPlatform(p Platform) error {
 		switch {
 		case l.MaxShort != 0:
 			return Invalid("maxShortBp", "must be 0 on a Trading 212 account (long only)")
+		case l.T212Fractional && !T212FractionsVerified:
+			// Before the budget-0 case: the switch stays locked whatever the budget (review e).
+			return Invalid("t212Fractional", "stays off until Trading 212's fraction and stop rules are verified on a practice account")
 		case l.TradingBudget == 0 && l.MinOrderValue >= 0:
 			// No budget: nothing is entered, so the minimum may stay unset or exceed it (review of R45.5).
 		case l.MinOrderValue <= 0:
 			return Invalid("minOrderValueCents", "is required on a Trading 212 account (it documents no minimum)")
 		case l.MinOrderValue > l.TradingBudget:
 			return Invalid("minOrderValueCents", "must not exceed the trading budget")
-		case l.T212Fractional && !T212FractionsVerified:
-			return Invalid("t212Fractional", "stays off until Trading 212's fraction and stop rules are verified on a practice account")
 		}
 		return nil
 	}

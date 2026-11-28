@@ -296,6 +296,12 @@ type RiskLimitsView struct {
 	EditBlocked string
 	// Preset is the risk preset the limits match, or domain.PresetCustom (R28).
 	Preset domain.RiskPreset
+	// Platform is the account's platform; Currency the currency of the money figures (USD on
+	// eToro, the Trading 212 account's own, "" when it could not be read); FractionsVerified
+	// whether the Trading 212 fractional switch may be turned on (domain.T212FractionsVerified).
+	Platform          domain.Platform
+	Currency          string
+	FractionsVerified bool
 }
 
 // RiskLimitsView returns the current account's limits (view access) and whether the caller
@@ -310,6 +316,14 @@ func (s *Service) RiskLimitsView(ctx context.Context, p Principal) (RiskLimitsVi
 	out := RiskLimitsView{Limits: s.riskLimitsFor(ctx, v.Account), EditBlocked: s.limitsEditBlocked(ctx, p, v)}
 	out.CanEdit = out.EditBlocked == ""
 	out.Preset = presetOf(v.Account, out.Limits)
+	out.Platform, out.Currency, out.FractionsVerified = v.OnPlatform(), "USD", domain.T212FractionsVerified
+	if v.T212Trading() {
+		cur, err := s.t212AccountCurrency(ctx, v.Account)
+		if err != nil {
+			s.d.Log.WarnContext(ctx, "reading the Trading 212 currency for the limits view failed", "account", v.ID, "err", err)
+		}
+		out.Currency = cur
+	}
 	return out, nil
 }
 

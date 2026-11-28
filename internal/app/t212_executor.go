@@ -314,19 +314,22 @@ func (s *Service) applyT212(ctx context.Context, a domain.Account, o domain.Orde
 }
 
 // moveT212 moves o to the state Trading 212 reports (when the move is legal), recording the
-// Trading 212 id; a final state already reached is kept. A conflict (another writer moved it
-// first) returns the stored version with errMovedElsewhere.
+// Trading 212 id and the quantity filled (in the same write as the state, never lowered: a
+// position's Sold is the sum of its stops' and sales' Filled, D44); a final state already
+// reached is kept. A conflict (another writer moved it first) returns the stored version with
+// errMovedElsewhere.
 func (s *Service) moveT212(ctx context.Context, o domain.Order, to domain.OrderState, reason string, bo domain.BrokerOrder, edit func(*domain.Order)) (domain.Order, error) {
 	set := func(n *domain.Order) {
 		if bo.ID > 0 {
 			n.EtoroOrderID = bo.ID
 		}
+		n.Filled = max(n.Filled, bo.FilledQuantity)
 		if edit != nil {
 			edit(n)
 		}
 	}
 	if to == o.State {
-		if bo.ID > 0 && bo.ID != o.EtoroOrderID {
+		if (bo.ID > 0 && bo.ID != o.EtoroOrderID) || bo.FilledQuantity > o.Filled {
 			return s.move(ctx, o, to, "", set)
 		}
 		return o, nil
@@ -450,9 +453,56 @@ func (s *Service) t212AfterFill(ctx context.Context, a domain.Account, o domain.
 	}
 	s.orderEvent(ctx, a, domain.Long, "order.filled", domain.SeverityInfo, fmt.Sprintf("Buy %s %s filled", bo.FilledQuantity, label),
 		fmt.Sprintf("at %s (eToro quote %s); Trading 212 order %d", bo.FillPrice, o.Entry, bo.ID))
+	if ok, _ := s.t212InSession(ctx, o.Instrument, s.d.Clock.Now()); ok && t212Flattening(ctx) {
+		return // the kill or the force close sells it next: no stop to cancel first (review g)
+	}
 	if _, err := s.placeT212Stop(ctx, a, ap, o.StopLoss); err != nil {
 		s.d.Log.WarnContext(ctx, "placing the Trading 212 stop failed", "account", a.ID, "position", ap.PositionID, "err", err)
 	}
+}
+
+// t212FlattenKey marks a context whose caller sells every position of the account next (the
+// kill switch, a force close): a buy finalised meanwhile gets no stop.
+type t212FlattenKey struct{}
+
+// withT212Flattening marks ctx as flattening.
+func withT212Flattening(ctx context.Context) context.Context {
+	return context.WithValue(ctx, t212FlattenKey{}, true)
+}
+
+// t212Flattening reports whether ctx is marked as flattening.
+func t212Flattening(ctx context.Context) bool {
+	v, _ := ctx.Value(t212FlattenKey{}).(bool)
+	return v
+}
+
+// t212ExitKey marks a context that holds the account's exit lock (t212ExitLock).
+type t212ExitKey struct{ account string }
+
+// t212ExitLock takes the account's exit lock: one sale of a Trading 212 position at a time
+// per account (the kill, the supervisor and a failed stop never sell the same shares
+// concurrently). A context that holds it already passes (no self-deadlock); waiting ends
+// with ctx.
+func (s *Service) t212ExitLock(ctx context.Context, accountID string) (context.Context, func(), error) {
+	if held, _ := ctx.Value(t212ExitKey{accountID}).(bool); held {
+		return ctx, func() {}, nil
+	}
+	s.rt.mu.Lock()
+	if s.rt.t212Exits == nil {
+		s.rt.t212Exits = map[string]chan struct{}{}
+	}
+	ch := s.rt.t212Exits[accountID]
+	if ch == nil {
+		ch = make(chan struct{}, 1)
+		s.rt.t212Exits[accountID] = ch
+	}
+	s.rt.mu.Unlock()
+	select {
+	case ch <- struct{}{}:
+	case <-ctx.Done():
+		return ctx, func() {}, fmt.Errorf("waiting for the account's exit lock: %w", ctx.Err())
+	}
+	return context.WithValue(ctx, t212ExitKey{accountID}, true), func() { <-ch }, nil
 }
 
 // blockT212 blocks an instrument for the account (no more entries in it).
@@ -472,9 +522,21 @@ func (s *Service) placeT212Stop(ctx context.Context, a domain.Account, ap domain
 	if err := s.mayT212(ctx, a); err != nil {
 		return domain.Order{}, fmt.Errorf("t212.placeStop: %w", err)
 	}
+	cur, err := s.d.Store.AgentPositions().Get(ctx, a.ID, ap.PositionID)
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("t212.placeStop: reading the position (nothing sent): %w", err)
+	}
+	if ap = cur; !ap.Open() || ap.Unsold() <= 0 {
+		return domain.Order{}, fmt.Errorf("t212.placeStop: nothing of position %d is left to protect: %w", ap.PositionID, domain.ErrConflict)
+	}
+	// Trading 212 may list a fresh fill late: a stop above what it shows available would be
+	// refused, so it waits (bounded) until the fill is listed (review B2).
+	s.t212AwaitListed(ctx, a, ap)
+	// The stop covers only what cactusTrade bought and has not sold yet (D44): never the
+	// owner's own shares in the ticker.
 	o, err := domain.NewOrder(domain.Order{
 		RequestID: s.d.Random.ID(), AccountID: a.ID, Mode: a.Mode, Kind: domain.OrderStop, Platform: domain.PlatformTrading212,
-		Ticker: ap.Ticker, Quantity: ap.Quantity, Direction: domain.Long, Instrument: ap.Instrument,
+		Ticker: ap.Ticker, Quantity: ap.Unsold() - ap.Unsold()%domain.T212QuantityStep(s.t212Fractional(ctx, a)), Direction: domain.Long, Instrument: ap.Instrument,
 		StopLoss: domain.T212StopPrice(stop), PositionID: ap.PositionID,
 	}, s.d.Clock.Now().UTC())
 	if err != nil {
@@ -495,7 +557,7 @@ func (s *Service) placeT212Stop(ctx context.Context, a domain.Account, ap domain
 		o, _ = s.move(ctx, o, domain.OrderAbandoned, fmt.Sprintf("%s already rests in sell orders of ours: not sent", resting), nil)
 		return o, fmt.Errorf("t212.placeStop: a sell of ours already rests on %s: %w", ap.Ticker, domain.ErrConflict)
 	}
-	intent, err := domain.T212IntentFor(o, ap.Quantity-resting, s.t212Fractional(ctx, a))
+	intent, err := domain.T212IntentFor(o, ap.Unsold()-resting, s.t212Fractional(ctx, a))
 	if err != nil {
 		o, _ = s.move(ctx, o, domain.OrderAbandoned, "no valid intent: not sent", nil)
 		s.t212StopFailed(ctx, a, ap, "no valid stop: "+err.Error())
@@ -526,6 +588,32 @@ func (s *Service) placeT212Stop(ctx context.Context, a domain.Account, ap domain
 	}
 	s.t212StopFailed(ctx, a, ap, why)
 	return o, err
+}
+
+// t212ListPoll is how often the positions are read while a fresh fill is not listed yet.
+const t212ListPoll = 5 * time.Second
+
+// t212AwaitListed waits until Trading 212 lists at least the unsold quantity of a fresh
+// position as available for trading, reading the positions every t212ListPoll, for no longer
+// than fillVisibleAfter after the position opened. A read error or the end of the wait goes on
+// (what follows is refused, never sent above what is available).
+func (s *Service) t212AwaitListed(ctx context.Context, a domain.Account, ap domain.AgentPosition) {
+	for {
+		acct, err := s.d.T212.Account(ports.WithAccount(ctx, a))
+		if err != nil {
+			return
+		}
+		if pos, held := acct.Position(ap.Ticker); held && pos.QuantityAvailable >= ap.Unsold() {
+			return
+		}
+		if s.d.Clock.Now().Sub(ap.OpenedAt) >= fillVisibleAfter {
+			return
+		}
+		s.d.Log.InfoContext(ctx, "the fill is not listed by Trading 212 yet: the stop waits", "account", a.ID, "position", ap.PositionID)
+		if err := s.d.Sleep(ctx, t212ListPoll); err != nil {
+			return
+		}
+	}
 }
 
 // confirmT212Stop waits for a new stop to show in the open orders (t212StopPolls). Seen:
@@ -607,10 +695,18 @@ func (s *Service) applyT212Stop(ctx context.Context, a domain.Account, o domain.
 	return o, nil
 }
 
-// t212StopHit settles the position a stop of ours protected: closed by the stop.
+// t212StopHit settles the position a stop of ours protected: closed by the stop once nothing
+// of what cactusTrade bought is left unsold. A stop that sold only part of it (cancelled or
+// ended after a partial fill) leaves the rest open without a stop: the supervisor sells it
+// (never more than bought − sold, D44).
 func (s *Service) t212StopHit(ctx context.Context, a domain.Account, stop domain.Order, bo domain.BrokerOrder) {
 	ap, err := s.d.Store.AgentPositions().Get(ctx, a.ID, stop.PositionID)
 	if err != nil || !ap.Open() {
+		return
+	}
+	if ap.Unsold() > 0 {
+		s.orderEvent(ctx, a, domain.Long, "position.stop_partial", domain.SeverityWarning, "Stop of "+s.t212Label(ctx, ap.Instrument, ap.Ticker)+" sold only part of it",
+			fmt.Sprintf("%s sold at %s by the stop at %s; %s of the %s cactusTrade bought is left and is sold", bo.FilledQuantity, bo.FillPrice, stop.StopLoss, ap.Unsold(), ap.Quantity))
 		return
 	}
 	s.orderEvent(ctx, a, domain.Long, "position.stop_hit", domain.SeverityWarning, "Stop of "+s.t212Label(ctx, ap.Instrument, ap.Ticker)+" fired",
@@ -632,7 +728,7 @@ func (s *Service) t212StopFailed(ctx context.Context, a domain.Account, ap domai
 
 // t212RestingSells is the quantity the sell orders of ours that are not final (stops and
 // sales, whatever their state: an unknown one may rest at Trading 212) may still sell in
-// ticker, except the order exclude. It is taken off what a new sell may sell (T212IntentFor's
+// ticker (each its quantity less what it filled already), except the order exclude. It is taken off what a new sell may sell (T212IntentFor's
 // held), so a stop and a sale never sell the same shares twice.
 func (s *Service) t212RestingSells(ctx context.Context, accountID, ticker, exclude string) (domain.Micros, error) {
 	open, err := s.d.Store.Orders().ListOpen(ctx, accountID)
@@ -643,18 +739,18 @@ func (s *Service) t212RestingSells(ctx context.Context, accountID, ticker, exclu
 	for _, o := range open {
 		if o.RequestID != exclude && o.Ticker == ticker && o.OnPlatform() == domain.PlatformTrading212 &&
 			(o.Kind == domain.OrderStop || o.Kind == domain.OrderClose) {
-			q += o.Quantity
+			q += max(o.Quantity-o.Filled, 0) // what it filled already counts in the position's Sold
 		}
 	}
 	return q, nil
 }
 
-// t212MayCancel reports whether a cancel may be sent for an order of ours now
-// (t212CancelBlocked over the cancels already stored for it).
-func (s *Service) t212MayCancel(ctx context.Context, a domain.Account, target domain.Order) bool {
+// t212Cancels sums up the cancels already stored for an order of ours (t212CancelBlocked
+// decides whether another may be sent now).
+func (s *Service) t212Cancels(ctx context.Context, a domain.Account, target domain.Order) (cancelRecord, error) {
 	os, err := s.d.Store.Orders().ListSince(ctx, a.ID, target.CreatedAt)
 	if err != nil {
-		return false
+		return cancelRecord{}, err
 	}
 	var r cancelRecord
 	for _, c := range os {
@@ -672,7 +768,7 @@ func (s *Service) t212MayCancel(ctx context.Context, a domain.Account, target do
 			r.accepted = true
 		}
 	}
-	return !t212CancelBlocked(r, s.d.Clock.Now())
+	return r, nil
 }
 
 // t212OurStops returns the stop orders of ours that are not final for an agent position.
@@ -700,6 +796,22 @@ func (s *Service) closeT212Position(ctx context.Context, a domain.Account, ap do
 	if ap.AccountID != a.ID || ap.PositionID <= 0 || ap.Ticker == "" || ap.Quantity <= 0 || !ap.Open() {
 		return domain.Order{}, domain.Invalid("position", "only an open Trading 212 position of cactusTrade's can be sold")
 	}
+	// One exit at a time per account (the kill, the supervisor and a failed stop may all want
+	// to sell the same position), and the position read again inside: the caller's copy may
+	// be stale (review of R45.6-R45.8, MAJOR).
+	ctx, unlock, err := s.t212ExitLock(ctx, a.ID)
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("t212.closePosition: %w", err)
+	}
+	defer unlock()
+	switch cur, err := s.d.Store.AgentPositions().Get(ctx, a.ID, ap.PositionID); {
+	case err != nil:
+		return domain.Order{}, fmt.Errorf("t212.closePosition: reading the position: %w", err)
+	case !cur.Open():
+		return domain.Order{}, nil
+	default:
+		ap = cur
+	}
 	label := s.t212Label(ctx, ap.Instrument, ap.Ticker)
 	if ap.CloseRequestID != "" {
 		prev, err := s.d.Store.Orders().Get(ctx, ap.CloseRequestID)
@@ -711,12 +823,21 @@ func (s *Service) closeT212Position(ctx context.Context, a domain.Account, ap do
 				if !prev.State.Final() && s.d.Clock.Now().Sub(prev.SentAt) >= pendingMax {
 					// A sale still working after a minute is cancelled (at most maxCancels,
 					// one in flight) and, once it ended unfilled, sent again below.
-					if s.t212MayCancel(ctx, a, prev) {
+					switch r, rerr := s.t212Cancels(ctx, a, prev); {
+					case rerr == nil && !t212CancelBlocked(r, s.d.Clock.Now()):
 						if _, err := s.cancelT212(ctx, a, prev, fmt.Sprintf("sale still pending after %s", pendingMax)); err != nil {
 							s.d.Log.WarnContext(ctx, "cancelling a stale Trading 212 sale failed", "account", a.ID, "request", prev.RequestID, "err", err)
 						}
 						if prev, err = s.pollT212(ctx, a, prev); err != nil {
 							return prev, err
+						}
+					case rerr == nil && r.sent >= maxCancels && !r.inFlight && !r.accepted:
+						// No cancel left: the sale keeps working at Trading 212 and nothing more is
+						// sent for it. Never silent: a person must look before the close.
+						if s.rt.firstWarning("order.sale_stuck", prev.RequestID) {
+							s.orderEvent(ctx, a, domain.Long, "order.sale_stuck", domain.SeverityDanger, "Sale of "+label+" is stuck at Trading 212",
+								fmt.Sprintf("Trading 212 order %d is still working after %d cancels; cactusTrade sends nothing more for it. Sell it or cancel it in Trading 212 before the close. Request %s",
+									prev.EtoroOrderID, maxCancels, prev.RequestID))
 						}
 					}
 				}
@@ -755,10 +876,20 @@ func (s *Service) closeT212Position(ctx context.Context, a domain.Account, ap do
 		case err != nil:
 			return domain.Order{}, fmt.Errorf("t212.closePosition: cancelling the stop: %w", err)
 		case fired:
-			return domain.Order{}, nil // the stop sold it: nothing to sell
+			continue // it sold everything it covered: the position is read again below
 		case !gone:
 			return domain.Order{}, fmt.Errorf("t212.closePosition: the stop (Trading 212 order %d) is not confirmed gone; the sale waits: %w", st.EtoroOrderID, domain.ErrUnavailable)
 		}
+	}
+	// Read again: a stop that fired (in full: closed; in part: in Sold now), also one matched
+	// only above, settled the position meanwhile (review B1, B3).
+	switch cur, err := s.d.Store.AgentPositions().Get(ctx, a.ID, ap.PositionID); {
+	case err != nil:
+		return domain.Order{}, fmt.Errorf("t212.closePosition: reading the position: %w", err)
+	case !cur.Open():
+		return domain.Order{}, nil
+	default:
+		ap = cur
 	}
 	acct, err := s.d.T212.Account(ctx)
 	if err != nil {
@@ -766,6 +897,10 @@ func (s *Service) closeT212Position(ctx context.Context, a domain.Account, ap do
 	}
 	pos, held := acct.Position(ap.Ticker)
 	if !held || pos.Quantity <= 0 {
+		if acct.AsOf.Sub(ap.OpenedAt) < fillVisibleAfter {
+			// A fresh fill may not be listed yet (review B2): never settled as gone so soon.
+			return domain.Order{}, fmt.Errorf("t212.closePosition: %s is not listed yet (a fresh fill): %w", ap.Ticker, domain.ErrUnavailable)
+		}
 		s.t212Vanished(ctx, a, ap)
 		return domain.Order{}, nil
 	}
@@ -774,13 +909,15 @@ func (s *Service) closeT212Position(ctx context.Context, a domain.Account, ap do
 	if err != nil {
 		return domain.Order{}, fmt.Errorf("t212.closePosition: reading our resting sells: %w", err)
 	}
-	// Net of what our resting sells (a stop not confirmed gone, a sale in flight) may still
-	// sell: never the same shares twice.
-	sellable := min(ap.Quantity, pos.QuantityAvailable) - resting
-	qty := sellable - sellable%domain.T212QuantityStep(frac)
+	// What cactusTrade bought and has not sold yet (a partly filled sale or stop is in Sold),
+	// capped by what Trading 212 makes available, net of what our resting sells (a stop not
+	// confirmed gone, a sale in flight) may still sell: never the owner's shares, never the
+	// same shares twice (D44).
+	sellable := domain.T212Sellable(ap.Quantity, ap.Sold, pos.QuantityAvailable, resting, 0)
+	qty := domain.T212Sellable(ap.Quantity, ap.Sold, pos.QuantityAvailable, resting, domain.T212QuantityStep(frac))
 	if qty <= 0 {
 		s.warnOnce(ctx, a, domain.Order{RequestID: "position-" + strconv.FormatInt(ap.PositionID, 10)}, "order.nothing_to_sell",
-			"Nothing of "+label+" is available to sell", fmt.Sprintf("Trading 212 holds %s, %s available for trading; cactusTrade bought %s", pos.Quantity, pos.QuantityAvailable, ap.Quantity))
+			"Nothing of "+label+" is available to sell", fmt.Sprintf("Trading 212 holds %s, %s available for trading; cactusTrade bought %s and sold %s", pos.Quantity, pos.QuantityAvailable, ap.Quantity, ap.Sold))
 		return domain.Order{}, fmt.Errorf("t212.closePosition: nothing available to sell: %w", domain.ErrUnavailable)
 	}
 	o, err := domain.NewOrder(domain.Order{
@@ -795,7 +932,7 @@ func (s *Service) closeT212Position(ctx context.Context, a domain.Account, ap do
 		return domain.Order{}, fmt.Errorf("t212.closePosition: storing the sell (nothing sent): %w", err)
 	}
 	ap.CloseRequestID = o.RequestID
-	if err := s.d.Store.AgentPositions().Update(ctx, ap); err != nil {
+	if err := s.d.Store.AgentPositions().SetCloseRequest(ctx, a.ID, ap.PositionID, o.RequestID); err != nil {
 		s.d.Log.WarnContext(ctx, "recording the sell on the agent position failed", "account", a.ID, "position", ap.PositionID, "err", err)
 	}
 	intent, err := domain.T212IntentFor(o, sellable, frac)
@@ -852,6 +989,7 @@ func (s *Service) applyT212Sell(ctx context.Context, a domain.Account, o domain.
 			}
 			return n, fmt.Errorf("t212.applySell: %w", err)
 		}
+		// The position's Sold now includes this sale's fill (stored with its state above).
 		ap, gerr := s.d.Store.AgentPositions().Get(ctx, a.ID, o.PositionID)
 		switch {
 		case errors.Is(gerr, domain.ErrNotFound):
@@ -861,12 +999,12 @@ func (s *Service) applyT212Sell(ctx context.Context, a domain.Account, o domain.
 		case !ap.Open():
 			return n, nil
 		}
-		if bo.FilledQuantity >= ap.Quantity {
+		if ap.Unsold() <= 0 {
 			s.markClosed(ctx, a, ap, fmt.Sprintf("sold %s at %s — %s", bo.FilledQuantity, bo.FillPrice, o.Reason))
 			return n, nil
 		}
 		s.orderEvent(ctx, a, domain.Long, "order.partial_close", domain.SeverityWarning, "Sale of "+label+" only partly filled",
-			fmt.Sprintf("%s of %s sold; the rest is sold again. Request %s", bo.FilledQuantity, ap.Quantity, o.RequestID))
+			fmt.Sprintf("%s sold; %s of the %s cactusTrade bought is sold again (never more). Request %s", bo.FilledQuantity, ap.Unsold(), ap.Quantity, o.RequestID))
 		return n, nil
 	case bo.Final:
 		to := bo.State
@@ -907,7 +1045,7 @@ func (s *Service) t212Vanished(ctx context.Context, a domain.Account, ap domain.
 			continue
 		}
 		if st, err = s.pollT212(ctx, a, st); err == nil && st.State == domain.OrderFilled {
-			return // applyT212Stop settled it as closed by the stop
+			continue // applyT212Stop settled it (closed by the stop when it sold everything)
 		}
 		if !st.State.Final() {
 			if _, _, err := s.cancelT212Stop(ctx, a, st, "its position is gone"); err != nil {
@@ -922,8 +1060,9 @@ func (s *Service) t212Vanished(ctx context.Context, a domain.Account, ap domain.
 }
 
 // cancelT212Stop cancels a stop of ours and confirms it: gone (cancelled, or no longer listed
-// anywhere), fired (it filled first: the position is settled, T212-i), or neither (still
-// active, e.g. CANCELLING: the caller waits).
+// anywhere, or ended after selling only part: that part is in the position's Sold), fired (it
+// filled in full first: the position is settled, T212-i), or neither (still active, e.g.
+// CANCELLING: the caller waits).
 func (s *Service) cancelT212Stop(ctx context.Context, a domain.Account, st domain.Order, why string) (gone, fired bool, err error) {
 	if _, err := s.cancelT212(ctx, a, st, why); err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return false, false, err
@@ -945,10 +1084,10 @@ func (s *Service) cancelT212Stop(ctx context.Context, a domain.Account, st domai
 		return false, false, err
 	}
 	switch {
-	case cur.State == domain.OrderFilled:
+	case cur.State == domain.OrderFilled && cur.Filled >= cur.Quantity:
 		return false, true, nil
 	case cur.State.Final():
-		return true, false, nil
+		return true, false, nil // cancelled (or filled only in part: what it sold is in Sold)
 	}
 	return false, false, nil
 }

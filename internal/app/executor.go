@@ -89,6 +89,8 @@ type runtimeState struct {
 	// lastScan is when each account was last scanned in the background (R28: the interval
 	// follows the account's autonomy).
 	lastScan map[string]time.Time
+	// t212Exits are the Trading 212 accounts' exit locks (t212ExitLock), created on first use.
+	t212Exits map[string]chan struct{}
 }
 
 // agentLocks are one account's agent locks. Lock order: ctl before entry, never the other

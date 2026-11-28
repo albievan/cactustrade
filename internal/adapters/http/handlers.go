@@ -218,7 +218,8 @@ func (s *Server) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 		Database: SystemStatusDatabase(st.Database), StartedAt: st.StartedAt, Now: st.Now,
 	}
 	if st.Account != nil {
-		out.Account = ptr(toAccount(*st.Account))
+		// with its currency when known (R45.11: pages show a Trading 212 account's money in it)
+		out.Account = ptr(withExtra(toAccount(*st.Account), s.svc.AccountExtras(r.Context(), []domain.AccountView{*st.Account})[st.Account.ID]))
 	}
 	armed := make([]RealArmedAccount, 0, len(st.RealArmed))
 	for _, a := range st.RealArmed {

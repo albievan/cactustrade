@@ -28,9 +28,17 @@ func (s *Server) ListWatchlist(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	matches, err := s.svc.WatchlistMatches(r.Context(), state(r).principal)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	out := make([]WatchItem, 0, len(items))
 	for _, it := range items {
 		x := toWatchItem(it.WatchItem)
+		if m, ok := matches[it.Instrument.ID]; ok {
+			x.BrokerMatch = ptr(toBrokerMatch(m))
+		}
 		if it.ThemeID != "" {
 			x.ThemeId = ptr(it.ThemeID)
 		}

@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/app"
+	"github.com/albievan/cactustrade/internal/domain"
 	"github.com/albievan/cactustrade/internal/ports"
 )
 
@@ -21,6 +23,9 @@ type trader interface {
 	ReleaseLeases(ctx context.Context) error
 	// SyncTradesAll reads every eToro account's closed trades (read-only; the history loop).
 	SyncTradesAll(ctx context.Context) ([]app.TradeSync, error)
+	// RefreshT212InstrumentsAuto refreshes Trading 212's instrument list (read-only; the
+	// catalogue loop, R45.10).
+	RefreshT212InstrumentsAuto(ctx context.Context) (app.T212Catalogue, error)
 }
 
 // tradingSchedule holds the start-up timing of the trading side's periodic work.
@@ -28,12 +33,15 @@ type tradingSchedule struct {
 	// HistoryFirst is when the first trade-history sync runs after the start, HistoryEvery
 	// how often it runs after that (PLAN 6.10).
 	HistoryFirst, HistoryEvery time.Duration
+	// CatalogueFirst is when Trading 212's instrument list is first refreshed after the
+	// start, CatalogueEvery how often after that (R45.10).
+	CatalogueFirst, CatalogueEvery time.Duration
 }
 
 // prodSchedule is the production timing: the history first 2 minutes after the start (the
 // start-up reconciliation has the eToro quota first), then every 15 minutes.
 func prodSchedule() tradingSchedule {
-	return tradingSchedule{HistoryFirst: 2 * time.Minute, HistoryEvery: 15 * time.Minute}
+	return tradingSchedule{HistoryFirst: 2 * time.Minute, HistoryEvery: 15 * time.Minute, CatalogueFirst: 30 * time.Second, CatalogueEvery: 12 * time.Hour}
 }
 
 var _ trader = (*app.Service)(nil)
@@ -85,6 +93,7 @@ func startTrading(parent context.Context, t trader, log *slog.Logger, sched trad
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
 	wg.Go(func() { historyLoop(ctx, t, log, sched.HistoryFirst, sched.HistoryEvery) })
+	wg.Go(func() { catalogueLoop(ctx, t, log, sched.CatalogueFirst, sched.CatalogueEvery) })
 	wg.Go(func() {
 		rctx, rcancel := context.WithTimeout(ctx, startupReconcileTimeout)
 		rs, err := t.ReconcileAll(rctx)
@@ -150,6 +159,36 @@ func historyLoop(ctx context.Context, t trader, log *slog.Logger, first, every t
 				if r.Err == nil && r.Stored > 0 {
 					log.InfoContext(ctx, "trade history synced", "account", r.AccountID, "stored", r.Stored, "ours", r.Ours)
 				}
+			}
+			tm.Reset(every)
+		}
+	}
+}
+
+// catalogueLoop refreshes Trading 212's instrument list (read-only: one GET with a practice
+// account's keys) first after first, then every interval, until ctx ends. Matches and entries
+// need a list younger than 24 h; refreshing every 12 h keeps it fresh even when one attempt
+// fails. Without a Trading 212 practice account there is nothing to do (logged at debug). A
+// zero first or every (a schedule without it) runs nothing.
+func catalogueLoop(ctx context.Context, t trader, log *slog.Logger, first, every time.Duration) {
+	if first <= 0 || every <= 0 {
+		return
+	}
+	tm := time.NewTimer(first)
+	defer tm.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tm.C:
+			c, err := t.RefreshT212InstrumentsAuto(ctx)
+			switch {
+			case err == nil:
+				log.InfoContext(ctx, "Trading 212 instrument list refreshed", "instruments", c.Count)
+			case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrBusy):
+				log.DebugContext(ctx, "Trading 212 instrument list not refreshed", "err", err)
+			case ctx.Err() == nil:
+				log.WarnContext(ctx, "refreshing the Trading 212 instrument list failed", "err", err)
 			}
 			tm.Reset(every)
 		}

@@ -87,7 +87,7 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problemFor(w, r, err, http.StatusUnauthorized, "Unauthorized", "sign in or send a valid API key", "")
 	case errors.Is(err, domain.ErrViewOnly):
 		problemFor(w, r, err, http.StatusForbidden, "View-only account",
-			"Trading 212, Saxo and Tiger Brokers accounts are view-only: cactusTrade shows them in the overview but does not trade them", "")
+			"Saxo, Tiger Brokers and real-money Trading 212 accounts are view-only: cactusTrade shows them in the overview but does not trade them (on Trading 212 it trades practice accounts only)", "")
 	case errors.Is(err, domain.ErrForbidden):
 		problemFor(w, r, err, http.StatusForbidden, "Forbidden", detail(err, domain.ErrForbidden), "")
 	case errors.As(err, new(*app.MailError)):

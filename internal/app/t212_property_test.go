@@ -31,6 +31,9 @@ const (
 
 type t212PropStats struct {
 	entries, stopFailures, nonConforming, lost, stopHits, kills, trips, resets, partials int
+	// ownerBuys: the owner bought shares of a ticker cactusTrade holds; partialSales: a sale
+	// of ours filled only in part (D44: the next one never reaches the owner's shares).
+	ownerBuys, partialSales int
 }
 
 func (p *t212PropStats) add(o t212PropStats) {
@@ -43,6 +46,8 @@ func (p *t212PropStats) add(o t212PropStats) {
 	p.trips += o.trips
 	p.resets += o.resets
 	p.partials += o.partials
+	p.ownerBuys += o.ownerBuys
+	p.partialSales += o.partialSales
 }
 
 func (p t212PropStats) unexercised() []string {
@@ -50,6 +55,7 @@ func (p t212PropStats) unexercised() []string {
 	for name, n := range map[string]int{
 		"stop failures": p.stopFailures, "non-conforming fills": p.nonConforming, "lost answers": p.lost, "stops fired": p.stopHits,
 		"kills": p.kills, "drawdown trips": p.trips, "resets": p.resets, "partial fills": p.partials,
+		"owner buys in our tickers": p.ownerBuys, "partly filled sales": p.partialSales,
 	} {
 		if n == 0 {
 			out = append(out, name)
@@ -97,6 +103,10 @@ type t212Scenario struct {
 	cands  map[domain.InstrumentID]*domain.Candidate
 	stats  t212PropStats
 	limits domain.RiskLimits
+	// owner is what the owner bought by hand of tickers cactusTrade holds (never sold by
+	// cactusTrade, D44); ownerCost its cost.
+	owner     map[string]domain.Micros
+	ownerCost map[string]domain.Cents
 }
 
 func (s *t212Scenario) fail(format string, args ...any) {
@@ -110,6 +120,7 @@ func runT212Scenario(t *testing.T, seed uint64, ticks int) t212PropStats {
 	s := &t212Scenario{
 		t: t, seed: seed, r: rand.New(rand.NewPCG(seed, seed*104_729+3)), ag: ag,
 		tick2: map[domain.InstrumentID]string{1: barc}, price: map[domain.InstrumentID]domain.Micros{}, cands: map[domain.InstrumentID]*domain.Candidate{},
+		owner: map[string]domain.Micros{}, ownerCost: map[string]domain.Cents{},
 	}
 	ag.addShares(t, 3)
 	s.ids = []domain.InstrumentID{1, 100, 101, 102}
@@ -173,6 +184,8 @@ func runT212Scenario(t *testing.T, seed uint64, ticks int) t212PropStats {
 			s.stats.nonConforming++
 		case "position.stop_hit":
 			s.stats.stopHits++
+		case "order.partial_close":
+			s.stats.partialSales++
 		}
 	}
 	return s.stats
@@ -256,14 +269,20 @@ func (s *t212Scenario) step() {
 	ag.clock.Advance(domain.NextDecision(now, AgentBarInterval, AgentDecisionDelay).Sub(now))
 	s.control()
 	s.movePrices()
+	s.ownerBuys()
 	s.propose()
 	// The supervisor: no scripted faults (its sells must work), now and then an unreadable
 	// account outside the flatten window.
 	if s.r.IntN(25) == 0 && !s.nearClose() {
 		ag.sim.ReadErr = domain.ErrUnavailable
 	}
+	// Now and then a sale fills only in part (the rest works until it is cancelled), not in
+	// the last hour (a market sell there fills).
+	if s.r.IntN(6) == 0 && !s.nearClose() {
+		ag.sim.Script = []fakes.T212Outcome{fakes.T212PartialFill}
+	}
 	rep, err := ag.svc.Supervise(ag.ctx, ag.a.ID)
-	ag.sim.ReadErr = nil
+	ag.sim.ReadErr, ag.sim.Script = nil, nil
 	if err != nil {
 		s.fail("supervise: %v", err)
 	}
@@ -286,6 +305,49 @@ func (s *t212Scenario) step() {
 	}
 	ag.sim.Script, ag.sim.ReadErr, ag.m.Err = nil, nil, nil
 	s.checkAfter("agent")
+}
+
+// ownerBuys: now and then the owner buys 1-5 shares by hand of a ticker an open position of
+// cactusTrade's holds, paying from the free cash (the equity does not move).
+func (s *t212Scenario) ownerBuys() {
+	ag := s.ag
+	if s.r.IntN(8) != 0 {
+		return
+	}
+	ours, err := ag.store.AgentPositions().ListOpen(ag.ctx, ag.a.ID)
+	if err != nil {
+		s.fail("positions: %v", err)
+	}
+	ours = slices.DeleteFunc(ours, func(ap domain.AgentPosition) bool { _, held := ag.sim.Held[ap.Ticker]; return !held })
+	if len(ours) == 0 {
+		return
+	}
+	tk := ours[s.r.IntN(len(ours))].Ticker
+	q := domain.Micros(1+s.r.IntN(5)) * 1_000_000
+	price := ag.sim.Prices[tk]
+	cost := domain.Cents(int64(q) / 1_000_000 * int64(price) / 1_000_000) // GBX on a GBP account
+	if cost <= 0 || cost > ag.sim.Cash {
+		return
+	}
+	ag.sim.Cash -= cost
+	p := ag.sim.Held[tk]
+	p.Quantity += q
+	p.QuantityAvailable += q
+	p.Cost += cost
+	ag.sim.Held[tk] = p
+	s.owner[tk] += q
+	s.ownerCost[tk] += cost
+	s.stats.ownerBuys++
+}
+
+// ourCost is the cost of what cactusTrade holds of ticker: the held cost less the owner's
+// share of it (the sim lowers the cost in proportion to every sale).
+func (s *t212Scenario) ourCost(tk string) domain.Cents {
+	p := s.ag.sim.Held[tk]
+	if p.Quantity <= 0 || s.owner[tk] <= 0 {
+		return p.Cost
+	}
+	return domain.Cents(int64(p.Cost) * int64(p.Quantity-s.owner[tk]) / int64(p.Quantity))
 }
 
 // nearClose reports whether the LSE closes within an hour.
@@ -411,7 +473,7 @@ func (s *t212Scenario) checkPlace(ctx context.Context, in domain.T212Intent) err
 		}
 	}
 	if in.Side != domain.T212Buy {
-		return nil
+		return s.checkSell(in)
 	}
 	s.stats.entries++
 	if killed, err := ag.svc.isKilled(ag.ctx, ag.a.ID); err != nil || killed {
@@ -456,7 +518,7 @@ func (s *t212Scenario) checkPlace(ctx context.Context, in domain.T212Intent) err
 		if !stops[ap.Ticker] {
 			return fmt.Errorf("a buy while %s has no stop", ap.Ticker)
 		}
-		invested += ag.sim.Held[ap.Ticker].Cost
+		invested += s.ourCost(ap.Ticker)
 	}
 	if reserved > ag.sim.Cash {
 		return fmt.Errorf("reserved %s (this buy included) above the cash %s", reserved, ag.sim.Cash)
@@ -467,6 +529,29 @@ func (s *t212Scenario) checkPlace(ctx context.Context, in domain.T212Intent) err
 	}
 	if in.Quantity%1_000_000 != 0 {
 		return errors.New("a fraction while locked")
+	}
+	return nil
+}
+
+// checkSell: a sell of ours (a stop or a sale) never sells more than its position's unsold
+// quantity (bought − sold) net of our other sell orders that are not final, so the owner's
+// own shares in the ticker are never sold (D44).
+func (s *t212Scenario) checkSell(in domain.T212Intent) error {
+	ag := s.ag
+	o, err := ag.store.Orders().Get(ag.ctx, in.RequestID)
+	if err != nil {
+		return err
+	}
+	ap, err := ag.store.AgentPositions().Get(ag.ctx, ag.a.ID, o.PositionID)
+	if err != nil {
+		return fmt.Errorf("a sell of %s for no position of ours: %w", in.Ticker, err)
+	}
+	resting, err := ag.svc.t212RestingSells(ag.ctx, ag.a.ID, in.Ticker, in.RequestID)
+	if err != nil {
+		return err
+	}
+	if in.Quantity > ap.Unsold()-resting {
+		return fmt.Errorf("a sell of %s %s: bought %s, sold %s, resting %s (the owner's shares)", in.Quantity, in.Ticker, ap.Quantity, ap.Sold, resting)
 	}
 	return nil
 }
@@ -498,6 +583,11 @@ func (s *t212Scenario) checkAfter(what string) {
 			s.fail("short %s", tk)
 		}
 	}
+	for tk, q := range s.owner {
+		if held := ag.sim.Held[tk].Quantity; held < q {
+			s.fail("after the %s: %s held of %s, the owner alone bought %s (cactusTrade sold the owner's shares)", what, held, tk, q)
+		}
+	}
 }
 
 // checkFlat: once the LSE is closed (after the supervisor ran into it), nothing of ours is
@@ -514,8 +604,20 @@ func (s *t212Scenario) checkFlat() {
 		s.fail("positions: %v", err)
 	}
 	for _, ap := range ours {
-		if _, held := ag.sim.Held[ap.Ticker]; held {
+		if p, held := ag.sim.Held[ap.Ticker]; held && p.Quantity > s.owner[ap.Ticker] {
 			s.fail("%s held after the close (opened %s)", ap.Ticker, ap.OpenedAt.Format(time.RFC3339))
 		}
+	}
+	// Overnight the owner sells what they bought by hand, at the price (the equity does not
+	// move); exactly their shares are left.
+	for tk, q := range s.owner {
+		p := ag.sim.Held[tk]
+		if p.Quantity != q {
+			s.fail("after the close %s held of %s, the owner's own %s", p.Quantity, tk, q)
+		}
+		ag.sim.Cash += domain.Cents(int64(q) / 1_000_000 * int64(ag.sim.Prices[tk]) / 1_000_000)
+		delete(ag.sim.Held, tk)
+		delete(s.owner, tk)
+		delete(s.ownerCost, tk)
 	}
 }

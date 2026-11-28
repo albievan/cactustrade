@@ -82,6 +82,9 @@ func (c *Client) Holdings(ctx context.Context) (domain.Holdings, error) {
 
 // holdings reads the summary and the raw positions.
 func (c *Client) holdings(ctx context.Context) (summary, []positionWire, error) {
+	// The figures are as old as the cash read (availableToTrade), not the later positions
+	// read, which may wait for its rate limit (review B4): AsOf is taken before the summary.
+	asOf := c.cfg.Now().UTC()
 	var sum summaryWire
 	if err := c.get(ctx, OpAccountSummary, nil, &sum); err != nil {
 		return summary{}, nil, err
@@ -97,7 +100,7 @@ func (c *Client) holdings(ctx context.Context) (summary, []positionWire, error) 
 	var cv conv
 	h := summary{Holdings: domain.Holdings{
 		Platform: domain.PlatformTrading212, Currency: cur, Cash: cv.cents(sum.Cash.AvailableToTrade),
-		Equity: cv.cents(*sum.TotalValue), AsOf: c.cfg.Now().UTC(),
+		Equity: cv.cents(*sum.TotalValue), AsOf: asOf,
 	}, reserved: cv.cents(sum.Cash.ReservedForOrders)}
 	if inv := sum.Investments; inv != nil {
 		h.Invested, h.UnrealisedPnL, h.RealisedPnL = cv.cents(inv.TotalCost), cv.cents(inv.UnrealizedProfitLoss), cv.cents(inv.RealizedProfitLoss)

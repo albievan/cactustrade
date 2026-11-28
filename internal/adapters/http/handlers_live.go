@@ -465,6 +465,9 @@ func toLiveSnapshot(v app.LiveSnapshot) LiveSnapshot {
 		out.PortfolioAt = ptr(v.PortfolioAt)
 		out.Figures = ptr(toLiveFigures(v.Figures))
 	}
+	if v.Currency != "" {
+		out.Currency = ptr(v.Currency)
+	}
 	if v.KillReason != "" {
 		out.KillReason = ptr(v.KillReason)
 	}

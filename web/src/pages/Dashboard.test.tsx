@@ -21,12 +21,12 @@ const agent = {
   killed: false, dayStopped: false, riskDay: "", today: "2026-11-24", startOfDayEquityCents: 0, highWaterMarkCents: 0,
   equityKnown: false, equityError: "the account's eToro keys are not set", blocked: [], flatten: [],
   lease: { mine: false, other: false }, controls: { start: true, pause: true, stop: true, kill: true, reset: true, gated: false, forceClose: false },
-  resetPhrase: "RESET Main demo", openPositions: 0, pendingOrders: 0, missing: [],
+  resetPhrase: "RESET Main demo", openPositions: 0, pendingOrders: 0, missing: [], currency: "USD",
 };
 
 function order(over: Partial<Order> = {}): Order {
   return {
-    requestId: "r1", mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)", amountCents: 50000,
+    requestId: "r1", mode: "demo", platform: "etoro", resolvable: false, kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)", amountCents: 50000,
     state: "sent", stateLabel: "sent", reason: "", sends: 1, createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:00Z", ...over,
   };
 }

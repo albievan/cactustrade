@@ -72,6 +72,11 @@ func (h *orderHook) SyncTradesAll(context.Context) ([]app.TradeSync, error) {
 	return []app.TradeSync{{AccountID: "a", Stored: 1}, {AccountID: "b", Err: errors.New("test")}}, h.historyErr
 }
 
+func (h *orderHook) RefreshT212InstrumentsAuto(context.Context) (app.T212Catalogue, error) {
+	h.note("catalogue")
+	return app.T212Catalogue{}, nil
+}
+
 func (h *orderHook) ReleaseLeases(context.Context) error {
 	h.note("release")
 	return nil
@@ -169,6 +174,7 @@ type tradingEnv struct {
 	b   *fakes.SimBroker
 	p   app.Principal
 	v   domain.AccountView
+	sec *fakes.SecretStore
 }
 
 func newTradingEnv(t *testing.T) *tradingEnv {
@@ -178,6 +184,12 @@ func newTradingEnv(t *testing.T) *tradingEnv {
 
 // newTradingEnvWith is newTradingEnv with the service's dependencies changed by edit.
 func newTradingEnvWith(t *testing.T, edit func(*app.Deps)) *tradingEnv {
+	t.Helper()
+	return newTradingEnvCfg(t, edit, app.Config{Version: "test", LeaseHolder: "this-process"})
+}
+
+// newTradingEnvCfg is newTradingEnvWith with the app's configuration.
+func newTradingEnvCfg(t *testing.T, edit func(*app.Deps), cfg app.Config) *tradingEnv {
 	t.Helper()
 	ctx := context.Background()
 	st := fakes.NewStore()
@@ -193,7 +205,7 @@ func newTradingEnvWith(t *testing.T, edit func(*app.Deps)) *tradingEnv {
 		},
 	}
 	edit(&deps)
-	svc, err := app.New(deps, app.Config{Version: "test", LeaseHolder: "this-process"})
+	svc, err := app.New(deps, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +231,7 @@ func newTradingEnvWith(t *testing.T, edit func(*app.Deps)) *tradingEnv {
 			t.Fatal(err)
 		}
 	}
-	return &tradingEnv{svc: svc, st: st, clk: clk, b: b, p: p, v: v}
+	return &tradingEnv{svc: svc, st: st, clk: clk, b: b, p: p, v: v, sec: sec}
 }
 
 // waitLease waits for the first supervisor pass, which takes the account's lease.
