@@ -13,7 +13,19 @@ func toAccount(v domain.AccountView) Account {
 	return Account{
 		Id: v.ID, Name: v.Name, OwnerId: v.OwnerID, OwnerName: v.OwnerName, Mode: TradingMode(v.Mode),
 		Platform: Platform(v.OnPlatform()), EnvKeys: v.EnvKeys, Access: AccountAccess(v.Access), CreatedAt: v.CreatedAt,
+		AgentTradable: ptr(v.Agentable()),
 	}
+}
+
+// withExtra adds what the account list shows besides the account (R45.9).
+func withExtra(a Account, x app.AccountExtra) Account {
+	if x.Currency != "" {
+		a.Currency = ptr(x.Currency)
+	}
+	if x.PriceSource != "" {
+		a.PriceSourceAccountId = ptr(x.PriceSource)
+	}
+	return a
 }
 
 // ListAccounts lists the caller's accounts.
@@ -24,8 +36,9 @@ func (s *Server) ListAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]Account, 0, len(vs))
+	extras := s.svc.AccountExtras(r.Context(), vs)
 	for _, v := range vs {
-		out = append(out, toAccount(v))
+		out = append(out, withExtra(toAccount(v), extras[v.ID]))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

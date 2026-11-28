@@ -74,8 +74,32 @@ func toRiskLimits(l domain.RiskLimits) RiskLimits {
 		MaxPositionBp: int(l.MaxPosition), MaxOpenPositions: l.MaxOpenPositions,
 		NoEntryBeforeCloseMinutes: int(l.NoEntryBeforeClose / time.Minute), FlattenBeforeCloseMinutes: int(l.FlattenBeforeClose / time.Minute),
 		MaxPortfolioAgeSeconds: int(l.MaxPortfolioAge / time.Second), MaxQuoteAgeSeconds: int(l.MaxQuoteAge / time.Second),
-		MaxShortBp: int(l.MaxShort),
+		MaxShortBp: int(l.MaxShort), MinOrderValueCents: optInt64(int64(l.MinOrderValue)), T212Fractional: optTrue(l.T212Fractional),
 	}
+}
+
+// derefInt64 is *p, or 0 when p is nil.
+func derefInt64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// optInt64 is v, or nil when it is 0 (absent).
+func optInt64(v int64) *int64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
+// optTrue is &true, or nil when b is false (absent).
+func optTrue(b bool) *bool {
+	if !b {
+		return nil
+	}
+	return &b
 }
 
 // GetRiskLimits returns the limits and whether the caller may change them now (the use
@@ -97,6 +121,11 @@ func toRiskLimitsView(v app.RiskLimitsView) RiskLimitsView {
 		NoEntryBeforeCloseMinutes: l.NoEntryBeforeCloseMinutes, FlattenBeforeCloseMinutes: l.FlattenBeforeCloseMinutes,
 		MaxPortfolioAgeSeconds: l.MaxPortfolioAgeSeconds, MaxQuoteAgeSeconds: l.MaxQuoteAgeSeconds,
 		MaxShortBp: l.MaxShortBp, CanEdit: v.CanEdit, Preset: RiskPresetMatch(v.Preset),
+		MinOrderValueCents: l.MinOrderValueCents, T212Fractional: l.T212Fractional,
+		Platform: ptr(Platform(v.Platform)), FractionsVerified: ptr(v.FractionsVerified),
+	}
+	if v.Currency != "" {
+		out.Currency = ptr(v.Currency)
 	}
 	if v.EditBlocked != "" {
 		out.EditBlockedReason = ptr(v.EditBlocked)
@@ -116,7 +145,8 @@ func (s *Server) SetRiskLimits(w http.ResponseWriter, r *http.Request) {
 	if req.Preset != nil {
 		if req.TradingBudgetCents != nil || req.DailyLossBp != nil || req.DrawdownBp != nil || req.MaxPositionBp != nil ||
 			req.MaxOpenPositions != nil || req.NoEntryBeforeCloseMinutes != nil || req.FlattenBeforeCloseMinutes != nil ||
-			req.MaxPortfolioAgeSeconds != nil || req.MaxQuoteAgeSeconds != nil || req.MaxShortBp != nil {
+			req.MaxPortfolioAgeSeconds != nil || req.MaxQuoteAgeSeconds != nil || req.MaxShortBp != nil ||
+			req.MinOrderValueCents != nil || req.T212Fractional != nil {
 			s.fail(w, r, domain.Invalid("preset", "send a preset alone, or every limit without a preset"))
 			return
 		}
@@ -156,7 +186,8 @@ func customLimits(req RiskLimitsChange) (domain.RiskLimits, bool) {
 		MaxOpenPositions: *req.MaxOpenPositions, NoEntryBeforeClose: time.Duration(*req.NoEntryBeforeCloseMinutes) * time.Minute,
 		FlattenBeforeClose: time.Duration(*req.FlattenBeforeCloseMinutes) * time.Minute,
 		MaxPortfolioAge:    time.Duration(*req.MaxPortfolioAgeSeconds) * time.Second, MaxQuoteAge: time.Duration(*req.MaxQuoteAgeSeconds) * time.Second,
-		MaxShort: domain.BasisPoints(*req.MaxShortBp),
+		MaxShort: domain.BasisPoints(*req.MaxShortBp), MinOrderValue: domain.Cents(derefInt64(req.MinOrderValueCents)),
+		T212Fractional: req.T212Fractional != nil && *req.T212Fractional,
 	}, true
 }
 

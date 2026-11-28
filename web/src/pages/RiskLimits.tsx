@@ -142,11 +142,11 @@ export function RiskLimits() {
     }
   }
   const startAgain = saved && current && accountId && stoppedHere.includes(accountId);
-  const field = (k: keyof Limits & string, label: string, help: string, unit: string) => (
+  const field = (k: NumKey, label: string, help: string, unit: string) => (
     <div className="col-md-6 col-xl-4">
       <label className="form-label fw-semibold" htmlFor={k}>{label}</label>
       <div className="input-group">
-        <input id={k} type="number" className="form-control" value={l[k]} onChange={num(k)} disabled={!editable} required />
+        <input id={k} type="number" className="form-control" value={l[k] ?? 0} onChange={num(k)} disabled={!editable} required />
         <span className="input-group-text">{unit}</span>
       </div>
       <div className="form-text">{help}</div>
@@ -226,5 +226,9 @@ function limitsOf(v: Limits): Limits {
     maxOpenPositions: v.maxOpenPositions, noEntryBeforeCloseMinutes: v.noEntryBeforeCloseMinutes,
     flattenBeforeCloseMinutes: v.flattenBeforeCloseMinutes, maxPortfolioAgeSeconds: v.maxPortfolioAgeSeconds,
     maxQuoteAgeSeconds: v.maxQuoteAgeSeconds, maxShortBp: v.maxShortBp,
+    minOrderValueCents: v.minOrderValueCents, t212Fractional: v.t212Fractional,
   };
 }
+
+// NumKey is a numeric limit (every limit but the Trading 212 fractional switch).
+type NumKey = Exclude<keyof Limits, "t212Fractional">;

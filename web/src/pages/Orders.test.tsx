@@ -23,10 +23,10 @@ afterEach(() => vi.restoreAllMocks());
 describe("Orders", () => {
   it("lists the orders in a table", async () => {
     serve([
-      { requestId: "11111111-1111-4111-8111-111111111111", mode: "demo", kind: "open", kindLabel: "Short AAPL", direction: "short", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)",
+      { requestId: "11111111-1111-4111-8111-111111111111", mode: "demo", platform: "etoro", resolvable: false, kind: "open", kindLabel: "Short AAPL", direction: "short", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)",
         amountCents: 200000, entry: "100", stopLoss: "103", takeProfit: "94", state: "filled", stateLabel: "filled", reason: "", sends: 1,
         createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:01Z" },
-      { requestId: "22222222-2222-4222-8222-222222222222", mode: "demo", kind: "close", kindLabel: "Close request for instrument 1002 (position 5)", direction: "long", instrumentId: 1002, symbol: "",
+      { requestId: "22222222-2222-4222-8222-222222222222", mode: "demo", platform: "etoro", resolvable: false, kind: "close", kindLabel: "Close request for instrument 1002 (position 5)", direction: "long", instrumentId: 1002, symbol: "",
         amountCents: 0, state: "unknown", stateLabel: "unknown", reason: "answer lost", sends: 1, createdAt: "2026-11-24T14:00:00Z", updatedAt: "2026-11-24T14:00:00Z" },
     ]);
     expect(await screen.findByText("Short AAPL")).toBeInTheDocument(); // the server's wording
@@ -45,7 +45,7 @@ describe("Orders", () => {
 
   it("shows a cancel request eToro took as accepted, never filled", async () => {
     serve([
-      { requestId: "33333333-3333-4333-8333-333333333333", mode: "demo", kind: "cancel", kindLabel: "Cancel request for GOOG (buy order 396359836)",
+      { requestId: "33333333-3333-4333-8333-333333333333", mode: "demo", platform: "etoro", resolvable: false, kind: "cancel", kindLabel: "Cancel request for GOOG (buy order 396359836)",
         direction: "long", instrumentId: 1002, symbol: "GOOG", amountCents: 0, state: "filled", stateLabel: "accepted by eToro", reason: "eToro accepted the request to cancel order 396359836.", sends: 1,
         createdAt: "2026-11-24T18:51:22Z", updatedAt: "2026-11-24T18:51:22Z" },
     ]);

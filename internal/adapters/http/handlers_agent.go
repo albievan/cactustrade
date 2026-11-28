@@ -72,7 +72,7 @@ func toAgentPanel(v app.AgentView) AgentPanel {
 		Lease:       AgentLease{Mine: v.Lease.Mine, Other: v.Lease.Other},
 		Controls:    toControls(v.Controls, v.StartBlocked),
 		ResetPhrase: v.ResetPhrase, OpenPositions: v.OpenPositions, PendingOrders: v.Pending,
-		Missing: make([]MissingItem, 0, len(v.Missing)),
+		Missing: make([]MissingItem, 0, len(v.Missing)), Currency: v.Currency,
 	}
 	for _, m := range v.Missing {
 		out.Missing = append(out.Missing, MissingItem{What: Missing(m.What), CanFix: m.CanFix})
@@ -223,7 +223,16 @@ func toOrder(o app.OrderView) Order {
 		RequestId: o.RequestID, Mode: TradingMode(o.Mode), Kind: string(o.Kind), KindLabel: o.KindLabel(), Direction: string(o.Direction),
 		InstrumentId: int64(o.Instrument), Symbol: o.Symbol, AmountCents: Cents(o.Amount), State: string(o.State), StateLabel: o.StateLabel(),
 		Reason: o.ReasonLabel(), Sends: o.Sends, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt,
-		Market: string(o.Market), Exchange: o.Market.Label(),
+		Market: string(o.Market), Exchange: o.Market.Label(), Platform: Platform(o.OnPlatform()), Resolvable: o.Resolvable(),
+	}
+	if o.Ticker != "" {
+		x.Ticker = ptr(o.Ticker)
+	}
+	if o.Quantity > 0 {
+		x.Quantity = ptr(dec(o.Quantity))
+	}
+	if o.Filled > 0 {
+		x.FilledQuantity = ptr(dec(o.Filled))
 	}
 	if o.Entry > 0 {
 		x.Entry = ptr(dec(o.Entry))

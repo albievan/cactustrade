@@ -15,7 +15,7 @@ function panel(over: Partial<Panel> = {}): Panel {
     killed: false, dayStopped: false, riskDay: "2026-11-24", today: "2026-11-24", startOfDayEquityCents: 1000000, highWaterMarkCents: 1000000,
     equityKnown: true, equityCents: 990000, dailyFloorCents: 980000, toDailyFloorCents: 10000, drawdownFloorCents: 900000, toDrawdownFloorCents: 90000,
     blocked: [], flatten: [{ market: "NYSE", trading: true, closes: "2026-11-24T21:00:00Z", flattenAt: "2026-11-24T20:50:00Z" }],
-    lease: { mine: true, other: false }, controls: all, resetPhrase: "RESET Main demo", openPositions: 1, pendingOrders: 0, missing: [],
+    lease: { mine: true, other: false }, controls: all, resetPhrase: "RESET Main demo", openPositions: 1, pendingOrders: 0, missing: [], currency: "USD",
     ...over,
   };
 }

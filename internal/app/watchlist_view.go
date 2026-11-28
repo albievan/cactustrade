@@ -57,7 +57,7 @@ type WatchlistOverview struct {
 // WatchlistEntries lists the current account's watchlist with each share's theme and holding
 // (view).
 func (s *Service) WatchlistEntries(ctx context.Context, p Principal) ([]WatchlistEntry, error) {
-	v, err := s.account(ctx, p, "", domain.AccessView)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessView)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (s *Service) WatchlistEntries(ctx context.Context, p Principal) ([]Watchlis
 // themes, and what the account holds: the total on watchlist shares and every holding that
 // is not on the watchlist (view).
 func (s *Service) WatchlistOverview(ctx context.Context, p Principal) (WatchlistOverview, error) {
-	v, err := s.account(ctx, p, "", domain.AccessView)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessView)
 	if err != nil {
 		return WatchlistOverview{}, err
 	}
@@ -144,6 +144,13 @@ func shareThemes(themes []domain.Theme) map[domain.InstrumentID]string {
 func (s *Service) watchHoldings(ctx context.Context, v domain.AccountView) (map[domain.InstrumentID]domain.InstrumentHolding, WatchlistHoldings) {
 	sum := WatchlistHoldings{Currency: "USD", Stale: true}
 	switch {
+	case v.T212Trading() && s.d.T212 == nil:
+		sum.Error = "the Trading 212 client is not configured"
+		return nil, sum
+	case v.T212Trading() && !s.hasKeys(ctx, v.Account):
+		sum.Error = "the account's Trading 212 keys are not set"
+		return nil, sum
+	case v.T212Trading():
 	case s.d.Broker == nil:
 		sum.Error = "the eToro client is not configured"
 		return nil, sum
@@ -154,8 +161,11 @@ func (s *Service) watchHoldings(ctx context.Context, v domain.AccountView) (map[
 	pf, at, err := s.viewPortfolio(ctx, v)
 	if err != nil {
 		s.d.Log.WarnContext(ctx, "watchlist holdings: portfolio read failed", "account", v.ID, "err", err)
-		sum.Error = "eToro's portfolio could not be read just now"
+		sum.Error = v.OnPlatform().Label() + "'s portfolio could not be read just now"
 		return nil, sum
+	}
+	if cur := s.viewCurrency(v.Account); cur != "" {
+		sum.Currency = cur // the Trading 212 account's own (R45.9)
 	}
 	ours := map[int64]bool{}
 	aps, err := s.d.Store.AgentPositions().ListOpen(ctx, v.ID)

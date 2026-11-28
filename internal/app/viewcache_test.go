@@ -202,7 +202,14 @@ func TestEntriesNeverUseTheViewCache(t *testing.T) {
 
 // orderPathFiles may never read the view cache (CLAUDE.md §2.2); supervisor.go may only store
 // its own read into it.
-var orderPathFiles = []string{"agent.go", "executor.go", "risk.go", "supervisor.go"}
+var orderPathFiles = []string{
+	"agent.go", "executor.go", "risk.go", "supervisor.go",
+	"t212_agent.go", "t212_executor.go", "t212_reconcile.go", "t212_supervisor.go", // R45.9
+}
+
+// cacheWriters are the order-path files that store their own read in the view cache (never
+// read it).
+var cacheWriters = []string{"supervisor.go", "t212_supervisor.go"}
 
 // viewCacheReaders are the identifiers that read the view cache, directly or through a view
 // use case. (Declaring the runtime's views field and building it, in executor.go, read
@@ -210,6 +217,7 @@ var orderPathFiles = []string{"agent.go", "executor.go", "risk.go", "supervisor.
 var viewCacheReaders = []string{
 	"viewPortfolio", "peek", "entries", "flights", "viewEquity", "AgentStatusView", "LiveSnapshot", "WarmLiveView",
 	"WatchlistEntries", "WatchlistOverview", "watchHoldings", // R27
+	"viewCurrency", "currencyOf", "viewRead", // R45.9
 }
 
 // cacheReads lists the view-cache reads in one Go source file: any viewCacheReaders
@@ -226,7 +234,7 @@ func cacheReads(t *testing.T, name string, src any, storeOK bool) []string {
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.SelectorExpr:
-			if inner, ok := n.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "views" && n.Sel.Name == "put" && storeOK {
+			if inner, ok := n.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "views" && (n.Sel.Name == "put" || n.Sel.Name == "setCurrency") && storeOK {
 				allowed[inner] = true
 			}
 			if n.Sel.Name == "views" && !allowed[n] {
@@ -244,13 +252,15 @@ func cacheReads(t *testing.T, name string, src any, storeOK bool) []string {
 
 func TestViewCacheReadersAreViewsOnly(t *testing.T) {
 	for _, name := range orderPathFiles {
-		if reads := cacheReads(t, name, nil, name == "supervisor.go"); len(reads) > 0 {
+		if reads := cacheReads(t, name, nil, slices.Contains(cacheWriters, name)); len(reads) > 0 {
 			t.Errorf("%s reads the view cache (guardrail §2.2): %v", name, reads)
 		}
 	}
-	// supervisor.go stores its read exactly once.
-	if n := selectorCalls(t, "supervisor.go")["views.put"]; n != 1 {
-		t.Fatalf("supervisor.go stores into the view cache %d times, want 1", n)
+	// Each supervisor stores its read exactly once.
+	for _, name := range cacheWriters {
+		if n := selectorCalls(t, name)["views.put"]; n != 1 {
+			t.Fatalf("%s stores into the view cache %d times, want 1", name, n)
+		}
 	}
 	// Only the view files read the cache at all.
 	files, err := filepath.Glob("*.go")

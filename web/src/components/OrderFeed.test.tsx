@@ -6,7 +6,7 @@ import { PrefsStore, PrefsStoreProvider } from "../lib/prefs";
 
 function order(over: Partial<Order>): Order {
   return {
-    requestId: "r", mode: "demo", kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)", amountCents: 50000,
+    requestId: "r", mode: "demo", platform: "etoro", resolvable: false, kind: "open", kindLabel: "Buy AAPL", direction: "long", instrumentId: 1001, symbol: "AAPL", market: "NYSE", exchange: "New York (NYSE/NASDAQ)", amountCents: 50000,
     state: "filled", stateLabel: "filled", reason: "", sends: 1, createdAt: "2026-11-24T15:00:00Z", updatedAt: "2026-11-24T15:00:00Z", ...over,
   };
 }

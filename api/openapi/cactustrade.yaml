@@ -614,6 +614,66 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/price-source:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    put:
+      tags: [accounts]
+      operationId: setPriceSource
+      summary: Choose the eToro demo account whose prices feed a Trading 212 practice account (owner, web UI, agent stopped)
+      description: |
+        Trading 212 publishes no market data: signals, entry and stop prices of a Trading 212
+        practice account come from eToro data of the matched share, read with the keys of an
+        eToro demo account of the same owner (D44, at the owner's risk). An empty accountId
+        removes the price source (then nothing is entered). Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PriceSourceRequest" }
+      responses:
+        "204": { description: Set }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/t212/instruments:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    get:
+      tags: [accounts]
+      operationId: getT212Catalogue
+      summary: The age of the stored Trading 212 instrument list (viewer of a Trading 212 practice account)
+      responses:
+        "200":
+          description: Catalogue status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/T212Catalogue" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/accounts/{accountId}/t212/instruments/refresh:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [accounts]
+      operationId: refreshT212Catalogue
+      summary: Fetch Trading 212's instrument list with this practice account's keys (owner, web UI; at most once per 50 s)
+      responses:
+        "200":
+          description: Refreshed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/T212Catalogue" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/accounts/{accountId}/shares:
     parameters:
       - { name: accountId, in: path, required: true, schema: { type: string, maxLength: 64 } }
@@ -1152,6 +1212,29 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/watchlist/{instrumentId}/match/confirm:
+    parameters:
+      - { name: instrumentId, in: path, required: true, schema: { type: integer, format: int64, minimum: 1 } }
+    post:
+      tags: [market]
+      operationId: confirmBrokerMatch
+      summary: Confirm the Trading 212 instrument matched to a watchlist share (owner of the current Trading 212 practice account, web UI)
+      description: |
+        D42: the match (market, ticker suffix, symbol, currency and type) is checked again on
+        the stored catalogue; when it no longer gives the same ticker and ISIN, nothing is
+        confirmed (409). Audited.
+      responses:
+        "200":
+          description: Confirmed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerMatch" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
   /api/v1/watchlist/{instrumentId}:
     parameters:
@@ -1694,6 +1777,35 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/orders/{requestId}/resolve:
+    parameters:
+      - { name: requestId, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    post:
+      tags: [agent]
+      operationId: resolveOrder
+      summary: Say what became of a Trading 212 order whose outcome is unknown (owner, web UI)
+      description: |
+        T212-d: Trading 212 takes no request id, so an order whose answer was lost and that
+        matches more than one Trading 212 order waits for the account owner: name the Trading
+        212 order it is (same ticker, side, type and quantity, not another order of ours), or
+        say it was not placed. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolveOrderRequest" }
+      responses:
+        "200":
+          description: The order after the resolution
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/decisions:
     get:
       tags: [agent]
@@ -3099,6 +3211,23 @@ components:
           description: "who put it on the watchlist: a person, the scanner or web research (R29)"
         themeId: { type: string, description: "the account's theme this share is in (absent = none; R27)" }
         holding: { $ref: "#/components/schemas/WatchHolding" }
+        brokerMatch: { $ref: "#/components/schemas/BrokerMatch" }
+    BrokerMatch:
+      type: object
+      description: The Trading 212 instrument matched to a watchlist share of a Trading 212 practice account (D42)
+      required: [instrumentId, ticker, isin, status]
+      properties:
+        instrumentId: { type: integer, format: int64, description: "the eToro instrument" }
+        ticker: { type: string, description: "Trading 212's ticker, e.g. BARCl_EQ" }
+        isin: { type: string }
+        name: { type: string, description: "Trading 212's name of the instrument (absent when it is no longer listed)" }
+        currency: { type: string, description: "the instrument's currency at Trading 212 (GBX, USD …)" }
+        status:
+          type: string
+          enum: [unconfirmed, confirmed, unusable]
+          description: "unconfirmed: the owner must confirm it before anything is traded; confirmed: tradable; unusable: confirmed but no longer tradable (see reason)"
+        reason: { type: string, description: "why it is not tradable (absent when confirmed)" }
+        confirmedAt: { type: string, format: date-time }
     WatchHolding:
       type: object
       description: What the account holds of one instrument, from the portfolio view cache (a view only)
@@ -3309,6 +3438,13 @@ components:
         maxPortfolioAgeSeconds: { type: integer }
         maxQuoteAgeSeconds: { type: integer }
         maxShortBp: { type: integer, description: "all short exposure as a share of the trading budget (bp; 0 = no shorts; at most 2500 = 25 %)" }
+        minOrderValueCents:
+          type: integer
+          format: int64
+          description: "Trading 212: the smallest order value, in the account's minor units (required, > 0 and at most the budget when the budget is set); eToro: absent or 0"
+        t212Fractional:
+          type: boolean
+          description: "Trading 212: fractional quantities (refused while fractions are not verified on a practice account); eToro: absent or false"
     RiskLimitsView:
       description: The limits as GET returns them, with whether the caller may change them now (not part of the PUT body)
       allOf:
@@ -3319,6 +3455,9 @@ components:
             canEdit: { type: boolean, description: "the caller may change the limits now (same rules as the PUT)" }
             editBlockedReason: { type: string, description: "why not, for people (absent when canEdit)" }
             preset: { $ref: "#/components/schemas/RiskPresetMatch" }
+            platform: { $ref: "#/components/schemas/Platform" }
+            currency: { type: string, description: "the currency of the money figures (USD on eToro; the Trading 212 account's own; absent when it could not be read)" }
+            fractionsVerified: { type: boolean, description: "Trading 212 fractional quantities are verified, so the switch may be turned on" }
     RiskPresetId:
       type: string
       enum: [low, low_medium, medium, medium_high, high]
@@ -3342,6 +3481,8 @@ components:
         maxPortfolioAgeSeconds: { type: integer }
         maxQuoteAgeSeconds: { type: integer }
         maxShortBp: { type: integer }
+        minOrderValueCents: { type: integer, format: int64, description: "Trading 212 (required there); absent or 0 on eToro" }
+        t212Fractional: { type: boolean, description: "Trading 212 fractional quantities (refused while unverified); absent = off" }
     RiskPreset:
       type: object
       required: [id, label, summary, dailyLossBp, drawdownBp, maxPositionBp, maxOpenPositions, maxShortBp]
@@ -3582,7 +3723,7 @@ components:
     Platform:
       type: string
       enum: [etoro, trading212, saxo, tiger]
-      description: eToro (traded), or Trading 212, Saxo or Tiger Brokers (view-only)
+      description: eToro (traded), Trading 212 (practice accounts traded, real accounts view-only), Saxo or Tiger Brokers (view-only)
     CredentialSpec:
       type: object
       required: [key, label, help, multiline, optional, setByFlow]
@@ -3632,6 +3773,26 @@ components:
         envKeys: { type: boolean, description: "uses the deployment's ETORO_DEMO_PUB / _PK" }
         access: { type: string, enum: [view, trade, owner] }
         createdAt: { type: string, format: date-time }
+        agentTradable: { type: boolean, description: "cactusTrade's agent can trade it: an eToro account, or a Trading 212 practice account (a real Trading 212 account is view-only)" }
+        currency: { type: string, description: "the currency of its money figures when known (USD on eToro)" }
+        priceSourceAccountId: { type: string, description: "Trading 212 practice account: the eToro demo account whose prices feed it (absent = none)" }
+    PriceSourceRequest:
+      type: object
+      required: [accountId]
+      properties:
+        accountId: { type: string, maxLength: 64, description: "an eToro demo account of the same owner with keys; empty removes the price source" }
+    T212Catalogue:
+      type: object
+      required: [count, stale]
+      properties:
+        fetchedAt: { type: string, format: date-time, description: "when the stored list was fetched (absent: never)" }
+        count: { type: integer, description: "instruments stored by this refresh (0 when only read)" }
+        stale: { type: boolean, description: "missing or older than 24 h: no matches and no entries until it is refreshed" }
+    ResolveOrderRequest:
+      type: object
+      properties:
+        brokerOrderId: { type: integer, format: int64, minimum: 1, description: "the Trading 212 order it is" }
+        notPlaced: { type: boolean, description: "it was not placed at Trading 212 (abandoned)" }
     CreateAccountRequest:
       type: object
       required: [name, mode]
@@ -4016,6 +4177,7 @@ components:
       required: [account, current, state, killed, reconciliation, limitsEditable, controls, openPositions, pendingOrders]
       properties:
         account: { $ref: "#/components/schemas/Account" }
+        currency: { type: string, description: "the currency of the account's money figures when known (USD on eToro)" }
         current: { type: boolean, description: "the caller's current account (the limits form edits it)" }
         state: { $ref: "#/components/schemas/AgentState" }
         stateSince: { type: string, format: date-time, description: "when the agent entered this state; absent when unknown" }
@@ -4083,9 +4245,10 @@ components:
     AgentPanel:
       type: object
       required: [account, state, reconciliation, limits, killed, dayStopped, riskDay, today, startOfDayEquityCents, highWaterMarkCents,
-                 equityKnown, blocked, flatten, lease, controls, resetPhrase, openPositions, pendingOrders, missing]
+                 equityKnown, blocked, flatten, lease, controls, resetPhrase, openPositions, pendingOrders, missing, currency]
       properties:
         account: { $ref: "#/components/schemas/Account" }
+        currency: { type: string, description: "the currency of the money figures (USD on eToro; the Trading 212 account's own, empty when it could not be read)" }
         state: { $ref: "#/components/schemas/AgentState" }
         stateSince: { type: string, format: date-time, description: "when the agent entered this state; absent when unknown" }
         reconciliation: { $ref: "#/components/schemas/Reconciliation" }
@@ -4118,11 +4281,16 @@ components:
           items: { $ref: "#/components/schemas/MissingItem" }
     Order:
       type: object
-      required: [requestId, mode, kind, kindLabel, direction, instrumentId, symbol, market, exchange, amountCents, state, stateLabel, reason, sends, createdAt, updatedAt]
+      required: [requestId, mode, platform, kind, kindLabel, direction, instrumentId, symbol, market, exchange, amountCents, state, stateLabel, reason, sends, createdAt, updatedAt, resolvable]
       properties:
-        requestId: { type: string, description: "our x-request-id, stored before the order is sent" }
+        requestId: { type: string, description: "our x-request-id, stored before the order is sent (Trading 212 never sees it)" }
         mode: { $ref: "#/components/schemas/TradingMode" }
-        kind: { type: string, description: "open, close or cancel" }
+        platform: { $ref: "#/components/schemas/Platform" }
+        kind: { type: string, description: "open, close, cancel or stop (a Trading 212 sell stop)" }
+        ticker: { type: string, description: "Trading 212's instrument (absent on eToro)" }
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        filledQuantity: { $ref: "#/components/schemas/Decimal" }
+        resolvable: { type: boolean, description: "a Trading 212 order whose outcome is unknown and that the account owner may resolve (POST /orders/{requestId}/resolve)" }
         kindLabel: { type: string, description: "what the order is, worded by the server, e.g. \"Buy GOOG\", \"Cancel request for GOOG (buy order 396359836)\", \"Close request for GOOG (position 3649965576)\"" }
         direction: { type: string, description: "long, short or empty (cancel)" }
         instrumentId: { type: integer, format: int64 }
@@ -4411,6 +4579,7 @@ components:
       required: [account, at, portfolioKnown, stale, positions, openOrders, recentOrders, regimes, state, reconciliation, killed, dayStopped, lease]
       properties:
         account: { $ref: "#/components/schemas/Account" }
+        currency: { type: string, description: "the currency of the money figures when known (USD on eToro)" }
         at: { type: string, format: date-time, description: "when the snapshot was built" }
         portfolioKnown: { type: boolean, description: "a cached portfolio exists; figures and positions need one" }
         portfolioAt: { type: string, format: date-time }

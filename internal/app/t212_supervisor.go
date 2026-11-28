@@ -49,6 +49,9 @@ func (s *Service) t212Supervise(ctx context.Context, a domain.Account) (Supervis
 	} else if pf, err := s.t212Portfolio(ctx, a, acct); err != nil {
 		rep.fail("reading our positions: %v", err)
 	} else {
+		// The views use this read (no extra Trading 212 call); nothing here reads them back.
+		s.rt.views.put(a.ID, pf, s.d.Clock.Now())
+		s.rt.views.setCurrency(a.ID, acct.Currency)
 		st, err := s.observe(ctx, a, pf, l, now)
 		switch {
 		case err != nil:
