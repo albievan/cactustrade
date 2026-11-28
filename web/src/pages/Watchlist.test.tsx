@@ -237,3 +237,38 @@ describe("Watchlist themes, file and holdings (R27)", () => {
     expect(screen.queryByRole("link", { name: "Export the watchlist and themes as JSON" })).not.toBeInTheDocument();
   });
 });
+
+describe("Watchlist on a Trading 212 practice account (R45.11)", () => {
+  it("shows each share's match and lets the owner confirm it after seeing both names and the ISIN", async () => {
+    let confirmed = false;
+    const posts: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+      if (url.endsWith("/api/v1/auth/me")) return json(me);
+      if (url.endsWith("/api/v1/system/status")) return json({ version: "0.1.0", build: "1", mode: "demo", agentState: "stopped", database: "sqlite", startedAt: "", now: "",
+        account: { id: "t1", name: "Practice", ownerId: "1", ownerName: "admin", mode: "demo", platform: "trading212", envKeys: false, access: "owner", createdAt: "", currency: "GBP" } });
+      if (url.endsWith("/match/confirm") && init?.method === "POST") {
+        posts.push(url);
+        confirmed = true;
+        return json({ instrumentId: 1, ticker: "BARCl_EQ", isin: "GB0031348658", status: "confirmed" });
+      }
+      if (url.endsWith("/api/v1/watchlist")) return json([{
+        instrument: { instrumentId: 1, symbol: "BARC.L", name: "Barclays", type: "Stocks", market: "LSE" },
+        eligibility: { realLong: false, reason: "(unchecked)" }, addedBy: "admin", addedAt: "2026-11-23T09:00:00Z",
+        brokerMatch: { instrumentId: 1, ticker: "BARCl_EQ", isin: "GB0031348658", name: "Barclays PLC", currency: "GBX", status: confirmed ? "confirmed" : "unconfirmed" },
+      }]);
+      return new Response("{}", { status: 404 });
+    });
+    render(<SessionProvider><ModeProvider><Watchlist /></ModeProvider></SessionProvider>);
+    expect(await screen.findByText("BARCl_EQ")).toBeInTheDocument();
+    expect(screen.getByText("not confirmed")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm the Trading 212 match of BARC.L" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Barclays PLC");
+    expect(dialog).toHaveTextContent("GB0031348658");
+    fireEvent.click(screen.getByRole("button", { name: /Confirm the match/ }));
+    await waitFor(() => expect(posts).toEqual(["/api/v1/watchlist/1/match/confirm"]));
+    expect(await screen.findByText("confirmed")).toBeInTheDocument();
+  });
+});

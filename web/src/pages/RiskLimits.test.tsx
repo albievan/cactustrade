@@ -225,3 +225,36 @@ describe("RiskLimits presets and style (R28)", () => {
     expect(screen.getByRole("button", { name: /^Low preset/ })).toHaveAttribute("aria-pressed", "false");
   });
 });
+
+describe("RiskLimits on a Trading 212 practice account (R45.11)", () => {
+  it("shows the limits in the account's currency, requires a minimum order value, hides shorts and keeps the fractional switch locked", async () => {
+    const practice = { ...account, id: "t1", name: "Practice", platform: "trading212", currency: "GBP" };
+    const t212 = { ...limits, tradingBudgetCents: 100000, maxShortBp: 0, minOrderValueCents: 1000 };
+    const puts: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+      if (url.endsWith("/api/v1/auth/me")) return json(me);
+      if (url.endsWith("/api/v1/system/status")) return json({ version: "0.1.0", build: "1", mode: "demo", agentState: "stopped", database: "sqlite", startedAt: "", now: "", account: practice });
+      if (url.endsWith("/api/v1/risk/limits") && init?.method === "PUT") { puts.push(JSON.parse(String(init.body))); return json(t212); }
+      if (url.endsWith("/api/v1/risk/limits")) {
+        return json({ ...t212, canEdit: true, preset: "custom", platform: "trading212", currency: "GBP", fractionsVerified: false });
+      }
+      if (url.endsWith("/api/v1/agents")) return json([]);
+      return new Response("{}", { status: 404 });
+    });
+    render(<SessionProvider><ModeProvider><RiskLimits /></ModeProvider></SessionProvider>);
+    const min = await screen.findByLabelText("Minimum order value");
+    expect(min).toBeRequired();
+    expect(min).toHaveValue(10);
+    expect(screen.getByText(/£1,000\.00 now/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Short selling")).toBeNull();
+    const frac = screen.getByLabelText("Fractional shares");
+    expect(frac).toBeDisabled();
+    expect(screen.getByText(/Locked: whole shares only/)).toBeInTheDocument();
+    fireEvent.change(min, { target: { value: "25.50" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save limits" }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]).toMatchObject({ tradingBudgetCents: 100000, minOrderValueCents: 2550, maxShortBp: 0, t212Fractional: false });
+  });
+});

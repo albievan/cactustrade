@@ -302,4 +302,16 @@ describe("AgentPanel force close (R24)", () => {
     expect(await screen.findByLabelText("Force close")).toBeEnabled();
     expect(screen.queryByText(/No force close here/)).not.toBeInTheDocument();
   });
+
+  it("runs a Trading 212 practice account's agent in its currency (R45.11)", async () => {
+    serve(panel({
+      account: { id: "t1", name: "Practice", ownerId: "1", ownerName: "admin", mode: "demo", platform: "trading212", envKeys: false, access: "owner", createdAt: "" },
+      currency: "GBP",
+    }));
+    expect(await screen.findByText("Trading 212 practice · GBP")).toBeInTheDocument();
+    expect(screen.getByText("£9,900.00")).toBeInTheDocument(); // equity
+    expect(screen.getByText("£100.00")).toBeInTheDocument(); // to the daily floor
+    expect(screen.getByLabelText("Reconcile with Trading 212")).toBeEnabled();
+    expect(screen.getByLabelText("Pause the agent")).toBeEnabled();
+  });
 });

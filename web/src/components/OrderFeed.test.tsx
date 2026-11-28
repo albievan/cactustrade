@@ -80,4 +80,20 @@ describe("OrderFeed", () => {
     expect(within(line).getByText("Real Money Maker")).toBeInTheDocument();
     expect(within(line).getByText("REAL")).toBeInTheDocument();
   });
+
+  it("shows a Trading 212 order's badge, its sell stop and share quantities, money in the account's currency (R45.11)", () => {
+    const t212 = [
+      order({ requestId: "b", platform: "trading212", kindLabel: "Buy BARC.L (BARCl_EQ)", ticker: "BARCl_EQ", quantity: "3", amountCents: 61200 }),
+      order({ requestId: "s", platform: "trading212", kind: "stop", kindLabel: "Sell stop for BARC.L (BARCl_EQ)", ticker: "BARCl_EQ", quantity: "1",
+        state: "pending", stateLabel: "resting at Trading 212", amountCents: 0 }),
+    ];
+    render(<OrderFeed orders={t212} currency="GBP" />);
+    const lines = within(screen.getByRole("list", { name: "Orders feed" })).getAllByRole("listitem");
+    expect(within(lines[0]).getByText("Trading 212")).toBeInTheDocument();
+    expect(within(lines[0]).getByText("3 shares")).toBeInTheDocument();
+    expect(within(lines[0]).getByText("£612.00")).toBeInTheDocument();
+    expect(within(lines[1]).getByText("Sell stop for BARC.L (BARCl_EQ)")).toBeInTheDocument();
+    expect(within(lines[1]).getByText("1 share")).toBeInTheDocument();
+    expect(within(lines[1]).getByText("resting at Trading 212")).toBeInTheDocument();
+  });
 });

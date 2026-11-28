@@ -70,6 +70,8 @@ export type AgentStatusResult = components["schemas"]["AgentStatusResult"];
 export type KillReport = components["schemas"]["KillReport"];
 export type Reconciliation = components["schemas"]["Reconciliation"];
 export type Order = components["schemas"]["Order"];
+export type BrokerMatch = components["schemas"]["BrokerMatch"];
+export type T212Catalogue = components["schemas"]["T212Catalogue"];
 export type Decision = components["schemas"]["Decision"];
 export type DecisionDetail = components["schemas"]["DecisionDetail"];
 export type LlmCall = components["schemas"]["LlmCall"];
@@ -307,6 +309,15 @@ export const api = {
   setAccountCredentials: (id: string, values: Record<string, string>) =>
     request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/keys`, { values }),
   platforms: () => request<PlatformInfo[]>("GET", "/api/v1/platforms"),
+  // Trading 212 practice accounts (R45.9): owner, web session. The server applies every rule.
+  setPriceSource: (id: string, accountId: string) =>
+    request<void>("PUT", `/api/v1/accounts/${encodeURIComponent(id)}/price-source`, { accountId }),
+  t212Catalogue: (id: string) => request<T212Catalogue>("GET", `/api/v1/accounts/${encodeURIComponent(id)}/t212/instruments`),
+  refreshT212Catalogue: (id: string) =>
+    request<T212Catalogue>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/t212/instruments/refresh`),
+  confirmBrokerMatch: (instrumentId: number) => request<BrokerMatch>("POST", `/api/v1/watchlist/${instrumentId}/match/confirm`),
+  resolveOrder: (requestId: string, r: { brokerOrderId?: number; notPlaced?: boolean }) =>
+    request<Order>("POST", `/api/v1/orders/${encodeURIComponent(requestId)}/resolve`, r),
   // The agent of the current account (PLAN 4.13). The server decides who may do what
   // (AgentPanel.controls); start and reset work only in a web session.
   agent: () => request<AgentPanel>("GET", "/api/v1/agent"),
@@ -450,6 +461,17 @@ export const platformBadge: Record<Platform, string> = {
 // viewOnly: cactusTrade only shows accounts on these platforms; it trades eToro accounts only.
 export function viewOnly(platform: Platform): boolean {
   return platform !== "etoro";
+}
+
+// agentTradable: the agent can trade the account (the server decides: eToro, or a Trading 212
+// practice account; R45.11). An answer without the field falls back to eToro only.
+export function agentTradable(a: Account): boolean {
+  return a.agentTradable ?? a.platform === "etoro";
+}
+
+// amount formats an account's minor units in its currency (USD when unknown, eToro's).
+export function amount(minor: number | undefined, currency: string | undefined): string {
+  return currency && currency !== "USD" ? money(minor, currency) : usd(minor);
 }
 
 export function errorText(e: unknown): string {

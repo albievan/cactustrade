@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, usd, type AgentCard, type RiskLimits as Limits, type RiskLimitsView } from "../lib/api";
+import { amount, api, currencyDecimals, type AgentCard, type RiskLimits as Limits, type RiskLimitsView } from "../lib/api";
 import { useMode, useRefreshMode } from "../lib/mode";
 import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
@@ -27,6 +27,9 @@ export function RiskLimits() {
   const [l, setL] = useState<Limits | null>(null);
   const [edit, setEdit] = useState<{ canEdit: boolean; reason?: string }>({ canEdit: false });
   const [budget, setBudget] = useState("");
+  const [minOrder, setMinOrder] = useState(""); // Trading 212: the minimum order value, in the account's currency
+  // The account's platform and currency, and whether the fractional switch may be turned on (R45.11).
+  const [meta, setMeta] = useState<{ platform?: string; currency: string; fractionsVerified: boolean }>({ currency: "USD", fractionsVerified: false });
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
   const [edited, setEdited] = useState(false); // the form was changed by hand since it was loaded or saved
@@ -43,7 +46,10 @@ export function RiskLimits() {
     api.riskLimits().then((v) => {
       const x = limitsOf(v);
       setL(x); setEdit({ canEdit: v.canEdit, reason: v.editBlockedReason }); setEdited(false); setPreset(v.preset);
-      setBudget((x.tradingBudgetCents / 100).toFixed(2));
+      const m = { platform: v.platform, currency: v.currency || "USD", fractionsVerified: v.fractionsVerified === true };
+      setMeta(m);
+      setBudget(toUnits(x.tradingBudgetCents, m.currency));
+      setMinOrder(toUnits(x.minOrderValueCents ?? 0, m.currency));
     }).catch(setError);
   }, []);
   useEffect(() => {
@@ -134,7 +140,14 @@ export function RiskLimits() {
     if (!l) return;
     setError(""); setSaved(false);
     try {
-      const v = await api.setRiskLimits({ ...l, tradingBudgetCents: Math.round(Number(budget) * 100) });
+      const t212 = meta.platform === "trading212";
+      const v = await api.setRiskLimits({
+        ...l, tradingBudgetCents: toMinor(budget, meta.currency),
+        // Trading 212: long only (no short fields), a required minimum order value, the fractional switch
+        maxShortBp: t212 ? 0 : l.maxShortBp,
+        minOrderValueCents: t212 ? toMinor(minOrder, meta.currency) : undefined,
+        t212Fractional: t212 ? l.t212Fractional === true : undefined,
+      });
       const next = limitsOf(v);
       setL(next); setPreset(v.preset); setSaved(true); setEdited(false);
     } catch (err) {
@@ -142,6 +155,9 @@ export function RiskLimits() {
     }
   }
   const startAgain = saved && current && accountId && stoppedHere.includes(accountId);
+  const t212 = meta.platform === "trading212";
+  const cur = meta.currency;
+  const step = (1 / 10 ** currencyDecimals(cur)).toString();
   const field = (k: NumKey, label: string, help: string, unit: string) => (
     <div className="col-md-6 col-xl-4">
       <label className="form-label fw-semibold" htmlFor={k}>{label}</label>
@@ -155,10 +171,17 @@ export function RiskLimits() {
   return (
     <>
       <h1 className="h3">Risk limits</h1>
-      <p className="text-secondary">
-        Enforced by the risk engine on every order, in US dollars (the eToro account currency). Leverage is always 1;
-        longs buy the real share, shorts are CFDs with a mandatory stop, and nothing is held overnight — fixed in the code.
-      </p>
+      {t212 ? (
+        <p className="text-secondary">
+          Enforced by the risk engine on every order, in {cur} (the Trading 212 account's currency). Long only: the real share at
+          leverage 1, protected by a sell stop at Trading 212, and nothing is held overnight — fixed in the code. Practice accounts only.
+        </p>
+      ) : (
+        <p className="text-secondary">
+          Enforced by the risk engine on every order, in US dollars (the eToro account currency). Leverage is always 1;
+          longs buy the real share, shorts are CFDs with a mandatory stop, and nothing is held overnight — fixed in the code.
+        </p>
+      )}
       {agents}
       <AgentStylePanel reloadKey={`${accountId}-${agentState}`} />
       <h2 className="h5">Limits</h2>
@@ -189,20 +212,45 @@ export function RiskLimits() {
           )}
         </div>
       )}
-      <TradeMinimums reloadKey={`${accountId}-${agentState}`} onApproved={() => { loadLimits(); setSaved(true); }} />
-      <RiskPresets canEdit={editable} edited={edited} current={preset} reloadKey={`${accountId}-${agentState}`} onApplied={(v) => {
+      {!t212 && <TradeMinimums reloadKey={`${accountId}-${agentState}`} onApproved={() => { loadLimits(); setSaved(true); }} />}
+      {!t212 && <RiskPresets canEdit={editable} edited={edited} current={preset} reloadKey={`${accountId}-${agentState}`} onApplied={(v) => {
         const next = limitsOf(v);
-        setL(next); setPreset(v.preset); setBudget((next.tradingBudgetCents / 100).toFixed(2)); setEdited(false); setSaved(true); setError(null);
-      }} />
+        setL(next); setPreset(v.preset); setBudget(toUnits(next.tradingBudgetCents, cur)); setEdited(false); setSaved(true); setError(null);
+      }} />}
       <form onSubmit={save} className="card"><div className="card-body row g-4">
         <div className="col-md-6 col-xl-4">
           <label className="form-label fw-semibold" htmlFor="budget">Trading budget</label>
           <div className="input-group">
-            <span className="input-group-text">$</span>
-            <input id="budget" type="number" step="0.01" min="0" className="form-control" value={budget} onChange={(e) => setBudget(e.target.value)} disabled={!editable} required />
+            <span className="input-group-text">{cur}</span>
+            <input id="budget" type="number" step={step} min="0" className="form-control" value={budget} onChange={(e) => setBudget(e.target.value)} disabled={!editable} required />
           </div>
-          <div className="form-text">The most the agent may have invested at once ({usd(l.tradingBudgetCents)} now). Never more than the account equity. 0 = no trading.</div>
+          <div className="form-text">The most the agent may have invested at once ({amount(l.tradingBudgetCents, cur)} now). Never more than the account equity. 0 = no trading.</div>
         </div>
+        {t212 && (
+          <div className="col-md-6 col-xl-4">
+            <label className="form-label fw-semibold" htmlFor="minOrder">Minimum order value</label>
+            <div className="input-group">
+              <span className="input-group-text">{cur}</span>
+              <input id="minOrder" type="number" step={step} min="0" className="form-control" value={minOrder}
+                onChange={(e) => { setMinOrder(e.target.value); setEdited(true); }} disabled={!editable} required />
+            </div>
+            <div className="form-text">Required on Trading 212 (it documents no minimum): no buy below this value, and at most the budget.</div>
+          </div>
+        )}
+        {t212 && (
+          <div className="col-md-6 col-xl-4">
+            <div className="form-check form-switch mt-4">
+              <input id="t212Fractional" className="form-check-input" type="checkbox" role="switch" checked={l.t212Fractional === true}
+                disabled={!editable || !meta.fractionsVerified} onChange={(e) => { setL({ ...l, t212Fractional: e.target.checked }); setEdited(true); }} />
+              <label className="form-check-label fw-semibold" htmlFor="t212Fractional">Fractional shares</label>
+            </div>
+            <div className="form-text">
+              {meta.fractionsVerified
+                ? "Buy parts of a share. Off: whole shares only."
+                : <><i className="bi bi-lock-fill me-1" />Locked: whole shares only until fractions and stops on fractions are verified on a practice account.</>}
+            </div>
+          </div>
+        )}
         {field("dailyLossBp", "Daily loss limit", "No new entries once equity is this far below the start of the day (100 bp = 1 %).", "bp")}
         {field("drawdownBp", "Drawdown kill switch", "Close everything and stop at this fall from the high-water mark; an admin must reset it.", "bp")}
         {field("maxPositionBp", "Largest position", "As a share of equity; 0 = no cap.", "bp")}
@@ -211,7 +259,7 @@ export function RiskLimits() {
         {field("flattenBeforeCloseMinutes", "Close everything before the close", "Minutes before the session ends (never held overnight).", "min")}
         {field("maxPortfolioAgeSeconds", "Freshest cash figure", "The available cash must be at most this old when an order is sized.", "s")}
         {field("maxQuoteAgeSeconds", "Freshest price", "The entry price must be at most this old.", "s")}
-        {field("maxShortBp", "Short selling", "All shorts together (CFDs at leverage 1, each with a stop above the entry) as a share of the trading budget. 0 = no shorts; at most 2500 bp = 25 %.", "bp")}
+        {!t212 && field("maxShortBp", "Short selling", "All shorts together (CFDs at leverage 1, each with a stop above the entry) as a share of the trading budget. 0 = no shorts; at most 2500 bp = 25 %.", "bp")}
         {editable && <div className="col-12"><button className="btn btn-success">Save limits</button></div>}
       </div></form>
     </>
@@ -228,6 +276,17 @@ function limitsOf(v: Limits): Limits {
     maxQuoteAgeSeconds: v.maxQuoteAgeSeconds, maxShortBp: v.maxShortBp,
     minOrderValueCents: v.minOrderValueCents, t212Fractional: v.t212Fractional,
   };
+}
+
+// toUnits shows minor units in the currency's units, e.g. (123456, "GBP") → "1234.56".
+function toUnits(minor: number, currency: string): string {
+  const d = currencyDecimals(currency);
+  return (minor / 10 ** d).toFixed(d);
+}
+
+// toMinor reads a typed amount back into minor units.
+function toMinor(units: string, currency: string): number {
+  return Math.round(Number(units) * 10 ** currencyDecimals(currency));
 }
 
 // NumKey is a numeric limit (every limit but the Trading 212 fractional switch).

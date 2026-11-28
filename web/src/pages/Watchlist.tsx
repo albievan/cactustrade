@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
-  api, errorText, usd, WATCHLIST_EXPORT_URL, type Instrument, type Quote, type Theme, type ThemeProposals, type WatchHolding,
+  amount, api, errorText, WATCHLIST_EXPORT_URL, type Instrument, type Quote, type Theme, type ThemeProposals, type WatchHolding,
   type PlatformWatchlist, type WatchItem, type WatchlistCount, type WatchlistImportResult, type WatchlistOverview,
 } from "../lib/api";
 import { useSession } from "../lib/session";
@@ -9,6 +9,7 @@ import { usePref } from "../lib/prefs";
 import { NeedAccount } from "../components/NeedAccount";
 import { ProblemAlert } from "../components/ProblemAlert";
 import { ResearchCard } from "../components/ResearchCard";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 const QUOTE_REFRESH_MS = 15_000; // 4 calls a minute: well inside eToro's market-data quota
 const MAX_FILE_BYTES = 1 << 20; // the server refuses bigger files too (R27)
@@ -45,6 +46,7 @@ export function Watchlist() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [loaded, setLoaded] = useState(false);
+  const [confirming, setConfirming] = useState<WatchItem | null>(null);
   const load = useCallback(() => {
     api.watchlist().then((ws) => { setItems(ws); setLoaded(true); }).catch(setError);
     api.themes().then(setThemes).catch(() => undefined);
@@ -71,10 +73,16 @@ export function Watchlist() {
   async function remove(id: number) {
     await run(async () => { await api.removeFromWatchlist(id); load(); });
   }
+  async function confirmMatch(id: number) {
+    await run(async () => { await api.confirmBrokerMatch(id); setConfirming(null); load(); });
+  }
   async function assign(pairs: { instrumentId: number; themeId: string }[]) {
     await run(async () => { await api.assignThemes(pairs); load(); });
   }
   if (status && !status.account) return <><h1 className="h3">Watchlist</h1><NeedAccount /></>;
+  const t212 = status?.account?.platform === "trading212";
+  const owner = access === "owner";
+  const cur = overview?.holdings.currency;
   const themeName = (id?: string) => themes.find((t) => t.id === id)?.name;
   const filter: Filter = savedFilter.kind === "theme" && !themes.some((t) => t.id === savedFilter.id) ? ALL : savedFilter;
   const shown = items.filter((w) => {
@@ -91,6 +99,26 @@ export function Watchlist() {
         Shares the agent may trade: London (LSE), New York (NYSE / NASDAQ) and Sydney (ASX; search e.g. “CBA.ASX”) only, bought as the real share at leverage 1.
       </p>
       <ProblemAlert error={error} />
+      {t212 && (
+        <p className="small text-secondary">
+          Trading 212 practice account: a share is added only when it matches exactly one Trading 212 instrument (market, symbol,
+          currency and type); its owner then confirms the match once, having checked both names and the ISIN. Prices and signals
+          come from eToro (the account's price source); orders go to Trading 212.
+        </p>
+      )}
+      {confirming?.brokerMatch && (
+        <ConfirmDialog title={`Confirm the Trading 212 match of ${confirming.instrument.symbol}`} confirmLabel="Confirm the match"
+          busyLabel="Confirming…" variant="primary" icon="link-45deg" busy={busy} onCancel={() => setConfirming(null)}
+          onConfirm={() => confirmMatch(confirming.instrument.instrumentId)}>
+          <dl className="row small mb-0">
+            <dt className="col-4">eToro</dt><dd className="col-8">{confirming.instrument.symbol} · {confirming.instrument.name}</dd>
+            <dt className="col-4">Trading 212</dt><dd className="col-8">{confirming.brokerMatch.ticker} · {confirming.brokerMatch.name ?? "—"}</dd>
+            <dt className="col-4">ISIN</dt><dd className="col-8"><code>{confirming.brokerMatch.isin || "—"}</code></dd>
+            <dt className="col-4">Currency</dt><dd className="col-8">{confirming.brokerMatch.currency ?? "—"}</dd>
+          </dl>
+          <p className="small mt-2 mb-0">Confirm only when both are the same company and listing. Nothing is traded in it until you do.</p>
+        </ConfirmDialog>
+      )}
       {admin && <AddInstrument onAdded={load} />}
       {accountId && <ResearchCard accountId={accountId} onChanged={load} />}
       <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -143,7 +171,7 @@ export function Watchlist() {
           <table className="table align-middle">
             <thead><tr>
               <th>Symbol</th><th>Name</th><th>Exchange</th><th className="text-end">Bid</th><th className="text-end">Ask</th>
-              <th>Eligibility</th><th>Theme</th><th>Holding</th>{admin && <th />}
+              <th>{t212 ? "Trading 212" : "Eligibility"}</th><th>Theme</th><th>Holding</th>{admin && <th />}
             </tr></thead>
             <tbody>
               {shown.map((w) => {
@@ -156,8 +184,14 @@ export function Watchlist() {
                     <td className="text-end">{q?.bid ?? "—"}</td>
                     <td className="text-end">{q?.ask ?? "—"}{q?.delayed && <span className="badge text-bg-secondary ms-1">delayed</span>}</td>
                     <td className="small">
-                      {w.eligibility.realLong ? <span className="text-success"><i className="bi bi-check-circle me-1" />real share x1</span> : <span className="text-danger">{w.eligibility.reason}</span>}
-                      {w.eligibility.checkedAt && <div className="text-secondary">checked {new Date(w.eligibility.checkedAt).toLocaleDateString()}</div>}
+                      {w.brokerMatch ? (
+                        <MatchCell item={w} canConfirm={owner} busy={busy} onConfirm={() => setConfirming(w)} />
+                      ) : (
+                        <>
+                          {w.eligibility.realLong ? <span className="text-success"><i className="bi bi-check-circle me-1" />real share x1</span> : <span className="text-danger">{w.eligibility.reason}</span>}
+                          {w.eligibility.checkedAt && <div className="text-secondary">checked {new Date(w.eligibility.checkedAt).toLocaleDateString()}</div>}
+                        </>
+                      )}
                     </td>
                     <td>
                       {canEdit ? (
@@ -170,7 +204,7 @@ export function Watchlist() {
                         <span className={w.themeId ? "" : "text-secondary"}>{themeName(w.themeId) ?? "—"}</span>
                       )}
                     </td>
-                    <td className="small"><HoldingCell holding={w.holding} /></td>
+                    <td className="small"><HoldingCell holding={w.holding} currency={cur} /></td>
                     {admin && <td className="text-end">
                       <button className="btn btn-sm btn-outline-danger" title={`Remove ${w.instrument.symbol}`} aria-label={`Remove ${w.instrument.symbol}`}
                         onClick={() => void remove(w.instrument.instrumentId)}><i className="bi bi-trash" /></button>
@@ -228,12 +262,35 @@ function whoOpened(h: WatchHolding): string {
   return h.ours === h.positions ? "cactusTrade" : "mixed";
 }
 
-function HoldingCell({ holding: h }: { holding?: WatchHolding }) {
+// MatchCell shows a share's Trading 212 match (D42): ticker, ISIN, whether it is confirmed, and
+// the owner's Confirm button while it is not.
+function MatchCell({ item: w, canConfirm, busy, onConfirm }: { item: WatchItem; canConfirm: boolean; busy: boolean; onConfirm: () => void }) {
+  const m = w.brokerMatch;
+  if (!m) return null;
+  return (
+    <div aria-label={`Trading 212 match of ${w.instrument.symbol}`}>
+      <div><span className="fw-semibold">{m.ticker}</span> <code className="text-secondary">{m.isin}</code></div>
+      {m.status === "confirmed" && <span className="text-success"><i className="bi bi-check-circle me-1" />confirmed</span>}
+      {m.status === "unusable" && <span className="text-danger">{m.reason}</span>}
+      {m.status === "unconfirmed" && (
+        <div className="d-flex align-items-center gap-1">
+          <span className="badge text-bg-warning">not confirmed</span>
+          {canConfirm && (
+            <button type="button" className="btn btn-sm btn-outline-primary py-0" disabled={busy} onClick={onConfirm}
+              aria-label={`Confirm the Trading 212 match of ${w.instrument.symbol}`}>Confirm</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HoldingCell({ holding: h, currency: cur }: { holding?: WatchHolding; currency?: string }) {
   if (!h) return <span className="text-secondary">—</span>;
   return (
     <div aria-label={`Holding of ${h.symbol}`}>
-      <div>{h.units} sh · {usd(h.valueCents)}</div>
-      <div className={h.pnlCents < 0 ? "text-danger" : h.pnlCents > 0 ? "text-success" : "text-secondary"}>P&amp;L {usd(h.pnlCents)}</div>
+      <div>{h.units} sh · {amount(h.valueCents, cur)}</div>
+      <div className={h.pnlCents < 0 ? "text-danger" : h.pnlCents > 0 ? "text-success" : "text-secondary"}>P&amp;L {amount(h.pnlCents, cur)}</div>
       <span className={"badge " + (h.ours > 0 ? "text-bg-info" : "text-bg-secondary")}
         title={`${h.positions} position(s), ${h.ours} opened by cactusTrade`}>{whoOpened(h)}</span>
       {h.shorts > 0 && <span className="badge text-bg-warning ms-1">short</span>}
@@ -244,6 +301,7 @@ function HoldingCell({ holding: h }: { holding?: WatchHolding }) {
 // HoldingsSummary: what the account holds on watchlist shares, and what it holds elsewhere.
 function HoldingsSummary({ overview }: { overview: WatchlistOverview }) {
   const h = overview.holdings;
+  const cur = h.currency;
   return (
     <div className="card mb-3" aria-label="Holdings">
       <div className="card-body py-2">
@@ -251,7 +309,7 @@ function HoldingsSummary({ overview }: { overview: WatchlistOverview }) {
           <span className="fw-semibold">Holdings</span>
           {h.known ? (
             <>
-              <span>{usd(h.watchlistValueCents)} on watchlist shares ({h.watchlistPositions} position{h.watchlistPositions === 1 ? "" : "s"}, P&amp;L {usd(h.watchlistPnlCents)})</span>
+              <span>{amount(h.watchlistValueCents, cur)} on watchlist shares ({h.watchlistPositions} position{h.watchlistPositions === 1 ? "" : "s"}, P&amp;L {amount(h.watchlistPnlCents, cur)})</span>
               {h.stale && <span className="badge text-bg-warning" title={h.asOf ? `read ${new Date(h.asOf).toLocaleTimeString()}` : undefined}>stale</span>}
             </>
           ) : (
@@ -263,7 +321,7 @@ function HoldingsSummary({ overview }: { overview: WatchlistOverview }) {
             <span className="text-secondary me-1">Held, not on the watchlist:</span>
             {h.notOnWatchlist.map((x) => (
               <span key={x.instrumentId} className="ticker-chip me-1" title={`${x.name || x.symbol} · ${x.positions} position(s), ${whoOpened(x)}`}>
-                <strong>{x.symbol}</strong> {x.units} sh · {usd(x.valueCents)}
+                <strong>{x.symbol}</strong> {x.units} sh · {amount(x.valueCents, cur)}
                 {x.market && <span className="opacity-75"> · {EXCHANGES[x.market] ?? x.market}</span>}
               </span>
             ))}
