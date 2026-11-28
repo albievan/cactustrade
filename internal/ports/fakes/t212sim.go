@@ -48,8 +48,9 @@ const T212SimDefaultPrice domain.Micros = 100_000_000
 // T212Sim is a simulated Trading 212 practice account for executor tests: a ports.T212Broker
 // that accepts, fills, rejects or loses orders as scripted, keeps cash and positions, and
 // records every request. Like the adapter it refuses any account that is not a Trading 212
-// practice account (ErrRealModeGated) before anything, a sell above the held quantity and an
-// unswitched fraction (NotAccepted, no order). Set the exported fields before use.
+// practice account (ErrRealModeGated) before anything, a sell above the held quantity (net
+// of the sell orders already resting, a stop included) and an unswitched fraction
+// (NotAccepted, no order). Set the exported fields before use.
 type T212Sim struct {
 	mu sync.Mutex
 	// Now stamps orders, fills and the account (default time.Now).
@@ -354,8 +355,23 @@ func (s *T212Sim) refusal(in domain.T212Intent) string {
 		return "a stop without a stop price"
 	case in.Side == domain.T212Sell && in.Quantity > s.Held[in.Ticker].QuantityAvailable:
 		return fmt.Sprintf("a sell of %s is more than the %s available", in.Quantity, s.Held[in.Ticker].QuantityAvailable)
+	case in.Side == domain.T212Sell && in.Quantity+s.restingSells(in.Ticker) > s.Held[in.Ticker].Quantity:
+		return fmt.Sprintf("a sell of %s and the %s already resting in sell orders are more than the %s held (a double sell)",
+			in.Quantity, s.restingSells(in.Ticker), s.Held[in.Ticker].Quantity)
 	}
 	return ""
+}
+
+// restingSells is the quantity still to fill of the active sell orders (stops included) in
+// ticker: like the adapter, the sim refuses a sell that would, with them, sell more than held.
+func (s *T212Sim) restingSells(ticker string) domain.Micros {
+	var q domain.Micros
+	for _, o := range s.active {
+		if o.Ticker == ticker && o.Side == domain.T212Sell {
+			q += o.Quantity - o.FilledQuantity
+		}
+	}
+	return q
 }
 
 func (s *T212Sim) accept(in domain.T212Intent) *domain.BrokerOrder {

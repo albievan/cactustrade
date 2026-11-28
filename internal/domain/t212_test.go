@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"math"
 	"math/big"
 	"math/rand/v2"
 	"strings"
@@ -728,6 +729,8 @@ func TestValidateForPlatform(t *testing.T) {
 		{"Trading 212 shorts", t212, func(l *RiskLimits) { l.MaxShort = 100 }, PlatformTrading212, "maxShortBp"},
 		{"Trading 212 without a minimum", t212, func(l *RiskLimits) { l.MinOrderValue = 0 }, PlatformTrading212, "minOrderValueCents"},
 		{"Trading 212 minimum over the budget", t212, func(l *RiskLimits) { l.MinOrderValue = l.TradingBudget + 1 }, PlatformTrading212, "minOrderValueCents"},
+		{"Trading 212 without a budget or a minimum", t212, func(l *RiskLimits) { l.TradingBudget, l.MinOrderValue = 0, 0 }, PlatformTrading212, ""},
+		{"Trading 212 without a budget, with a minimum", t212, func(l *RiskLimits) { l.TradingBudget = 0 }, PlatformTrading212, ""},
 		{"Trading 212 fractional while unverified", t212, func(l *RiskLimits) { l.T212Fractional = true }, PlatformTrading212, "t212Fractional"},
 		{"Saxo", etoro, func(*RiskLimits) {}, PlatformSaxo, "platform"},
 	}
@@ -780,5 +783,81 @@ func TestT212AccountPosition(t *testing.T) {
 	}
 	if _, ok := a.Position("MSFT_US_EQ"); ok {
 		t.Fatal("a position from nowhere")
+	}
+}
+
+func TestT212StopPrice(t *testing.T) {
+	for _, c := range []struct{ in, want Micros }{
+		{0, 0},
+		{-5, 0},
+		{1, 10_000},
+		{10_000, 10_000},
+		{10_001, 20_000},
+		{197_123_456, 197_130_000},
+		{197_130_000, 197_130_000},
+	} {
+		if got := T212StopPrice(c.in); got != c.want {
+			t.Errorf("T212StopPrice(%d) = %d, want %d", c.in, got, c.want)
+		}
+		if c.in > 0 && (T212StopPrice(c.in) < c.in || T212StopPrice(c.in)-c.in >= T212StopTick) {
+			t.Errorf("T212StopPrice(%d) not rounded up by less than a tick", c.in)
+		}
+	}
+}
+
+func TestT212OrderValue(t *testing.T) {
+	for _, c := range []struct {
+		q, per Micros
+		want   Cents
+	}{
+		{0, 1, 0},
+		{1, 0, 0},
+		{-1, 5, 0},
+		{3_000_000, 200_500_000, 601},       // 3 × 200.5 GBX = 601.5 pence, rounded down
+		{2_000_000, 18_910_000_000, 37_820}, // 2 × $189.10
+		{1_000_000, 999_999, 0},             // under one minor unit
+		{math.MaxInt64, math.MaxInt64, math.MaxInt64}, // saturates, never wraps
+	} {
+		if got := T212OrderValue(c.q, c.per); got != c.want {
+			t.Errorf("T212OrderValue(%d, %d) = %d, want %d", c.q, c.per, got, c.want)
+		}
+	}
+	// The value is never above the reservation.
+	for q := Micros(1_000_000); q <= 50_000_000; q += 7_000_000 {
+		if v, r := T212OrderValue(q, 123_456_789), T212Reserve(q, 123_456_789); v > r {
+			t.Fatalf("value %s above the reservation %s", v, r)
+		}
+	}
+}
+
+func TestT212AccountPortfolio(t *testing.T) {
+	at := time.Date(2026, 11, 28, 10, 0, 0, 0, time.UTC)
+	acct := T212Account{
+		Currency: "GBP", AvailableToTrade: 100_000, ReservedForOrders: 2_000, AsOf: at,
+		Positions: []T212Position{
+			{Ticker: "BARCl_EQ", Quantity: 3_000_000, AvgPrice: 200_000_000, Cost: 600, PnL: 15},
+			{Ticker: "VODl_EQ", Quantity: 10_000_000, Cost: 700, PnL: -20},
+			{Ticker: "OWNl_EQ", Quantity: 1_000_000, Cost: 50, PnL: 0},
+		},
+	}
+	ours := []AgentPosition{
+		{PositionID: 9001, Ticker: "BARCl_EQ", Instrument: 1, Direction: Long},
+		{PositionID: 9002, Ticker: "VODl_EQ", Instrument: 4, Direction: Long, ClosedAt: at}, // closed: not ours any more
+	}
+	pf := acct.Portfolio(ours, map[string]InstrumentID{"VODl_EQ": 4})
+	if pf.AvailableCash != 100_000 || pf.PendingOpen != 2_000 || !pf.AsOf.Equal(at) || len(pf.Positions) != 3 {
+		t.Fatalf("portfolio = %+v", pf)
+	}
+	if p := pf.Positions[0]; p.ID != 9001 || p.Instrument != 1 || !p.Conforms() || p.Amount != 600 || p.UnrealisedPnL != 15 {
+		t.Fatalf("ours = %+v", p)
+	}
+	if p := pf.Positions[1]; p.ID != 0 || p.Instrument != 4 || !p.Conforms() {
+		t.Fatalf("the owner's matched share = %+v", p)
+	}
+	if p := pf.Positions[2]; p.ID != 0 || p.Instrument != 0 {
+		t.Fatalf("the owner's other share = %+v", p)
+	}
+	if eq := pf.Equity(); eq != 100_000+2_000+600+15+700-20+50 {
+		t.Fatalf("equity = %s", eq)
 	}
 }

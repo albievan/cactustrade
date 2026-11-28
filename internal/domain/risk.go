@@ -99,7 +99,8 @@ func (l RiskLimits) Validate() error {
 // ValidateForPlatform checks the limits' platform rules (T212-e, T212-m); Validate and
 // ValidateFor check the rest. eToro: no minimum order value (eToro states its own) and no
 // fractional switch. Trading 212: no shorts (MaxShort 0, long only, D41 b), a minimum order
-// value above 0 and at most the trading budget, and the fractional switch only once
+// value above 0 and at most the trading budget (with a budget of 0 nothing is entered, so it
+// may stay 0), and the fractional switch only once
 // T212FractionsVerified (D43). Any other platform has no limits to set (view-only).
 func (l RiskLimits) ValidateForPlatform(p Platform) error {
 	switch p {
@@ -115,6 +116,8 @@ func (l RiskLimits) ValidateForPlatform(p Platform) error {
 		switch {
 		case l.MaxShort != 0:
 			return Invalid("maxShortBp", "must be 0 on a Trading 212 account (long only)")
+		case l.TradingBudget == 0 && l.MinOrderValue >= 0:
+			// No budget: nothing is entered, so the minimum may stay unset or exceed it (review of R45.5).
 		case l.MinOrderValue <= 0:
 			return Invalid("minOrderValueCents", "is required on a Trading 212 account (it documents no minimum)")
 		case l.MinOrderValue > l.TradingBudget:
