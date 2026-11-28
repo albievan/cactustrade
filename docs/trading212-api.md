@@ -15,8 +15,9 @@ adding anything; a new path needs a reviewed reason and an entry in
 
 HTTP Basic: the **API key** is the user name, the **API secret** the password. A key belongs to
 one environment. Keys are created in the app: Settings → API (Beta) → Generate API key, with
-per-scope permissions (cactusTrade needs only account and portfolio; history is optional) and an
-optional IP restriction.
+per-scope permissions and an optional IP restriction. A **real** account's key needs only
+account and portfolio (read-only, the overview). A **practice** account that cactusTrade trades
+needs account, portfolio, metadata, orders:read, history:orders **and orders:execute**.
 
 ## Account reads (all GET; any Trading 212 account)
 
@@ -24,7 +25,7 @@ optional IP restriction.
 |---|---|---|
 | `/equity/account/summary` | 1 request / 5 s | cash, total value, invested, P&L, currency |
 | `/equity/positions` | 1 request / 1 s | open positions |
-| `/equity/history/orders?limit≤50&cursor=` | 20 / min | allowlisted, not called yet (realised P&L history) |
+| `/equity/history/orders?limit≤50&cursor=` | 20 / min | fills and order matching (R45; practice accounts) |
 
 `account/summary` → `{"cash":{"availableToTrade","inPies","reservedForOrders"},"currency":"GBP","id":int64,
 "investments":{"currentValue","realizedProfitLoss","totalCost","unrealizedProfitLoss"},"totalValue"}`.
@@ -49,15 +50,15 @@ instrument's currency (e.g. GBX for London shares). cactusTrade converts floats 
 (hundredths, round half away from zero) and price/quantity to millionths at the JSON edge, and
 never adds amounts in different currencies.
 
-## Why not trading (yet)
+## Why only practice accounts, and how
 
 No shorts/CFDs, no idempotency key on orders, no market data, no stop-loss on a market order:
 the guardrails of `CLAUDE.md` §2 cannot be met as for eToro. The owner agreed the rules for
-Trading 212 in writing (D41–D44, 2026-11-28; CLAUDE.md §2 amended); trading is R45
-(practice accounts only): the client's order calls exist since R45.8; wiring and the owner's
-practice run follow (R45.10, R45.13).
+Trading 212 in writing (D41–D44, 2026-11-28; CLAUDE.md §2 amended). cactusTrade trades
+**practice accounts only** (R45, ADR-008): wired since R45.10; the owner's practice run
+(R45.13) settles the open points below. Real Trading 212 accounts stay view-only.
 
-## Orders (re-verified 2026-11-28 at docs.trading212.com, API v0 beta — R45, not used yet)
+## Orders (re-verified 2026-11-28 at docs.trading212.com, API v0 beta — used by R45)
 
 Trading under D41–D44 (PLAN R45). R45.8 (2026-11-28) put exactly these requests in
 `allowlist.go` (9 in all with the three reads above; `TestAllowlistExact`); the client sends the
@@ -125,3 +126,20 @@ Not used: `POST /equity/orders/limit`, `/stop_limit` (D41), pies, `GET /equity/m
   `quantityAvailableForTrading`, and cactusTrade refuses such a sell itself);
 - GOOD_TILL_CANCEL across sessions (T12);
 - `quantityAvailableForTrading` while a stop is open (T13).
+
+## Used by cactusTrade (R45.10, 2026-11-28)
+
+| Call | When |
+|---|---|
+| `GET account/summary` + `GET positions` | every supervisor pass (10 s), before every entry and every sale (fresh), reconciliation, views (cached 10 s) |
+| `GET orders` | stop confirmation (5, 10, 20, 30 s after a stop), the supervisor's stop check, matching an unknown order, reconciliation |
+| `GET orders/{id}` | following a buy or a sale; confirming a cancelled stop |
+| `GET history/orders` | fills (price, taxes), matching an unknown order, a vanished position |
+| `GET metadata/instruments` | the catalogue loop (30 s after the start, then every 12 h) and the owner's Refresh (at most 1 / 50 s) |
+| `POST orders/market` | a buy (quantity > 0) or a sale of the unsold quantity (quantity < 0), in session only, once |
+| `POST orders/stop` | the sell stop after a fill (GOOD_TILL_CANCEL), once |
+| `DELETE orders/{id}` | a stop before a sale, a stale buy or sale (≤ 3 per order) |
+
+`cactustrade t212-probe --account ID [--ticker T] [--raw] [--record DIR]` reads (GET only) the
+summary, positions, active orders, the head of the instrument list and the first history page
+of a practice account, and records sanitised answers for fixtures.

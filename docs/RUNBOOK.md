@@ -381,6 +381,52 @@ one of them (closes before the session ends, the kill switch, force close).
    account (alert `CactusTradeRealArmed` resolves), the audit log has the disarm with your
    reason, and the eToro portfolio shows no position cactusTrade opened.
 
+### Trading 212: an order's outcome is unknown
+
+Trading 212 takes no request id, so when its answer to an order is lost cactusTrade never sends
+the order again (it might be doubled). The order shows **unknown** on the Orders page, and new
+entries on that account wait; exits continue.
+
+1. Usually nothing is needed: the supervisor matches it in Trading 212's order lists within two
+   minutes (adopted), or abandons it when neither list has it ("order.adopted" or the order
+   turning *abandoned* in the activity log).
+2. When more than one Trading 212 order could be it, the activity log says "more than one Trading
+   212 order could be ours" and the row has a **Resolve** button (the account's owner, web UI).
+   Open the Trading 212 app → the account's orders, find the order with the same ticker, side,
+   type and quantity sent at that time, and enter its id — or choose *It was not placed* when
+   there is none. The answer is checked (ticker, side, type, quantity, not another order of
+   ours) and audited (`t212.order_resolved`).
+
+### Trading 212: a sale is stuck
+
+A market sale still working after a minute is cancelled and sent again (at most three cancels).
+When none is left, a danger event **"Sale of … is stuck at Trading 212"** appears and nothing more
+is sent for it. Before the market closes: sell the position (only cactusTrade's quantity, see the
+event) or cancel the order in the Trading 212 app, then *Reconcile* on the dashboard.
+
+### Trading 212 practice run (R45.13, never real)
+
+What the owner checks once, on a **practice** account, before relying on Trading 212 trading:
+
+1. Set up (README, *Trading 212 accounts*): practice key with Orders execute, the eToro demo price
+   source, Refresh the instrument list, one cheap LSE share on the watchlist with its match
+   confirmed, a small budget and a minimum order value.
+2. `cactustrade t212-probe --account <id> --ticker <ticker> --record ./t212-run` before and after
+   each step (read-only; sanitised answers for the fixtures).
+3. **One buy in session.** Start the agent; when it buys, the share's sell stop appears in the
+   Trading 212 app's orders within 30 seconds (the Orders page shows *Sell stop … resting at
+   Trading 212*).
+4. **Flatten.** Leave it running into the last minutes: the stop is cancelled and the position
+   sold at the flatten time; nothing is held after the close.
+5. **Kill drill with two positions.** With two positions open, press the kill switch: both stops
+   are cancelled and both positions sold (about 30–40 s for two); the account shows none of
+   cactusTrade's shares afterwards, and any shares you hold yourself are untouched.
+6. **Restart mid-position.** Stop the server while a position is open and start it again: the
+   start-up reconciliation adopts the position and its stop before any loop runs.
+7. Record what the run showed for T2b, T4, T5b, T7, T8, T11–T13 in `docs/trading212-api.md`. Only
+   if fractions and stops on fractions worked does a reviewed code change set
+   `domain.T212FractionsVerified`; the owner may then turn the fractional switch on.
+
 ## Operating notes
 
 ### Trusted proxies on k3s/k8s

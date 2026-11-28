@@ -291,16 +291,32 @@ the client contains only the allowlisted paths. A real-money key sends orders on
 two keys of *Real money* above (entries) or to close and cancel what cactusTrade opened (exits);
 it needs eToro's **Write** permission for that.
 
-## Trading 212 accounts (view-only)
+## Trading 212 accounts (practice accounts traded, real accounts view-only)
 
-cactusTrade can **show** Trading 212 accounts next to your eToro accounts on the *Overview*
-page (cash, equity, unrealised P&L, open positions and an equity chart). It does **not** trade
-them: the agent, scanner, watchlist, themes and risk limits refuse a Trading 212 account, and
-the Trading 212 client (`internal/adapters/trading212`) can only send GET requests to three
-allowlisted read paths. Amounts stay in the account's own currency (often GBP or EUR);
-different currencies are never added up.
+cactusTrade **shows** every Trading 212 account next to your eToro accounts on the *Overview*
+page (cash, equity, unrealised P&L, open positions and an equity chart). Since R45 it can also
+**trade a Trading 212 practice (demo) account**, long only, under rules the owner agreed in
+writing (D41–D44, ADR-008): every order is stored before it is sent and sent once (Trading 212
+takes no request id), each buy is protected at once by a sell stop at Trading 212, only what
+cactusTrade bought is ever sold, nothing is held past the close, and signals and prices come
+from one of your eToro demo accounts (Trading 212 publishes none). **A real-money Trading 212
+account is never traded**: it stays view-only everywhere. Amounts stay in the account's own
+currency (often GBP); different currencies are never added up.
 
-To create a read-only key:
+> **Risk note (Trading 212).** The Trading 212 API is a beta. A lost answer can leave an order
+> unknown until it is matched (entries wait meanwhile); a stop is a market order once triggered
+> and can fill below its price; a wrong instrument match is caught only by your confirmation and
+> the fill check. Use a practice account, watch the first runs, and keep the kill switch at hand.
+
+To trade a practice account: create a **practice** key with the read permissions (account,
+portfolio, metadata, orders read, history orders) and **Orders execute**; add the account
+(platform *Trading 212*, environment *demo*) with its key and secret; on its card choose the
+**eToro demo account** whose prices feed it and **Refresh** the instrument list; switch to it,
+add London or New York shares to its watchlist and **confirm** each match; set its risk limits
+(budget, **minimum order value**); then start the agent. `docs/RUNBOOK.md` has the practice-run
+checklist.
+
+To create a read-only key (a real account, or a practice account you only want to see):
 
 1. In the Trading 212 app: **Settings → API (Beta) → Generate API key**.
 2. Give it **only read permissions**: account, portfolio, history. Restricting it to your
