@@ -5,6 +5,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -19,6 +20,10 @@ type execState struct {
 	blocks    map[string]map[domain.InstrumentID]domain.InstrumentBlock
 	leases    map[string]domain.AgentLease
 	gates     map[string]domain.RealGate
+	// t212 is Trading 212's instrument catalogue by ticker; matches the instrument matches
+	// per account (R45).
+	t212    map[string]domain.T212Instrument
+	matches map[string]map[domain.InstrumentID]domain.InstrumentMatch
 }
 
 func (e *execState) init() {
@@ -29,6 +34,8 @@ func (e *execState) init() {
 		e.blocks = map[string]map[domain.InstrumentID]domain.InstrumentBlock{}
 		e.leases = map[string]domain.AgentLease{}
 		e.gates = map[string]domain.RealGate{}
+		e.t212 = map[string]domain.T212Instrument{}
+		e.matches = map[string]map[domain.InstrumentID]domain.InstrumentMatch{}
 	}
 }
 
@@ -41,6 +48,114 @@ func (e *execState) deleteAccount(id string) {
 	delete(e.blocks, id)
 	delete(e.leases, id)
 	delete(e.gates, id)
+	delete(e.matches, id)
+}
+
+// T212Instruments returns the in-memory Trading 212 catalogue (R45).
+func (s *Store) T212Instruments() ports.T212Instruments { return t212Repo{s} }
+
+// InstrumentMatches returns the in-memory instrument matches (R45).
+func (s *Store) InstrumentMatches() ports.InstrumentMatches { return matchRepo{s} }
+
+type t212Repo struct{ s *Store }
+
+func (r t212Repo) ReplaceAll(_ context.Context, ins []domain.T212Instrument, at time.Time) error {
+	defer r.s.lock()()
+	if r.s.T212Err != nil {
+		return r.s.T212Err
+	}
+	next := make(map[string]domain.T212Instrument, len(ins))
+	for _, in := range ins {
+		switch _, dup := next[in.Ticker]; {
+		case in.Ticker == "" || len(in.Ticker) > 64:
+			return domain.Invalid("ticker", "1-64 characters")
+		case dup:
+			return domain.ErrConflict
+		}
+		in.ShortName = strings.ToUpper(strings.TrimSpace(in.ShortName))
+		in.FetchedAt = at.UTC()
+		next[in.Ticker] = in
+	}
+	r.s.exec.t212 = next
+	return nil
+}
+
+func (r t212Repo) Get(_ context.Context, ticker string) (domain.T212Instrument, error) {
+	defer r.s.lock()()
+	if r.s.T212Err != nil {
+		return domain.T212Instrument{}, r.s.T212Err
+	}
+	in, ok := r.s.exec.t212[ticker]
+	if !ok {
+		return domain.T212Instrument{}, domain.ErrNotFound
+	}
+	return in, nil
+}
+
+func (r t212Repo) ByShortName(_ context.Context, shortName string) ([]domain.T212Instrument, error) {
+	defer r.s.lock()()
+	if r.s.T212Err != nil {
+		return nil, r.s.T212Err
+	}
+	key := strings.ToUpper(strings.TrimSpace(shortName))
+	var out []domain.T212Instrument
+	for _, in := range r.s.exec.t212 {
+		if in.ShortName == key {
+			out = append(out, in)
+		}
+	}
+	slices.SortFunc(out, func(a, b domain.T212Instrument) int { return cmp.Compare(a.Ticker, b.Ticker) })
+	return out, nil
+}
+
+func (r t212Repo) FetchedAt(context.Context) (time.Time, error) {
+	defer r.s.lock()()
+	if r.s.T212Err != nil {
+		return time.Time{}, r.s.T212Err
+	}
+	for _, in := range r.s.exec.t212 {
+		return in.FetchedAt, nil // all share one fetch time
+	}
+	return time.Time{}, domain.ErrNotFound
+}
+
+type matchRepo struct{ s *Store }
+
+func (r matchRepo) Put(_ context.Context, m domain.InstrumentMatch) error {
+	defer r.s.lock()()
+	if _, ok := r.s.accounts[m.AccountID]; !ok {
+		return domain.ErrNotFound
+	}
+	if r.s.exec.matches[m.AccountID] == nil {
+		r.s.exec.matches[m.AccountID] = map[domain.InstrumentID]domain.InstrumentMatch{}
+	}
+	r.s.exec.matches[m.AccountID][m.Instrument] = m
+	return nil
+}
+
+func (r matchRepo) Get(_ context.Context, accountID string, id domain.InstrumentID) (domain.InstrumentMatch, error) {
+	defer r.s.lock()()
+	m, ok := r.s.exec.matches[accountID][id]
+	if !ok {
+		return domain.InstrumentMatch{}, domain.ErrNotFound
+	}
+	return m, nil
+}
+
+func (r matchRepo) List(_ context.Context, accountID string) ([]domain.InstrumentMatch, error) {
+	defer r.s.lock()()
+	out := slices.Collect(maps.Values(r.s.exec.matches[accountID]))
+	slices.SortFunc(out, func(a, b domain.InstrumentMatch) int { return cmp.Compare(a.Instrument, b.Instrument) })
+	return out, nil
+}
+
+func (r matchRepo) Delete(_ context.Context, accountID string, id domain.InstrumentID) error {
+	defer r.s.lock()()
+	if _, ok := r.s.exec.matches[accountID][id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(r.s.exec.matches[accountID], id)
+	return nil
 }
 
 // Orders returns the in-memory orders repository.

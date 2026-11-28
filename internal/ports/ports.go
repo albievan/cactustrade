@@ -326,6 +326,35 @@ type StatementSchedules interface {
 	MarkManual(ctx context.Context, id string, prev, at time.Time) error
 }
 
+// T212Instruments caches Trading 212's instrument catalogue (GET metadata/instruments, PLAN
+// R45). It is one catalogue for every Trading 212 account (the instruments are the same).
+type T212Instruments interface {
+	// ReplaceAll replaces the whole catalogue with ins, each stamped fetched at at, in one
+	// transaction: on any failure (e.g. a ticker twice: ErrConflict) the old catalogue stays
+	// as it was. ShortName is stored upper case (matching is case-insensitive, the same in
+	// both databases). A ticker must be 1–64 characters (ErrInvalid otherwise).
+	ReplaceAll(ctx context.Context, ins []domain.T212Instrument, at time.Time) error
+	// Get returns one instrument by its exact ticker; ErrNotFound when it is not listed.
+	Get(ctx context.Context, ticker string) (domain.T212Instrument, error)
+	// ByShortName returns the instruments whose short name equals shortName ignoring case,
+	// by ticker.
+	ByShortName(ctx context.Context, shortName string) ([]domain.T212Instrument, error)
+	// FetchedAt is when the stored catalogue was fetched; ErrNotFound when it is empty.
+	FetchedAt(ctx context.Context) (time.Time, error)
+}
+
+// InstrumentMatches stores, per account, which Trading 212 instrument an eToro share of its
+// watchlist trades as (D42). A match goes with its account.
+type InstrumentMatches interface {
+	// Put adds or replaces the account's match for m.Instrument (upsert);
+	// ErrNotFound when the account does not exist.
+	Put(ctx context.Context, m domain.InstrumentMatch) error
+	Get(ctx context.Context, accountID string, id domain.InstrumentID) (domain.InstrumentMatch, error) // ErrNotFound
+	// List returns the account's matches by instrument id.
+	List(ctx context.Context, accountID string) ([]domain.InstrumentMatch, error)
+	Delete(ctx context.Context, accountID string, id domain.InstrumentID) error // ErrNotFound
+}
+
 // Store bundles the repositories and the database's health.
 type Store interface {
 	Users() Users
@@ -479,6 +508,45 @@ type Broker interface {
 	Close(ctx context.Context, positionID int64, instrument domain.InstrumentID, requestID string) (domain.OrderStatus, error)
 	// CloseOrder reads the status of a close order by eToro's order id.
 	CloseOrder(ctx context.Context, orderID int64) (domain.OrderStatus, error)
+}
+
+// T212Broker is the only door to a Trading 212 practice account (PLAN R45, T212-a), for the
+// account set with WithAccount. It is not a Broker: Trading 212 works by ticker and share
+// quantity, takes the stop as its own order, has no position id and no request id. It has no
+// money-movement operation, and Place takes only a domain.T212Intent (three constant shapes,
+// CLAUDE.md §2.3). Every call for an account that is not a Trading 212 practice account
+// (domain.Account.T212Trading) is refused with domain.ErrRealModeGated before any key is read
+// or any request sent (D41 g), whatever permit ctx carries.
+type T212Broker interface {
+	// Account reads the account summary and its positions (AsOf = when they were read).
+	Account(ctx context.Context) (domain.T212Account, error)
+	// Instruments reads Trading 212's whole instrument catalogue.
+	Instruments(ctx context.Context) ([]domain.T212Instrument, error)
+	// OpenOrders lists the account's active orders.
+	OpenOrders(ctx context.Context) ([]domain.BrokerOrder, error)
+	// Order reads one active order; domain.ErrNotFound when Trading 212 does not list it
+	// (unknown, or no longer active: look in History).
+	Order(ctx context.Context, id int64) (domain.BrokerOrder, error)
+	// History reads one page of the order history with fills, newest first; ticker "" = all,
+	// cursor "" = the first page, else the page's Next.
+	History(ctx context.Context, ticker, cursor string) (domain.T212HistoryPage, error)
+
+	// The operations below change the account. Each sends at most one request and never
+	// retries (Trading 212 takes no request id: a resend may duplicate the order, T14). The
+	// caller persisted the order row first (CLAUDE.md §2.7). Errors: domain.ErrRealModeGated
+	// (see above); *domain.NotAcceptedError (domain.ErrNotAccepted) when Trading 212 answered
+	// and refused it, or it was not sent at all (e.g. a rate-limit wait too long, a sell above
+	// the held quantity); domain.ErrOutcomeUnknown when it was (or may have been) sent and the
+	// answer was lost (network error, timeout, 408, 429, 5xx, an unreadable answer) — resolve
+	// it with domain.MatchT212Order, never by sending it again.
+
+	// Place sends the intent's order: a market buy, a sell stop or a market sell. The answer
+	// means accepted, not filled: poll Order, then History.
+	Place(ctx context.Context, in domain.T212Intent) (domain.BrokerOrder, error)
+	// Cancel asks Trading 212 to cancel an active order. Accepted is not done: the order may
+	// still fill while it is filling (T10); confirm with Order. domain.ErrNotFound when
+	// Trading 212 does not know it.
+	Cancel(ctx context.Context, id int64) error
 }
 
 // Holdings reads an account's cash and open positions, read-only, for the account set with
