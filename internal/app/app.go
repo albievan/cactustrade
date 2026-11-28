@@ -86,6 +86,9 @@ type Deps struct {
 	// Analysis renders the analysis page as a one-page PDF (R31). nil = no PDF export (the
 	// analysis itself still works; the export answers "unavailable").
 	Analysis ports.AnalysisRenderer
+	// Backups is the backup folder of scheduled and manual backups (R48). nil = backups from
+	// the app are unavailable (the Backups page says so; the scheduler does nothing).
+	Backups ports.Backups
 	// Bus carries live events to the dashboard stream (PLAN 6.6b): every stored event, every
 	// stored order transition, agent state writes and the supervisor's portfolio reads. It is
 	// a view only: nothing decides on it, and Publish must never block (a full subscriber
@@ -111,6 +114,13 @@ type Config struct {
 	// CACTUSTRADE_REAL_TRADING=on; false by default). Without it no real-money entry is ever
 	// made, however the account's gate stands. Exits on real accounts never depend on it.
 	RealTrading bool
+	// TimeZone is the deployment's IANA time zone (its TZ), the default zone of the backup
+	// schedule (R48); "" = UTC.
+	TimeZone string
+	// BackupRecipients are the deployment's age public keys for backups
+	// (CACTUSTRADE_BACKUP_RECIPIENT[_FILE]): read-only here, used while none is entered in
+	// the app (R48).
+	BackupRecipients []string
 }
 
 // Service implements the use cases.
@@ -142,6 +152,8 @@ type Service struct {
 	research *researchLocks
 	// fx caches the eToro instruments of the currency pairs costs are converted with.
 	fx *fxIDs
+	// backups serialises backup runs (R48).
+	backups *backupState
 }
 
 // New builds the service.
@@ -162,7 +174,7 @@ func New(d Deps, cfg Config) (*Service, error) {
 	if d.Sleep == nil {
 		d.Sleep = sleepCtx
 	}
-	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch(), consentFor: domain.RealConsentFor, research: newResearchLocks(), fx: newFXIDs()}, nil
+	return &Service{d: d, cfg: cfg, startedAt: d.Clock.Now(), dummyHash: dummy, rt: newRuntimeState(), oauth: newOAuthStates(), health: newHealthLog(), gates: newGateLatch(), consentFor: domain.RealConsentFor, research: newResearchLocks(), fx: newFXIDs(), backups: &backupState{}}, nil
 }
 
 // sleepCtx waits for d with a real timer, or until ctx ends.

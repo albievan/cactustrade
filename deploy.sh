@@ -21,7 +21,8 @@
 #                        Saved in .env.local with --backup-dir / --backup-keep; each run is
 #                        --backup-now, logged to BACKUP_DIR/backup-schedule.log
 #   --backup-prune       delete the oldest backups in BACKUP_DIR beyond BACKUP_KEEP
-#   --restore FILE       replace the database with a backup (.sql.gz.age, .sql.gz or .sql):
+#   --restore FILE       replace the database with a backup (.sql.gz.age, .sql.gz or .sql;
+#                        also the app's own backups in BACKUP_DIR/app, Setup → Backups):
 #                        checks the file first, asks for 'restore', takes a backup, stops the
 #                        app, restores, starts the app (it reconciles with eToro first)
 #   --uninstall          stop and remove cactusTrade, KEEPING the database, data and secrets
@@ -41,7 +42,8 @@
 #   --identity FILE          --restore: the age identity (private key) of an encrypted backup;
 #                            default CACTUSTRADE_BACKUP_IDENTITY_FILE
 #   --backup-dir DIR         the backup folder (any folder on this machine; default BACKUP_DIR
-#                            from .env, ./backups); saved by --backup-schedule
+#                            from .env, ./backups); saved by --backup-schedule. The app's own
+#                            backups are in DIR/app (Docker/Podman; moved by --upgrade)
 #   --backup-keep N          keep the newest N backups (0 = all); saved by --backup-schedule
 #   --dry-run                --restore: only check that the file decrypts and is a cactusTrade
 #                            dump this version can restore; nothing is stopped or changed
@@ -111,8 +113,12 @@ load_env() {
   [[ -f .env ]] || die ".env not found in $ROOT"
   [[ -f "$ENV_LOCAL" ]] && read_env_file "$ENV_LOCAL"
   read_env_file .env
+  FILES_BACKUP_DIR="${BACKUP_DIR:-}"
   # --backup-dir / --backup-keep win over the files for this run
   [[ -z "$OPT_BACKUP_DIR" ]] || export BACKUP_DIR="$OPT_BACKUP_DIR"
+  # The group that reads the app's own backups in BACKUP_DIR/app (compose's volume-init).
+  HOST_GID="$(id -g)"
+  export HOST_GID
   [[ -z "$OPT_BACKUP_KEEP" ]] || export BACKUP_KEEP="$OPT_BACKUP_KEEP"
   real_trading_env
 }
@@ -384,6 +390,10 @@ backup_schedule() {
     [[ -w "$dir" ]] || die "the backup folder is not writable: $dir"
   fi
   log="$dir/backup-schedule.log"
+  if [[ -n "$OPT_BACKUP_DIR" && ( "$TARGET" == dockerdesktop || "$TARGET" == podman ) ]] &&
+    ! same_dir "$dir" "$(abs_dir "${FILES_BACKUP_DIR:-./backups}")"; then
+    info "the backup folder changed: run ./deploy.sh --upgrade --$TARGET to move the app's backup mount (its own backups, Setup → Backups) to $dir/app"
+  fi
   set_env_local BACKUP_DIR "$dir"
   [[ -z "${BACKUP_KEEP:-}" ]] || set_env_local BACKUP_KEEP "$BACKUP_KEEP"
   set_env_local BACKUP_SCHEDULE "$when"
@@ -640,7 +650,7 @@ docker_data_guard() {
 docker_install() {
   docker_preflight
   docker_data_guard
-  mkdir -p "$MARIADB_DATA_DIR" "$DATA_DIR" "$BACKUP_DIR"
+  mkdir -p "$MARIADB_DATA_DIR" "$DATA_DIR" "$BACKUP_DIR" "$BACKUP_DIR/app"
   ensure_secrets_dir
   info "building cactusTrade ${CACTUSTRADE_VERSION} (build ${CACTUSTRADE_BUILD})"
   compose build app
@@ -689,7 +699,15 @@ docker_delete_uninstall() {
   ok "cactusTrade and all of its data were removed"
 }
 
-docker_status() { docker_preflight; compose ps; backup_schedule_status; }
+docker_status() { docker_preflight; compose ps; backup_schedule_status; app_backup_status; }
+
+# app_backup_status prints the folder and newest file of the app's own backups (R48).
+app_backup_status() {
+  local dir newest
+  dir="$(abs_dir "$BACKUP_DIR")/app"
+  newest="$(find "$dir" -maxdepth 1 -type f -name 'cactustrade-*.age' 2>/dev/null | LC_ALL=C sort | tail -1)"
+  printf 'app backups (Setup → Backups): folder %s, newest %s\n' "$dir" "$( [[ -n "$newest" ]] && basename "$newest" || printf none)"
+}
 
 docker_version() {
   docker_preflight

@@ -142,3 +142,41 @@ func TestCostsFromQuote(t *testing.T) {
 		t.Fatal("LSE location")
 	}
 }
+
+// TestLoadConfigBackupDir: the backup folder defaults to <data dir>/backups, follows
+// CACTUSTRADE_BACKUP_DIR, and is always absolute (R48.7).
+func TestLoadConfigBackupDir(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(t.TempDir(), "bk")
+	tests := []struct {
+		name      string
+		env       map[string]string
+		want      string
+		groupRead bool
+		bad       bool
+	}{
+		{"default", nil, filepath.Join(wd, "data", "backups"), false, false},
+		{"follows the data dir", map[string]string{"CACTUSTRADE_DATA_DIR": abs}, filepath.Join(abs, "backups"), false, false},
+		{"container", map[string]string{"CACTUSTRADE_CONTAINER": "1", "CACTUSTRADE_BACKUP_DIR": "/backups", "CACTUSTRADE_BACKUP_GROUP_READ": "1"}, filepath.Clean("/backups"), true, false},
+		{"override", map[string]string{"CACTUSTRADE_BACKUP_DIR": abs}, abs, false, false},
+		{"relative made absolute", map[string]string{"CACTUSTRADE_BACKUP_DIR": "rel/bk"}, filepath.Join(wd, "rel", "bk"), false, false},
+		{"bad group read", map[string]string{"CACTUSTRADE_BACKUP_GROUP_READ": "sometimes"}, "", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := loadConfig(nil, envOf(tt.env))
+			if tt.bad {
+				if err == nil {
+					t.Fatal("accepted")
+				}
+				return
+			}
+			if err != nil || c.BackupDir != tt.want || !filepath.IsAbs(c.BackupDir) || c.BackupGroupRead != tt.groupRead {
+				t.Fatalf("BackupDir %q group %v %v, want %q %v", c.BackupDir, c.BackupGroupRead, err, tt.want, tt.groupRead)
+			}
+		})
+	}
+}

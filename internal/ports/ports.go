@@ -4,6 +4,7 @@ package ports
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -596,4 +597,29 @@ type AnalysisRenderer interface {
 // accepted the message (it must then never be sent again).
 type Mailer interface {
 	Send(ctx context.Context, server domain.SMTPSettings, password string, m domain.Mail) error
+}
+
+// Backups is the app's backup folder (R48): it writes encrypted backups of the database
+// into the folder fixed at deploy time, lists, opens and removes them. Every file is
+// age-encrypted to the recipients given (public keys only: the machine that writes a backup
+// cannot read it, OD29); without a recipient nothing is written. Names are always bare file
+// names that domain.ParseBackupName accepts; anything else is refused (domain.ErrNotFound).
+// Implementation: adapters/backup.
+type Backups interface {
+	// Folder is the absolute path of the backup folder (shown, never changed by the app).
+	Folder() string
+	// Driver is the database driver backed up ("sqlite" or "mariadb").
+	Driver() string
+	// ParseRecipients checks age recipients (X25519 or hybrid public keys, age1…); an
+	// unusable one is a domain.ValidationError on "recipients".
+	ParseRecipients(recipients []string) error
+	// Write takes a consistent backup now, encrypted to the recipients, named for at. A
+	// failure leaves no partial or plain file behind.
+	Write(ctx context.Context, recipients []string, at time.Time) (domain.BackupFile, error)
+	// List returns the backup files in the folder, newest first.
+	List(ctx context.Context) ([]domain.BackupFile, error)
+	// Remove deletes one backup file.
+	Remove(ctx context.Context, name string) error
+	// Open opens one backup file for reading (the caller closes it).
+	Open(ctx context.Context, name string) (io.ReadCloser, domain.BackupFile, error)
 }

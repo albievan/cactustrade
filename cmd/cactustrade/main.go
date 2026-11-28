@@ -275,6 +275,13 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	// reads for the dashboard streams. A view only: nothing decides on it, and a full stream
 	// misses events instead of holding up an order.
 	bus := eventbus.New()
+	// Backups from the app (R48): the folder fixed at deploy time; nil = unavailable.
+	var backups ports.Backups
+	if f := openBackupFolder(cfg, store, log); f != nil {
+		backups = f
+	}
+	acfg := appConfig(cfg, host)
+	acfg.TimeZone, acfg.BackupRecipients = deploymentTimeZone(getenv), deploymentBackupRecipients(getenv, log)
 	svc, err = app.New(app.Deps{
 		Store: store, Secrets: secrets, Hasher: argon2.NewLimited(argon2.New(argon2.Default), argon2.DefaultSlots, argon2.DefaultWait),
 		Random: system.Random{}, Clock: clock, Log: log,
@@ -292,6 +299,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 		Mailer:       mail.New(time.Now, host),
 		Statements:   pdf.New(),
 		Analysis:     pdf.New(), // R31: the analysis page as a one-page PDF
+		Backups:      backups,
 		Bus:          bus,
 		MailFallback: fallback.get,
 		Reload: func(ctx context.Context) error {
@@ -316,7 +324,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 				cancelServe()
 			}()
 		},
-	}, appConfig(cfg, host))
+	}, acfg)
 	if err != nil {
 		return err
 	}
@@ -383,6 +391,7 @@ func serve(ctx context.Context, cfg config, getenv func(string) string) error {
 	go researchLoop(ctx, svc, 5*time.Minute)
 	go mailLoop(ctx, svc, log, 15*time.Second)
 	go statementsLoop(ctx, svc, log, 2*time.Minute, 5*time.Minute) // R30
+	go backupLoop(ctx, svc, log, time.Minute, time.Minute)         // R48
 	// Trading (PLAN 4.14): start-up reconciliation → OD5 resume → supervisor → agent, and the
 	// read-only trade-history loop (6.10). The web server is up meanwhile, so the kill switch
 	// works from the first second.

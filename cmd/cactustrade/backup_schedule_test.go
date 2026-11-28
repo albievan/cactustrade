@@ -196,3 +196,42 @@ func TestBackupPrune(t *testing.T) {
 		t.Fatalf("keep 0 removed files: %d left", len(entries))
 	}
 }
+
+// TestBackupPruneIgnoresAppFolder (R48.8): deploy.sh's pruning keeps to BACKUP_DIR itself;
+// the app's own backups in BACKUP_DIR/app (pruned by the app) are never touched.
+func TestBackupPruneIgnoresAppFolder(t *testing.T) {
+	e := newScheduleEnv(t)
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	if err := os.Mkdir(app, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		filepath.Join(dir, "cactustrade-20261125T010000Z.sql.gz.age"), filepath.Join(dir, "cactustrade-20261126T010000Z.sql.gz.age"),
+		filepath.Join(app, "cactustrade-20201125T010000Z.sql.gz.age"), filepath.Join(app, "cactustrade-20201126T010000Z.sql.gz.age"),
+	} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, err := e.run(t, "launchd", "--backup-prune", "--backup-dir", dir, "--backup-keep", "1", "--dockerdesktop"); err != nil {
+		t.Fatalf("prune: %v\n%s", err, out)
+	}
+	if left, _ := os.ReadDir(app); len(left) != 2 {
+		t.Fatalf("the app's folder was pruned: %d left", len(left))
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "cactustrade-*")); len(left) != 1 {
+		t.Fatalf("deploy.sh's own backups: %v", left)
+	}
+}
+
+// TestBackupDirChangeNamesUpgrade (R48.8): a new --backup-dir says that --upgrade moves the
+// app's backup mount (Docker/Podman).
+func TestBackupDirChangeNamesUpgrade(t *testing.T) {
+	e := newScheduleEnv(t)
+	dir := filepath.Join(t.TempDir(), "elsewhere")
+	out, err := e.run(t, "launchd", "--backup-schedule", "off", "--backup-dir", dir, "--dockerdesktop")
+	if err != nil || !strings.Contains(out, "run ./deploy.sh --upgrade --dockerdesktop to move the app's backup mount") {
+		t.Fatalf("schedule: %v\n%s", err, out)
+	}
+}

@@ -23,6 +23,7 @@ import { DecisionLog } from "./pages/DecisionLog";
 import { History } from "./pages/History";
 import { Analysis } from "./pages/Analysis";
 import { RealTrading } from "./pages/RealTrading";
+import { Backups } from "./pages/Backups";
 
 export function App() {
   const { me, loading } = useSession();
@@ -40,6 +41,7 @@ export function App() {
         <Route path="risk" element={<RiskLimits />} />
         <Route path="llm" element={<LlmReviewer />} />
         <Route path="email" element={<Email />} />
+        <Route path="backups" element={<Backups />} />
         <Route path="system" element={<System />} />
         <Route index element={<Dashboard />} />
         <Route path="overview" element={<Overview />} />

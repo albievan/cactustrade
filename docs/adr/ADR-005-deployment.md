@@ -27,3 +27,12 @@ it in with one `RENAME TABLE` (the replaced tables stay in `<db>_prerestore`), a
 app, which reconciles with eToro before anything else. The standalone binary has
 `cactustrade backup` / `restore` (SQLite `VACUUM INTO`, age; refused while a server uses the
 data folder). The master key is never in a backup. Images are pinned by digest (7.1.17).
+
+**Update (R48, 2026-11-28).** The app backs itself up too (Setup → Backups): an in-process
+scheduler, age-encrypted files into a folder fixed at deploy time (`CACTUSTRADE_BACKUP_DIR`:
+`${BACKUP_DIR}/app` on Docker/Podman, a `backups` PVC on k3s/k8s), downloads from a web
+session. On MariaDB it writes its own consistent logical dump in Go
+(`sqlstore.DumpMariaDB`; the app image has no `mariadb-dump`), loadable by the same
+`mariadb-restore.sh`, next to `deploy.sh --backup-now`, which keeps using `mariadb-dump` in
+the database container. Both schedules can run side by side; `deploy.sh` prunes only
+`BACKUP_DIR` itself, the app only its own folder.

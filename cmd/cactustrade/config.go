@@ -48,6 +48,14 @@ type config struct {
 	// to each account's armed gate): CACTUSTRADE_REAL_TRADING=on. Off by default; .env keeps it
 	// off and deploy.sh never sets it. Exits on real accounts never depend on it.
 	RealTrading bool
+	// BackupDir is the folder of the app's own backups (R48): CACTUSTRADE_BACKUP_DIR, default
+	// <data dir>/backups; always absolute. Fixed at deploy time: the app shows it, never
+	// changes it.
+	BackupDir string
+	// BackupGroupRead makes backup files 0640 instead of 0600 (containers: the host user's
+	// group reads them for deploy.sh --restore; the files are encrypted):
+	// CACTUSTRADE_BACKUP_GROUP_READ=1.
+	BackupGroupRead bool
 }
 
 // Secret stores (CACTUSTRADE_SECRETS).
@@ -215,6 +223,12 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 		return c, fmt.Errorf("CACTUSTRADE_LOG_LEVEL: %w", err)
 	}
 	if c.RealTrading, err = realTradingEnv(getenv); err != nil {
+		return c, err
+	}
+	if c.BackupDir, err = filepath.Abs(env(getenv, "CACTUSTRADE_BACKUP_DIR", filepath.Join(c.DataDir, "backups"))); err != nil {
+		return c, fmt.Errorf("CACTUSTRADE_BACKUP_DIR: %w", err)
+	}
+	if c.BackupGroupRead, err = boolEnv(getenv, "CACTUSTRADE_BACKUP_GROUP_READ", false); err != nil {
 		return c, err
 	}
 	switch c.Secrets = env(getenv, "CACTUSTRADE_SECRETS", secretsDB); c.Secrets {

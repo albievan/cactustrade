@@ -2082,6 +2082,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Backups page — folder, schedule, next run, recipients, last run and files (admin; R48)
+         * @description The folder is fixed at deploy time (`CACTUSTRADE_BACKUP_DIR`) and cannot be changed
+         *     here. Backups are always age-encrypted to the recipients' public keys (OD29): without
+         *     a recipient there is no schedule and no "Back up now". `available` is false when this
+         *     deployment has no backup folder.
+         */
+        get: operations["getBackups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the backup schedule (admin, web UI; audited)
+         * @description off, hourly, every N hours (1–24, on the hour, N-hour steps from local midnight) or
+         *     daily at HH:MM, in an IANA time zone (absent = the deployment's). `keep` newest files
+         *     are kept after each successful backup (0 = all). A schedule other than off needs a
+         *     recipient (400).
+         */
+        put: operations["setBackupSchedule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/recipients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the age public keys backups are encrypted to (admin, web UI; audited; every admin is e-mailed)
+         * @description X25519 or hybrid age recipients (`age1…`), at most 10. An empty list falls back to the
+         *     deployment's `CACTUSTRADE_BACKUP_RECIPIENT` and is refused while a schedule runs
+         *     without one. Private keys are never sent here: a key pair made on the Backups page
+         *     stays in the browser.
+         */
+        put: operations["setBackupRecipients"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Back up now (admin, web UI or an admin API key; audited)
+         * @description One backup runs at a time (409). Counts as an export for the rate limits.
+         */
+        post: operations["runBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/files/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Download one encrypted backup file (admin, web UI only — no API key, OD40; audited)
+         * @description The file as written (age-encrypted; decrypt with the matching identity). Only names of
+         *     backup files in the folder are accepted (404 otherwise). Sent as an attachment, never
+         *     cached; counts as an export for the rate limits.
+         */
+        get: operations["downloadBackup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -2103,6 +2216,76 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BackupSchedule: {
+            /** @enum {string} */
+            kind: "off" | "hourly" | "every" | "daily";
+            /** @description N for kind every */
+            everyHours?: number;
+            /** @description HH:MM local time for kind daily */
+            at?: string;
+            /** @description IANA time zone (absent = the deployment's; answers name the zone in force) */
+            zone?: string;
+            /** @description newest files kept after a successful backup (0 = all) */
+            keep: number;
+        };
+        BackupRecipient: {
+            /** @description age public key (age1…) */
+            key: string;
+            fingerprint: string;
+            /**
+             * @description ui = entered here; env = the deployment's (read-only here)
+             * @enum {string}
+             */
+            source: "ui" | "env";
+        };
+        BackupRecipientsInput: {
+            recipients: string[];
+        };
+        BackupFile: {
+            name: string;
+            /** Format: int64 */
+            size: number;
+            /** Format: date-time */
+            at: string;
+        };
+        BackupRun: {
+            /** Format: date-time */
+            at: string;
+            /** @enum {string} */
+            trigger: "schedule" | "manual" | "reset";
+            ok: boolean;
+            file?: string;
+            /** Format: int64 */
+            bytes?: number;
+            /** Format: int64 */
+            ms: number;
+            error?: string;
+        };
+        BackupStatus: {
+            /** @description false = this deployment has no backup folder */
+            available: boolean;
+            /** @description set at deploy time (CACTUSTRADE_BACKUP_DIR) */
+            folder: string;
+            /** @description sqlite (.db.age, restore with cactustrade restore) or mariadb (.sql.gz.age, restore with deploy.sh --restore) */
+            driver: string;
+            schedule: components["schemas"]["BackupSchedule"];
+            /**
+             * Format: date-time
+             * @description the next scheduled backup (UTC); absent = none
+             */
+            nextRun?: string;
+            /** @description nextRun in the schedule's zone */
+            nextRunLocal?: string;
+            recipients: components["schemas"]["BackupRecipient"][];
+            /**
+             * @description the list in force; empty = none (no backups)
+             * @enum {string}
+             */
+            recipientSource: "ui" | "env" | "";
+            last?: components["schemas"]["BackupRun"];
+            files: components["schemas"]["BackupFile"][];
+            running: boolean;
+        };
         Problem: {
             type?: string;
             title: string;
@@ -7346,6 +7529,138 @@ export interface operations {
             404: components["responses"]["Problem"];
             413: components["responses"]["Problem"];
             422: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getBackups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backup status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupStatus"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    setBackupSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupSchedule"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupStatus"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    setBackupRecipients: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupRecipientsInput"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupStatus"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    runBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backup file written */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupFile"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    downloadBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The encrypted backup file */
+            200: {
+                headers: {
+                    /** @description attachment with the file name */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };
     };

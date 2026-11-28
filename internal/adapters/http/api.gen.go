@@ -200,18 +200,102 @@ func (e AnalysisTradeRowOutcome) Valid() bool {
 	}
 }
 
+// Defines values for BackupRecipientSource.
+const (
+	BackupRecipientSourceEnv BackupRecipientSource = "env"
+	BackupRecipientSourceUi  BackupRecipientSource = "ui"
+)
+
+// Valid indicates whether the value is a known member of the BackupRecipientSource enum.
+func (e BackupRecipientSource) Valid() bool {
+	switch e {
+	case BackupRecipientSourceEnv:
+		return true
+	case BackupRecipientSourceUi:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupRunTrigger.
+const (
+	Manual   BackupRunTrigger = "manual"
+	Reset    BackupRunTrigger = "reset"
+	Schedule BackupRunTrigger = "schedule"
+)
+
+// Valid indicates whether the value is a known member of the BackupRunTrigger enum.
+func (e BackupRunTrigger) Valid() bool {
+	switch e {
+	case Manual:
+		return true
+	case Reset:
+		return true
+	case Schedule:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupScheduleKind.
+const (
+	BackupScheduleKindDaily  BackupScheduleKind = "daily"
+	BackupScheduleKindEvery  BackupScheduleKind = "every"
+	BackupScheduleKindHourly BackupScheduleKind = "hourly"
+	BackupScheduleKindOff    BackupScheduleKind = "off"
+)
+
+// Valid indicates whether the value is a known member of the BackupScheduleKind enum.
+func (e BackupScheduleKind) Valid() bool {
+	switch e {
+	case BackupScheduleKindDaily:
+		return true
+	case BackupScheduleKindEvery:
+		return true
+	case BackupScheduleKindHourly:
+		return true
+	case BackupScheduleKindOff:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupStatusRecipientSource.
+const (
+	BackupStatusRecipientSourceEmpty BackupStatusRecipientSource = ""
+	BackupStatusRecipientSourceEnv   BackupStatusRecipientSource = "env"
+	BackupStatusRecipientSourceUi    BackupStatusRecipientSource = "ui"
+)
+
+// Valid indicates whether the value is a known member of the BackupStatusRecipientSource enum.
+func (e BackupStatusRecipientSource) Valid() bool {
+	switch e {
+	case BackupStatusRecipientSourceEmpty:
+		return true
+	case BackupStatusRecipientSourceEnv:
+		return true
+	case BackupStatusRecipientSourceUi:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CredentialSource.
 const (
-	Env CredentialSource = "env"
-	Ui  CredentialSource = "ui"
+	CredentialSourceEnv CredentialSource = "env"
+	CredentialSourceUi  CredentialSource = "ui"
 )
 
 // Valid indicates whether the value is a known member of the CredentialSource enum.
 func (e CredentialSource) Valid() bool {
 	switch e {
-	case Env:
+	case CredentialSourceEnv:
 		return true
-	case Ui:
+	case CredentialSourceUi:
 		return true
 	default:
 		return false
@@ -568,19 +652,19 @@ func (e RealGateState) Valid() bool {
 
 // Defines values for ResearchMode.
 const (
-	AutoAdd ResearchMode = "auto_add"
-	Off     ResearchMode = "off"
-	Propose ResearchMode = "propose"
+	ResearchModeAutoAdd ResearchMode = "auto_add"
+	ResearchModeOff     ResearchMode = "off"
+	ResearchModePropose ResearchMode = "propose"
 )
 
 // Valid indicates whether the value is a known member of the ResearchMode enum.
 func (e ResearchMode) Valid() bool {
 	switch e {
-	case AutoAdd:
+	case ResearchModeAutoAdd:
 		return true
-	case Off:
+	case ResearchModeOff:
 		return true
-	case Propose:
+	case ResearchModePropose:
 		return true
 	default:
 		return false
@@ -757,19 +841,19 @@ func (e ShareAccountRequestAccess) Valid() bool {
 
 // Defines values for StatementPeriod.
 const (
-	Daily   StatementPeriod = "daily"
-	Monthly StatementPeriod = "monthly"
-	Weekly  StatementPeriod = "weekly"
+	StatementPeriodDaily   StatementPeriod = "daily"
+	StatementPeriodMonthly StatementPeriod = "monthly"
+	StatementPeriodWeekly  StatementPeriod = "weekly"
 )
 
 // Valid indicates whether the value is a known member of the StatementPeriod enum.
 func (e StatementPeriod) Valid() bool {
 	switch e {
-	case Daily:
+	case StatementPeriodDaily:
 		return true
-	case Monthly:
+	case StatementPeriodMonthly:
 		return true
-	case Weekly:
+	case StatementPeriodWeekly:
 		return true
 	default:
 		return false
@@ -1549,6 +1633,94 @@ type AutonomyPolicy struct {
 	ResearchMode     ResearchMode `json:"researchMode"`
 	ScanEveryMinutes int          `json:"scanEveryMinutes"`
 }
+
+// BackupFile defines model for BackupFile.
+type BackupFile struct {
+	At   time.Time `json:"at"`
+	Name string    `json:"name"`
+	Size int64     `json:"size"`
+}
+
+// BackupRecipient defines model for BackupRecipient.
+type BackupRecipient struct {
+	Fingerprint string `json:"fingerprint"`
+
+	// Key age public key (age1…)
+	Key string `json:"key"`
+
+	// Source ui = entered here; env = the deployment's (read-only here)
+	Source BackupRecipientSource `json:"source"`
+}
+
+// BackupRecipientSource ui = entered here; env = the deployment's (read-only here)
+type BackupRecipientSource string
+
+// BackupRecipientsInput defines model for BackupRecipientsInput.
+type BackupRecipientsInput struct {
+	Recipients []string `json:"recipients"`
+}
+
+// BackupRun defines model for BackupRun.
+type BackupRun struct {
+	At      time.Time        `json:"at"`
+	Bytes   *int64           `json:"bytes,omitempty"`
+	Error   *string          `json:"error,omitempty"`
+	File    *string          `json:"file,omitempty"`
+	Ms      int64            `json:"ms"`
+	Ok      bool             `json:"ok"`
+	Trigger BackupRunTrigger `json:"trigger"`
+}
+
+// BackupRunTrigger defines model for BackupRun.Trigger.
+type BackupRunTrigger string
+
+// BackupSchedule defines model for BackupSchedule.
+type BackupSchedule struct {
+	// At HH:MM local time for kind daily
+	At *string `json:"at,omitempty"`
+
+	// EveryHours N for kind every
+	EveryHours *int `json:"everyHours,omitempty"`
+
+	// Keep newest files kept after a successful backup (0 = all)
+	Keep int                `json:"keep"`
+	Kind BackupScheduleKind `json:"kind"`
+
+	// Zone IANA time zone (absent = the deployment's; answers name the zone in force)
+	Zone *string `json:"zone,omitempty"`
+}
+
+// BackupScheduleKind defines model for BackupSchedule.Kind.
+type BackupScheduleKind string
+
+// BackupStatus defines model for BackupStatus.
+type BackupStatus struct {
+	// Available false = this deployment has no backup folder
+	Available bool `json:"available"`
+
+	// Driver sqlite (.db.age, restore with cactustrade restore) or mariadb (.sql.gz.age, restore with deploy.sh --restore)
+	Driver string       `json:"driver"`
+	Files  []BackupFile `json:"files"`
+
+	// Folder set at deploy time (CACTUSTRADE_BACKUP_DIR)
+	Folder string     `json:"folder"`
+	Last   *BackupRun `json:"last,omitempty"`
+
+	// NextRun the next scheduled backup (UTC); absent = none
+	NextRun *time.Time `json:"nextRun,omitempty"`
+
+	// NextRunLocal nextRun in the schedule's zone
+	NextRunLocal *string `json:"nextRunLocal,omitempty"`
+
+	// RecipientSource the list in force; empty = none (no backups)
+	RecipientSource BackupStatusRecipientSource `json:"recipientSource"`
+	Recipients      []BackupRecipient           `json:"recipients"`
+	Running         bool                        `json:"running"`
+	Schedule        BackupSchedule              `json:"schedule"`
+}
+
+// BackupStatusRecipientSource the list in force; empty = none (no backups)
+type BackupStatusRecipientSource string
 
 // BlockedInstrument defines model for BlockedInstrument.
 type BlockedInstrument struct {
@@ -4065,6 +4237,12 @@ type LoginJSONRequestBody = LoginRequest
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody = ChangePasswordRequest
 
+// SetBackupRecipientsJSONRequestBody defines body for SetBackupRecipients for application/json ContentType.
+type SetBackupRecipientsJSONRequestBody = BackupRecipientsInput
+
+// SetBackupScheduleJSONRequestBody defines body for SetBackupSchedule for application/json ContentType.
+type SetBackupScheduleJSONRequestBody = BackupSchedule
+
 // SetEmailSetupJSONRequestBody defines body for SetEmailSetup for application/json ContentType.
 type SetEmailSetupJSONRequestBody = EmailSetupInput
 
@@ -4253,6 +4431,21 @@ type ServerInterface interface {
 	// ChangePassword Change your own password (ends your other sessions)
 	// (POST /api/v1/auth/password)
 	ChangePassword(w http.ResponseWriter, r *http.Request)
+	// GetBackups The Backups page — folder, schedule, next run, recipients, last run and files (admin; R48)
+	// (GET /api/v1/backups)
+	GetBackups(w http.ResponseWriter, r *http.Request)
+	// DownloadBackup Download one encrypted backup file (admin, web UI only — no API key, OD40; audited)
+	// (GET /api/v1/backups/files/{name})
+	DownloadBackup(w http.ResponseWriter, r *http.Request, name string)
+	// SetBackupRecipients Set the age public keys backups are encrypted to (admin, web UI; audited; every admin is e-mailed)
+	// (PUT /api/v1/backups/recipients)
+	SetBackupRecipients(w http.ResponseWriter, r *http.Request)
+	// RunBackup Back up now (admin, web UI or an admin API key; audited)
+	// (POST /api/v1/backups/run)
+	RunBackup(w http.ResponseWriter, r *http.Request)
+	// SetBackupSchedule Set the backup schedule (admin, web UI; audited)
+	// (PUT /api/v1/backups/schedule)
+	SetBackupSchedule(w http.ResponseWriter, r *http.Request)
 	// GetPortfolio The eToro account now — cash, positions, pending orders (viewer)
 	// (GET /api/v1/broker/portfolio)
 	GetPortfolio(w http.ResponseWriter, r *http.Request)
@@ -5566,6 +5759,88 @@ func (siw *ServerInterfaceWrapper) ChangePassword(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ChangePassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBackups operation middleware
+func (siw *ServerInterfaceWrapper) GetBackups(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBackups(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadBackup operation middleware
+func (siw *ServerInterfaceWrapper) DownloadBackup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadBackup(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetBackupRecipients operation middleware
+func (siw *ServerInterfaceWrapper) SetBackupRecipients(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetBackupRecipients(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunBackup operation middleware
+func (siw *ServerInterfaceWrapper) RunBackup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunBackup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetBackupSchedule operation middleware
+func (siw *ServerInterfaceWrapper) SetBackupSchedule(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetBackupSchedule(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7737,6 +8012,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/statements/preview.pdf", wrapper.PreviewStatement)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/analysis", wrapper.GetAnalysis)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/analysis.pdf", wrapper.GetAnalysisPdf)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/backups", wrapper.GetBackups)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/backups/schedule", wrapper.SetBackupSchedule)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/backups/recipients", wrapper.SetBackupRecipients)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/backups/run", wrapper.RunBackup)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/backups/files/{name}", wrapper.DownloadBackup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.ListAudit)
 
 	return m

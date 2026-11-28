@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"filippo.io/age"
+
+	"github.com/albievan/cactustrade/internal/adapters/backup"
 )
 
 // Backups are age-encrypted (OD29, PLAN 7.6): to one or more recipients (public keys, so the
@@ -53,7 +55,7 @@ func backupRecipients(flags []string, getenv func(string) string) ([]age.Recipie
 	if strings.TrimSpace(text) == "" {
 		return nil, errNoRecipient
 	}
-	rs, err := age.ParseRecipients(strings.NewReader(text))
+	rs, err := backup.ParseRecipientsText(text)
 	if err != nil {
 		return nil, fmt.Errorf("backup recipient: %w", err)
 	}
@@ -81,34 +83,6 @@ func backupIdentities(path string, getenv func(string) string) ([]age.Identity, 
 	return ids, nil
 }
 
-// encryptStream age-encrypts src into dst for the recipients.
-func encryptStream(dst io.Writer, src io.Reader, rs []age.Recipient) error {
-	w, err := age.Encrypt(dst, rs...)
-	if err != nil {
-		return fmt.Errorf("encrypt: %w", err)
-	}
-	if _, err := io.Copy(w, src); err != nil {
-		return fmt.Errorf("encrypt: %w", err)
-	}
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("encrypt: %w", err)
-	}
-	return nil
-}
-
-// decryptStream decrypts the age file src into dst with the identities. A wrong identity, a
-// file that is not age, and a truncated or altered file all fail.
-func decryptStream(dst io.Writer, src io.Reader, ids []age.Identity) error {
-	r, err := age.Decrypt(src, ids...)
-	if err != nil {
-		return fmt.Errorf("decrypt: %w", err)
-	}
-	if _, err := io.Copy(dst, r); err != nil {
-		return fmt.Errorf("decrypt: %w", err)
-	}
-	return nil
-}
-
 // encryptCmd is `cactustrade encrypt [--recipient age1…]…`: stdin → age → stdout. deploy.sh
 // pipes the MariaDB dump through it (PLAN 7.6b).
 func encryptCmd(args []string, getenv func(string) string, in io.Reader, out io.Writer) error {
@@ -125,7 +99,7 @@ func encryptCmd(args []string, getenv func(string) string, in io.Reader, out io.
 	if err != nil {
 		return err
 	}
-	return encryptStream(out, in, rs)
+	return backup.Encrypt(out, in, rs)
 }
 
 // decryptCmd is `cactustrade decrypt --identity FILE`: stdin (age) → stdout. With
@@ -158,11 +132,11 @@ func decryptCmd(args []string, getenv func(string) string, in io.Reader, out io.
 		if err != nil {
 			return fmt.Errorf("backup identity (stdin): %w", err)
 		}
-		return decryptStream(out, br, ids)
+		return backup.Decrypt(out, br, ids)
 	}
 	ids, err := backupIdentities(*idFile, getenv)
 	if err != nil {
 		return err
 	}
-	return decryptStream(out, in, ids)
+	return backup.Decrypt(out, in, ids)
 }

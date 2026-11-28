@@ -321,6 +321,53 @@ holdings.
 - **Narrative** is deterministic (no LLM): six headed sections written from the analysis's
   own figures, neutral and never predictive; every amount in it appears in a table.
 
+### Backups from the app (R48)
+
+An in-process scheduler next to `statementsLoop`; it is no input to trading (a failed backup
+raises a warning event and stops nothing).
+
+```
+ Setup → Backups (admin)                              backupLoop (cmd, every minute)
+   schedule / recipients (web session, audited)              │
+        │                                                     ▼
+        ▼                                 app.RunDueBackup: domain.BackupSchedule.Due(last, now, zone)?
+ settings backup.schedule / backup.recipients     → runBackup (one at a time, else 409)
+                                                  → ports.Backups.Write (adapters/backup.Folder)
+                                                  → backup.last, audit; prune (keep N) after success
+```
+
+- **Port `ports.Backups`** (Folder, Driver, ParseRecipients, Write, List, Remove, Open);
+  `Deps.Backups` nil = unavailable. Adapter `internal/adapters/backup.Folder` on
+  `*sqlstore.Store` (through a small `Source` interface: `BackupTo`, `DumpMariaDB`).
+- **Formats.** SQLite: `VACUUM INTO` a random file in the 0700 data folder → age →
+  `cactustrade-<UTC>.db.age` (restore: `cactustrade restore`). MariaDB:
+  `Store.DumpMariaDB` — one connection, `START TRANSACTION WITH CONSISTENT SNAPSHOT, READ
+  ONLY`, per table `DROP TABLE IF EXISTS` + `SHOW CREATE TABLE` + extended INSERTs (≤ 1 MiB;
+  a value over 256 KiB is built in a user variable chunk by chunk, so no statement nears
+  `max_allowed_packet`) — streamed through gzip and age straight into the folder:
+  `cactustrade-<UTC>.sql.gz.age` (restore: `deploy.sh --restore`, the same script as a
+  mariadb-dump file). The dump reads only the tables it lists (`dumpSelects`, pinned to the
+  migrations by `TestDumpKnowsEveryTable`) and refuses any other table, view, trigger,
+  routine or event (fail closed).
+- **Files.** Written as `.partial-<rand>` and hard-linked to the final name, which is never
+  overwritten (a clash adds `-xxxx`); nothing plain stays on disk. 0600, or 0640 with
+  `CACTUSTRADE_BACKUP_GROUP_READ=1` (containers). `List`/`Open`/`Remove` go through `os.Root`
+  and accept only bare names `domain.ParseBackupName` parses, regular files only (no
+  symlinks, no folders). Pruning (`domain.PruneSelect`) touches only such names.
+- **Folder** fixed at deploy time: `CACTUSTRADE_BACKUP_DIR` (standalone `<data
+  dir>/backups`; Docker/Podman `${BACKUP_DIR}/app` at `/backups`, setgid to the host user's
+  group; k3s/k8s the `backups` PVC). The app shows it and never changes it.
+- **Keys.** age X25519/hybrid recipients only (OD29: none = no schedule, no "Back up now").
+  The app's list wins over `CACTUSTRADE_BACKUP_RECIPIENT`; the audit log names keys by
+  fingerprint. A key pair made on the page (`web/src/lib/agekey.ts`, WebCrypto X25519 +
+  Bech32) keeps its private half in the browser.
+- **Schedule** (pure, `domain.BackupSchedule`): off, hourly, every N hours on the hour from
+  local midnight, daily at HH:MM, in an IANA zone; a time skipped by daylight saving runs at
+  the jump, a repeated one once; missed slots run once (`Due(last, now)`).
+- **Who.** Admin (`settings.write`); schedule, recipients and downloads from a web session
+  only (OD40); status and "Back up now" also with an admin API key. Every change, run,
+  failure, prune and download is audited.
+
 ## Accounts
 
 Every eToro call is made for one account: the app checks the caller's access (owner / trade /

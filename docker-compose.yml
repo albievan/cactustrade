@@ -31,13 +31,16 @@ services:
       retries: 30
 
   # The app runs as uid 65532 and MariaDB as 999 (mysql); make each mapped data folder
-  # writable for its own service, and only for it.
+  # writable for its own service, and only for it. The app's own backups (R48) go to
+  # ${BACKUP_DIR}/app: the app writes there, the host user's group (HOST_GID, set by
+  # deploy.sh) reads the encrypted files for deploy.sh --restore (setgid: new files keep it).
   volume-init:
     image: busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
-    command: ["sh", "-c", "chown -R 65532:65532 /data && chmod 700 /data && chown -R 999:999 /mariadb && chmod 700 /mariadb"]
+    command: ["sh", "-c", "chown -R 65532:65532 /data && chmod 700 /data && chown -R 999:999 /mariadb && chmod 700 /mariadb && chown 65532:${HOST_GID:-65532} /backups && chmod 2770 /backups"]
     volumes:
       - ${DATA_DIR}:/data
       - ${MARIADB_DATA_DIR}:/mariadb
+      - ${BACKUP_DIR}/app:/backups
     network_mode: none
     restart: "no"
 
@@ -87,9 +90,16 @@ services:
       # Password reset by e-mail through the Mailpit test mailbox only on an explicit opt-in
       # (PLAN 7.1.15): its mail never reaches the user.
       CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS: ${CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS:-false}
+      # Backups from the app (R48, Setup → Backups): the folder is fixed here; the files are
+      # age-encrypted, readable by the host user's group. The deployment's recipient is the
+      # fallback while none is entered in the app.
+      CACTUSTRADE_BACKUP_DIR: /backups
+      CACTUSTRADE_BACKUP_GROUP_READ: "1"
+      CACTUSTRADE_BACKUP_RECIPIENT: ${CACTUSTRADE_BACKUP_RECIPIENT:-}
     secrets: [db_password, master_key, metrics_token, etoro_demo_pub, etoro_demo_pk, smtp_password]
     volumes:
       - ${DATA_DIR}:/data
+      - ${BACKUP_DIR}/app:/backups
     ports:
       - "${HTTPS_PORT}:8443"
 

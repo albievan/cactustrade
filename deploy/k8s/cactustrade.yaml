@@ -47,6 +47,10 @@ data:
   CACTUSTRADE_SMTP_USER: "${CACTUSTRADE_SMTP_USER}"
   CACTUSTRADE_SMTP_FROM: "${CACTUSTRADE_SMTP_FROM}"
   CACTUSTRADE_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+  # Backups from the app (R48, Setup → Backups) go to the backups volume; they leave the
+  # cluster by the page's download (the image has no tar for kubectl cp).
+  CACTUSTRADE_BACKUP_DIR: /backups
+  CACTUSTRADE_BACKUP_RECIPIENT: "${CACTUSTRADE_BACKUP_RECIPIENT}"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -69,6 +73,17 @@ spec:
   accessModes: [ReadWriteOnce]
   storageClassName: ${K8S_STORAGE_CLASS}
   resources: { requests: { storage: ${K8S_DATA_STORAGE} } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backups
+  namespace: ${K8S_NAMESPACE}
+  labels: { app.kubernetes.io/part-of: cactustrade }
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ${K8S_STORAGE_CLASS}
+  resources: { requests: { storage: ${K8S_BACKUP_STORAGE} } }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -158,6 +173,7 @@ spec:
           ports: [{ containerPort: 8080, name: http }]
           volumeMounts:
             - { name: data, mountPath: /data }
+            - { name: backups, mountPath: /backups }
             - { name: tmp, mountPath: /tmp }
             - { name: secrets, mountPath: /run/secrets, readOnly: true }
           readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 10 }
@@ -167,6 +183,7 @@ spec:
           resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
       volumes:
         - { name: data, persistentVolumeClaim: { claimName: data } }
+        - { name: backups, persistentVolumeClaim: { claimName: backups } }
         - { name: tmp, emptyDir: { medium: Memory, sizeLimit: 16Mi } }
         # Only the keys the app reads (not db_root_password).
         - name: secrets

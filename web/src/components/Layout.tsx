@@ -27,6 +27,7 @@ const sections: { title: string; items: Item[] }[] = [
     { to: "/llm", icon: "bi-robot", label: "LLM reviewer" },
     { to: "/real-trading", icon: "bi-exclamation-octagon", label: "Real trading" },
     { to: "/email", icon: "bi-envelope", label: "E-mail", perm: "settings.write" },
+    { to: "/backups", icon: "bi-archive", label: "Backups", perm: "settings.write" },
     { to: "/api-keys", icon: "bi-plug", label: "API keys" },
     // Trading statements for everyone (R30); the admin actions on the page stay admin only.
     { to: "/system", icon: "bi-gear", label: "System" },

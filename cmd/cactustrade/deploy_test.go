@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"filippo.io/age"
+
+	"github.com/albievan/cactustrade/internal/adapters/backup"
 )
 
 // renderManifest runs `deploy.sh --render --k3s` (no cluster is touched) with env added to
@@ -185,6 +187,15 @@ func mariadbDump(schema int) string {
 		"(2,1,1,'2026-11-24 12:32:33'),\n(3,%d,1,'2026-11-24 12:32:33');\nUNLOCK TABLES;\n", schema)
 }
 
+// goDump is the shape of the app's own MariaDB dump (sqlstore.DumpMariaDB, R48.3) for the
+// goose table: one extended INSERT on one line, the next table's DROP after it.
+func goDump(schema int) string {
+	return fmt.Sprintf("-- cactusTrade MariaDB dump (written by the app, R48)\nSET NAMES utf8mb4;\nSET time_zone='+00:00';\n"+
+		"\nDROP TABLE IF EXISTS `goose_db_version`;\nCREATE TABLE `goose_db_version` (`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT);\n"+
+		"INSERT INTO `goose_db_version` VALUES (1,0,1,'2026-11-24 12:32:33'),(2,1,1,'2026-11-24 12:32:33'),(3,%d,1,'2026-11-24 12:32:33');\n"+
+		"\nDROP TABLE IF EXISTS `instrument_blocks`;\nINSERT INTO `instrument_blocks` VALUES (99999,'x',1);\n", schema)
+}
+
 func gzipped(t *testing.T, s string) []byte {
 	t.Helper()
 	var b bytes.Buffer
@@ -227,10 +238,22 @@ func TestDeployRestoreDryRun(t *testing.T) {
 	idFile := write("id.agekey", []byte("# created: test\n# public key: "+id.Recipient().String()+"\n"+id.String()+"\n"))
 	otherFile := write("other.agekey", []byte(other.String()+"\n"))
 	var enc bytes.Buffer
-	if err := encryptStream(&enc, bytes.NewReader(gzipped(t, mariadbDump(11))), []age.Recipient{id.Recipient()}); err != nil {
+	if err := backup.Encrypt(&enc, bytes.NewReader(gzipped(t, mariadbDump(11))), []age.Recipient{id.Recipient()}); err != nil {
 		t.Fatal(err)
 	}
 	good := write("cactustrade-20261124T120000Z.sql.gz.age", enc.Bytes())
+	// The app's own backup (R48): the in-Go dump's shape, in BACKUP_DIR/app.
+	var goEnc bytes.Buffer
+	if err := backup.Encrypt(&goEnc, bytes.NewReader(gzipped(t, goDump(12))), []age.Recipient{id.Recipient()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(backups, "app"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	appFile := filepath.Join(backups, "app", "cactustrade-20261128T020000Z.sql.gz.age")
+	if err := os.WriteFile(appFile, goEnc.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name string
 		args []string
@@ -238,6 +261,7 @@ func TestDeployRestoreDryRun(t *testing.T) {
 		want string
 	}{
 		{"encrypted", []string{"--restore", good, "--identity", idFile}, true, "schema 11"},
+		{"the app's own backup", []string{"--restore", appFile, "--identity", idFile}, true, "schema 12"},
 		{"plain gzip", []string{"--restore", write("plain.sql.gz", gzipped(t, mariadbDump(3)))}, true, "schema 3"},
 		{"wrong identity", []string{"--restore", good, "--identity", otherFile}, false, "does not decrypt"},
 		{"no identity", []string{"--restore", good}, false, "needs its age identity"},
@@ -306,5 +330,68 @@ func TestDeployRealTradingOptIn(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?m)^CACTUSTRADE_REAL_TRADING=off$`).Match(env) {
 		t.Fatal(".env must keep CACTUSTRADE_REAL_TRADING=off")
+	}
+}
+
+// TestComposeMountsAppBackups is R48.8: the app writes its own backups to ${BACKUP_DIR}/app
+// mounted at /backups (group-readable, encrypted files), and volume-init hands the folder to
+// the app's user and the host user's group (setgid, so new files keep the group).
+func TestComposeMountsAppBackups(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	app := s[strings.Index(s, "\n  app:\n"):strings.Index(s, "\n  mailpit:\n")]
+	initSvc := s[strings.Index(s, "\n  volume-init:\n"):strings.Index(s, "\n  app:\n")]
+	for _, want := range []string{
+		"- ${BACKUP_DIR}/app:/backups", "CACTUSTRADE_BACKUP_DIR: /backups", `CACTUSTRADE_BACKUP_GROUP_READ: "1"`,
+		"CACTUSTRADE_BACKUP_RECIPIENT: ${CACTUSTRADE_BACKUP_RECIPIENT:-}",
+	} {
+		if !strings.Contains(app, want) {
+			t.Errorf("app service lacks %q", want)
+		}
+	}
+	for _, want := range []string{"- ${BACKUP_DIR}/app:/backups", "chown 65532:${HOST_GID:-65532} /backups && chmod 2770 /backups"} {
+		if !strings.Contains(initSvc, want) {
+			t.Errorf("volume-init lacks %q", want)
+		}
+	}
+	d, err := os.ReadFile(filepath.Join("..", "..", "deploy.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`HOST_GID="$(id -g)"`, "export HOST_GID", `mkdir -p "$MARIADB_DATA_DIR" "$DATA_DIR" "$BACKUP_DIR" "$BACKUP_DIR/app"`} {
+		if !strings.Contains(string(d), want) {
+			t.Errorf("deploy.sh lacks %q", want)
+		}
+	}
+}
+
+// TestDeployRenderBackupsPVC is R48.8: the k3s/k8s manifest has the backups claim (size from
+// K8S_BACKUP_STORAGE), mounts it at /backups and tells the app so.
+func TestDeployRenderBackupsPVC(t *testing.T) {
+	m, _ := renderManifest(t, "K8S_HTTPS=true", "K8S_BACKUP_STORAGE=7Gi", "CACTUSTRADE_BACKUP_RECIPIENT=age1example")
+	var claim, app, cm string
+	for doc := range strings.SplitSeq(m, "\n---\n") {
+		switch {
+		case strings.Contains(doc, "kind: PersistentVolumeClaim") && strings.Contains(doc, "name: backups\n"):
+			claim = doc
+		case strings.Contains(doc, "kind: Deployment") && strings.Contains(doc, "\n  name: cactustrade\n"):
+			app = doc
+		case strings.Contains(doc, "kind: ConfigMap"):
+			cm = doc
+		}
+	}
+	if !strings.Contains(claim, "storage: 7Gi") || !strings.Contains(claim, "ReadWriteOnce") {
+		t.Fatalf("backups claim:\n%s", claim)
+	}
+	for _, want := range []string{"{ name: backups, mountPath: /backups }", "{ name: backups, persistentVolumeClaim: { claimName: backups } }"} {
+		if !strings.Contains(app, want) {
+			t.Errorf("app deployment lacks %q", want)
+		}
+	}
+	if !strings.Contains(cm, "CACTUSTRADE_BACKUP_DIR: /backups") || !strings.Contains(cm, `CACTUSTRADE_BACKUP_RECIPIENT: "age1example"`) {
+		t.Fatalf("config map:\n%s", cm)
 	}
 }

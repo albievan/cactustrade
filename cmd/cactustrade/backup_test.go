@@ -18,6 +18,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/albievan/cactustrade/internal/adapters/backup"
 	"github.com/albievan/cactustrade/internal/adapters/secretstore"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
 	"github.com/albievan/cactustrade/internal/adapters/system"
@@ -234,7 +235,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 		t.Fatal("the backup is not an age file")
 	}
 	var plain bytes.Buffer
-	if err := decryptStream(&plain, bytes.NewReader(enc), []age.Identity{e.id}); err != nil {
+	if err := backup.Decrypt(&plain, bytes.NewReader(enc), []age.Identity{e.id}); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.HasPrefix(plain.Bytes(), sqliteMagic) {
@@ -404,7 +405,7 @@ func TestRestoreRefusesBadBackups(t *testing.T) {
 		t.Helper()
 		f := filepath.Join(t.TempDir(), "x.age")
 		var b bytes.Buffer
-		if err := encryptStream(&b, bytes.NewReader(plain), []age.Recipient{e.id.Recipient()}); err != nil {
+		if err := backup.Encrypt(&b, bytes.NewReader(plain), []age.Recipient{e.id.Recipient()}); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(f, b.Bytes(), 0o600); err != nil {
@@ -831,7 +832,7 @@ func TestEncryptDecryptCommands(t *testing.T) {
 		}, "identity (stdin)"},
 		{"stdin identity, wrong key", func() error {
 			var enc bytes.Buffer
-			if err := encryptStream(&enc, strings.NewReader("x"), []age.Recipient{id2.Recipient()}); err != nil {
+			if err := backup.Encrypt(&enc, strings.NewReader("x"), []age.Recipient{id2.Recipient()}); err != nil {
 				return err
 			}
 			return decryptCmd([]string{"--identity", "-"}, envOf(nil), io.MultiReader(strings.NewReader(id.String()+"\n\n"), &enc), &bytes.Buffer{})

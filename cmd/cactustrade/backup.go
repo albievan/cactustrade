@@ -16,6 +16,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/albievan/cactustrade/internal/adapters/backup"
 	"github.com/albievan/cactustrade/internal/adapters/sqlstore"
 )
 
@@ -83,7 +84,7 @@ func backupCmd(ctx context.Context, args []string, getenv func(string) string, o
 		return fmt.Errorf("backup: %w", err)
 	}
 	defer src.Close()
-	if err := encryptStream(f, src, rs); err != nil {
+	if err := backup.Encrypt(f, src, rs); err != nil {
 		return err
 	}
 	if err := f.Close(); err != nil {
@@ -219,7 +220,7 @@ func decryptBackup(ctx context.Context, in, tmp string, ids []age.Identity, now 
 	if err != nil {
 		return 0, fmt.Errorf("restore: %w", err)
 	}
-	if err := decryptStream(dst, src, ids); err != nil {
+	if err := backup.Decrypt(dst, src, ids); err != nil {
 		_ = dst.Close()
 		return 0, fmt.Errorf("restore %s: %w", in, err)
 	}

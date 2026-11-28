@@ -159,6 +159,29 @@ or any age implementation, and keep the identity file safe:
 age-keygen -o backup.agekey     # prints "Public key: age1…"
 ```
 
+**Backups from the app (Setup → Backups, admins).** cactusTrade can back itself up on a
+schedule — off, hourly, every N hours (on the hour, counted from local midnight) or daily at
+HH:MM, in a time zone you pick (default the deployment's `TZ`) — keep the newest N files, and
+back up at once with *Back up now*. Files are always age-encrypted to the public keys entered
+on the page (or `CACTUSTRADE_BACKUP_RECIPIENT`): without one there is no schedule and no
+*Back up now*. The page can make a key pair **in your browser**: the private key is shown once
+for you to save and never reaches the server. The folder is fixed at deploy time
+(`CACTUSTRADE_BACKUP_DIR`; standalone `<data dir>/backups`; Docker/Podman `BACKUP_DIR/app` on
+the host, files readable by your user's group; k3s/k8s the `backups` volume, size
+`K8S_BACKUP_STORAGE`) and the page only shows it. Each file can be downloaded from the page
+(web session only). A standalone file is `cactustrade-<UTC>.db.age` (restore with
+`cactustrade restore`), a container file `cactustrade-<UTC>.sql.gz.age` (restore with
+`deploy.sh --restore`, below). A failed backup raises a warning event; trading carries on. A
+slot missed while the app was stopped runs once at the next start.
+
+**Which schedule to choose.** Both can run side by side and write to different folders. The
+app's schedule needs nothing on the host, works the same on every target (on k3s/k8s it is
+the simplest: files leave the cluster by the page's download) and is managed in the browser;
+it runs only while cactusTrade runs. `deploy.sh --backup-schedule` (below) runs on the host
+even when the app is down, can write to any folder (an external disk, a synced folder) and
+is the one to use for off-machine copies on Docker/Podman. A `--backup-dir` change needs
+`./deploy.sh --upgrade` to move the app's mount.
+
 **Scheduled backups (containers).** `deploy.sh` can back up on a schedule on the machine that
 runs cactusTrade (macOS: a launchd job; Linux: one crontab line), into any folder you choose
 (an external disk or a synced folder too), keeping the newest N:
@@ -328,6 +351,9 @@ account currency is shown as *unknown*, never converted or guessed.
 | `CACTUSTRADE_SMTP_HOST`, `_PORT`, `_TLS`, `_USER`, `_FROM` | Docker: `mailpit`, `1025`, `none` | The fallback mail server, used while none is switched on under *Setup → E-mail*; empty host = none |
 | `CACTUSTRADE_SMTP_PASSWORD` / `_FILE` | `${SECRETS_DIR}/smtp_password` | Its password (never in `.env`) |
 | `CACTUSTRADE_BACKUP_RECIPIENT` / `_RECIPIENT_FILE` | — | age public key(s) backups are encrypted to (see *Backups and restore*); none = no app backup, and a plain gzip with a warning from `deploy.sh` |
+| `CACTUSTRADE_BACKUP_DIR` | `<data dir>/backups` (containers: `/backups`) | The folder of the app's own backups (*Setup → Backups*); set at deploy time, shown in the app, never changed by it |
+| `CACTUSTRADE_BACKUP_GROUP_READ` | `false` (compose: `1`) | Backup files 0640 instead of 0600 (the host user's group reads the encrypted files) |
+| `K8S_BACKUP_STORAGE` | `5Gi` | k3s/k8s: the size of the `backups` volume |
 | `CACTUSTRADE_BACKUP_IDENTITY_FILE` | — | The age identity (private key) a restore decrypts with, instead of `--identity` |
 | `COMPOSE_PROFILES`, `MAILPIT_PORT` | `mailpit`, `8035` | Docker: the Mailpit test mailbox at `http://localhost:8035` (this machine only, no sign-in) |
 | `CACTUSTRADE_SMTP_TEST_MAILBOX_RESETS` | `false` | While the only mail server is the Mailpit test mailbox (host `mailpit`), "Forgot password" is off: its mail never reaches the user. `true` sends reset links there anyway (a single-machine trial only) |

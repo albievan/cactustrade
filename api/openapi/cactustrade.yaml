@@ -50,6 +50,7 @@ tags:
   - name: live
   - name: statements
   - name: analysis
+  - name: backups
 security:
   - sessionCookie: []
   - bearerApiKey: []
@@ -2335,6 +2336,117 @@ paths:
         "413": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/backups:
+    get:
+      tags: [backups]
+      operationId: getBackups
+      summary: The Backups page — folder, schedule, next run, recipients, last run and files (admin; R48)
+      description: |
+        The folder is fixed at deploy time (`CACTUSTRADE_BACKUP_DIR`) and cannot be changed
+        here. Backups are always age-encrypted to the recipients' public keys (OD29): without
+        a recipient there is no schedule and no "Back up now". `available` is false when this
+        deployment has no backup folder.
+      responses:
+        "200":
+          description: The backup status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupStatus" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/backups/schedule:
+    put:
+      tags: [backups]
+      operationId: setBackupSchedule
+      summary: Set the backup schedule (admin, web UI; audited)
+      description: |
+        off, hourly, every N hours (1–24, on the hour, N-hour steps from local midnight) or
+        daily at HH:MM, in an IANA time zone (absent = the deployment's). `keep` newest files
+        are kept after each successful backup (0 = all). A schedule other than off needs a
+        recipient (400).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BackupSchedule" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupStatus" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/backups/recipients:
+    put:
+      tags: [backups]
+      operationId: setBackupRecipients
+      summary: Set the age public keys backups are encrypted to (admin, web UI; audited; every admin is e-mailed)
+      description: |
+        X25519 or hybrid age recipients (`age1…`), at most 10. An empty list falls back to the
+        deployment's `CACTUSTRADE_BACKUP_RECIPIENT` and is refused while a schedule runs
+        without one. Private keys are never sent here: a key pair made on the Backups page
+        stays in the browser.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BackupRecipientsInput" }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupStatus" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/backups/run:
+    post:
+      tags: [backups]
+      operationId: runBackup
+      summary: Back up now (admin, web UI or an admin API key; audited)
+      description: One backup runs at a time (409). Counts as an export for the rate limits.
+      responses:
+        "200":
+          description: The backup file written
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupFile" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /api/v1/backups/files/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string, maxLength: 64 } }
+    get:
+      tags: [backups]
+      operationId: downloadBackup
+      summary: Download one encrypted backup file (admin, web UI only — no API key, OD40; audited)
+      description: |
+        The file as written (age-encrypted; decrypt with the matching identity). Only names of
+        backup files in the folder are accepted (404 otherwise). Sent as an attachment, never
+        cached; counts as an export for the rate limits.
+      responses:
+        "200":
+          description: The encrypted backup file
+          headers:
+            Content-Disposition:
+              description: attachment with the file name
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/audit:
     get:
       tags: [audit]
@@ -2392,6 +2504,69 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Health" }
   schemas:
+    BackupSchedule:
+      type: object
+      required: [kind, keep]
+      additionalProperties: false
+      properties:
+        kind: { type: string, enum: [off, hourly, every, daily] }
+        everyHours: { type: integer, minimum: 1, maximum: 24, description: "N for kind every" }
+        at: { type: string, maxLength: 5, description: "HH:MM local time for kind daily" }
+        zone: { type: string, maxLength: 64, description: "IANA time zone (absent = the deployment's; answers name the zone in force)" }
+        keep: { type: integer, minimum: 0, maximum: 1000, description: "newest files kept after a successful backup (0 = all)" }
+    BackupRecipient:
+      type: object
+      required: [key, fingerprint, source]
+      properties:
+        key: { type: string, description: "age public key (age1…)" }
+        fingerprint: { type: string }
+        source: { type: string, enum: [ui, env], description: "ui = entered here; env = the deployment's (read-only here)" }
+    BackupRecipientsInput:
+      type: object
+      required: [recipients]
+      additionalProperties: false
+      properties:
+        recipients:
+          type: array
+          maxItems: 10
+          items: { type: string, maxLength: 2000 }
+    BackupFile:
+      type: object
+      required: [name, size, at]
+      properties:
+        name: { type: string }
+        size: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+    BackupRun:
+      type: object
+      required: [at, trigger, ok, ms]
+      properties:
+        at: { type: string, format: date-time }
+        trigger: { type: string, enum: [schedule, manual, reset] }
+        ok: { type: boolean }
+        file: { type: string }
+        bytes: { type: integer, format: int64 }
+        ms: { type: integer, format: int64 }
+        error: { type: string }
+    BackupStatus:
+      type: object
+      required: [available, folder, driver, schedule, recipients, recipientSource, files, running]
+      properties:
+        available: { type: boolean, description: "false = this deployment has no backup folder" }
+        folder: { type: string, description: "set at deploy time (CACTUSTRADE_BACKUP_DIR)" }
+        driver: { type: string, description: "sqlite (.db.age, restore with cactustrade restore) or mariadb (.sql.gz.age, restore with deploy.sh --restore)" }
+        schedule: { $ref: "#/components/schemas/BackupSchedule" }
+        nextRun: { type: string, format: date-time, description: "the next scheduled backup (UTC); absent = none" }
+        nextRunLocal: { type: string, description: "nextRun in the schedule's zone" }
+        recipients:
+          type: array
+          items: { $ref: "#/components/schemas/BackupRecipient" }
+        recipientSource: { type: string, enum: [ui, env, ""], description: "the list in force; empty = none (no backups)" }
+        last: { $ref: "#/components/schemas/BackupRun" }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/BackupFile" }
+        running: { type: boolean }
     Problem:
       type: object
       required: [title, status]

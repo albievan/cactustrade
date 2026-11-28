@@ -113,6 +113,11 @@ export type AnalysisTradeRow = components["schemas"]["AnalysisTradeRow"];
 export type AnalysisGrouping = components["schemas"]["AnalysisGrouping"];
 export type AnalysisCurve = components["schemas"]["AnalysisCurve"];
 export type AnalysisPreset = components["schemas"]["AnalysisPreset"];
+export type BackupStatus = components["schemas"]["BackupStatus"];
+export type BackupSchedule = components["schemas"]["BackupSchedule"];
+export type BackupFile = components["schemas"]["BackupFile"];
+export type BackupRun = components["schemas"]["BackupRun"];
+export type BackupRecipient = components["schemas"]["BackupRecipient"];
 
 // AnalysisQuery chooses an analysis (R31): a preset or a custom range of risk days, and the
 // accounts (none = every account you can see).
@@ -371,7 +376,19 @@ export const api = {
   deleteStatementSchedule: (id: string) => request<void>("DELETE", `/api/v1/statements/schedules/${encodeURIComponent(id)}`),
   sendStatementNow: (id: string) =>
     request<StatementSendResult>("POST", `/api/v1/statements/schedules/${encodeURIComponent(id)}/send-now`),
+  // Backups (R48, admin): only public keys are ever sent (a key pair made in the browser
+  // keeps its private half there).
+  backups: () => request<BackupStatus>("GET", "/api/v1/backups"),
+  setBackupSchedule: (x: BackupSchedule) => request<BackupStatus>("PUT", "/api/v1/backups/schedule", x),
+  setBackupRecipients: (recipients: string[]) => request<BackupStatus>("PUT", "/api/v1/backups/recipients", { recipients }),
+  runBackup: () => request<BackupFile>("POST", "/api/v1/backups/run"),
 };
+
+// backupFileUrl downloads one encrypted backup file with the session cookie (R48; web
+// session only, OD40).
+export function backupFileUrl(name: string): string {
+  return `/api/v1/backups/files/${encodeURIComponent(name)}`;
+}
 
 // statementPreviewUrl is the address of a statement PDF (R30): the browser downloads it with
 // the session cookie; nothing is e-mailed.

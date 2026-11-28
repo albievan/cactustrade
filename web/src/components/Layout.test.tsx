@@ -34,5 +34,29 @@ describe("Layout", () => {
     const analysis = screen.getAllByRole("link").find((l) => l.textContent === "Analysis");
     expect(analysis).toHaveAttribute("href", "/analysis");
     expect(analysis?.querySelector("i.bi-graph-up-arrow")).not.toBeNull();
+    // R48: Backups under Setup, right after E-mail, for admins.
+    expect(links.indexOf("Backups")).toBe(links.indexOf("E-mail") + 1);
+    const backups = screen.getAllByRole("link").find((l) => l.textContent === "Backups");
+    expect(backups).toHaveAttribute("href", "/backups");
+    expect(backups?.querySelector("i.bi-archive")).not.toBeNull();
+  });
+
+  it("shows Backups only to admins (settings.write)", async () => {
+    const operator = { ...me, user: { ...me.user, role: "operator" }, permissions: ["view", "agent.control"] };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+      if (url.endsWith("/api/v1/auth/me")) return json(operator);
+      if (url.endsWith("/api/v1/system/status")) return json(status);
+      if (url.endsWith("/api/v1/accounts")) return json([]);
+      if (url.includes("/api/v1/events")) return json({ events: [], unseen: 0 });
+      return new Response("{}", { status: 404 });
+    });
+    render(<MemoryRouter><SessionProvider><ModeProvider><Layout /></ModeProvider></SessionProvider></MemoryRouter>);
+    expect(await screen.findByText("v0.1.0 · build 15")).toBeInTheDocument();
+    const links = screen.getAllByRole("link").map((l) => l.textContent);
+    expect(links).toContain("Dashboard");
+    expect(links).not.toContain("Backups");
+    expect(links).not.toContain("E-mail");
   });
 });
