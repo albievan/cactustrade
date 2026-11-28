@@ -91,7 +91,7 @@ Not used: `POST /equity/orders/limit`, `/stop_limit` (D41), pies, `GET /equity/m
   field is `timeInForce`.
 - **Status:** LOCAL, UNCONFIRMED, CONFIRMED, NEW, CANCELLING, CANCELLED, PARTIALLY_FILLED,
   FILLED, REJECTED, REPLACING, REPLACED.
-- **DELETE:** 200 with no body = cancel request accepted (not guaranteed while the order is
+- **DELETE:** 200 with no body = cancel request accepted (it may still fill while the order is
   filling); 404 = unknown.
 - **History item:** `{order: Order, fill: {filledAt, id, price, quantity, tradingMethod
   (TOTV|OTC), type, walletImpact{currency, fxRate, netValue, realisedProfitLoss,
