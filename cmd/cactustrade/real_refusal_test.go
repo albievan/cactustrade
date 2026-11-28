@@ -41,6 +41,12 @@ var modeSites = map[string][]string{
 		`if m != ModeReal {`, // ValidateFor (OD25)
 	},
 	"internal/domain/history.go": {`case t.Mode != ModeDemo && t.Mode != ModeReal:`}, // validation
+	// R45 (D41 g): Trading 212 trades practice accounts only; real is refused everywhere.
+	"internal/domain/account.go": {`return a.OnPlatform() == PlatformTrading212 && a.Mode == ModeDemo`}, // T212Trading: demo only
+	"internal/domain/t212.go": {
+		`case o.Mode != ModeDemo:`, // validateT212: any non-demo Trading 212 order refused
+		`case o.Mode != ModeDemo:`, // T212IntentFor: any non-demo Trading 212 intent refused
+	},
 	// R28: presets are capped at the real ceilings on a real account; only demo starts itself.
 	"internal/domain/style.go": {
 		`if m == ModeReal {`, // PresetFor: RealCeilings (OD25)
@@ -118,9 +124,11 @@ var modeSites = map[string][]string{
 	},
 	// accountMode for display and limits (review minor 5): never a permission to trade.
 	"internal/app/risk.go": {
-		`return domain.DefaultLimitsFor(accountMode(a))`,                // real accounts default to the real limits (OD25)
+		`l := domain.DefaultLimitsFor(accountMode(a))`,                  // real accounts default to the real limits (OD25)
 		`if err := l.ValidateFor(accountMode(v.Account)); err != nil {`, // real limits checked against the real ceilings (OD25)
 	},
+	// R45.5 (T212-l): a Trading 212 price source must be an eToro demo account (never real).
+	"internal/app/t212_setup.go": {`case src.Mode != domain.ModeDemo:`},
 	// R38: a minimums proposal is checked against the account's mode only to narrow it (real
 	// ceilings); approving it goes through SetRiskLimits.
 	"internal/app/minimums.go": {

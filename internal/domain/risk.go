@@ -42,6 +42,13 @@ type RiskLimits struct {
 	// MaxShort caps all short exposure (open shorts and short orders) as a share of the
 	// trading budget: at most HardMaxShort (owner's decision D19); 0 = no shorts.
 	MaxShort BasisPoints
+	// MinOrderValue is the smallest entry the agent sends, in the account's minor units (D41 f,
+	// T212-m). Trading 212 documents no minimum, so on a Trading 212 account the owner sets
+	// one (required); on eToro it is 0 (eToro states its own minimum per instrument).
+	MinOrderValue Cents
+	// T212Fractional allows fractional share quantities on a Trading 212 account (D43). Off
+	// by default, refused on eToro, and refused while T212FractionsVerified is false.
+	T212Fractional bool
 }
 
 // DefaultRiskLimits are the brief's defaults; the trading budget starts at zero (nothing
@@ -83,8 +90,41 @@ func (l RiskLimits) Validate() error {
 		return Invalid("maxQuoteAge", "must be 1-300 seconds")
 	case l.MaxShort < 0 || l.MaxShort > HardMaxShort:
 		return Invalid("maxShortBp", "must be 0 (no shorts) to 2500 (25 % of the budget)")
+	case l.MinOrderValue < 0:
+		return Invalid("minOrderValueCents", "must not be negative")
 	}
 	return nil
+}
+
+// ValidateForPlatform checks the limits' platform rules (T212-e, T212-m); Validate and
+// ValidateFor check the rest. eToro: no minimum order value (eToro states its own) and no
+// fractional switch. Trading 212: no shorts (MaxShort 0, long only, D41 b), a minimum order
+// value above 0 and at most the trading budget, and the fractional switch only once
+// T212FractionsVerified (D43). Any other platform has no limits to set (view-only).
+func (l RiskLimits) ValidateForPlatform(p Platform) error {
+	switch p {
+	case PlatformEtoro, "":
+		switch {
+		case l.MinOrderValue != 0:
+			return Invalid("minOrderValueCents", "must be 0 on an eToro account (eToro states its own minimum)")
+		case l.T212Fractional:
+			return Invalid("t212Fractional", "applies to Trading 212 accounts only")
+		}
+		return nil
+	case PlatformTrading212:
+		switch {
+		case l.MaxShort != 0:
+			return Invalid("maxShortBp", "must be 0 on a Trading 212 account (long only)")
+		case l.MinOrderValue <= 0:
+			return Invalid("minOrderValueCents", "is required on a Trading 212 account (it documents no minimum)")
+		case l.MinOrderValue > l.TradingBudget:
+			return Invalid("minOrderValueCents", "must not exceed the trading budget")
+		case l.T212Fractional && !T212FractionsVerified:
+			return Invalid("t212Fractional", "stays off until Trading 212's fraction and stop rules are verified on a practice account")
+		}
+		return nil
+	}
+	return Invalid("platform", "cactusTrade does not trade "+p.Label()+" accounts")
 }
 
 // DefaultRealRiskLimits are the defaults of a real-money account (OD25, PLAN 7.11): stricter
@@ -424,6 +464,8 @@ func AssessEntry(in RiskInput) RiskDecision {
 		return deny("no cash, budget, short allowance or loss allowance left (cash %s, budget left %s)", cash, remaining)
 	case in.Eligibility.MinAmount(in.Direction) > 0 && size < in.Eligibility.MinAmount(in.Direction):
 		return deny("the size %s is below eToro's minimum %s", size, in.Eligibility.MinAmount(in.Direction))
+	case l.MinOrderValue > 0 && size < l.MinOrderValue:
+		return deny("the size %s is below the account's minimum order value %s", size, l.MinOrderValue)
 	}
 	return RiskDecision{Allowed: true, Size: size}
 }

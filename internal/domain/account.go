@@ -73,8 +73,21 @@ func (a Account) OnPlatform() Platform {
 }
 
 // Tradable reports whether cactusTrade may trade the account (or use it for anything but
-// viewing): only eToro accounts. Everything else is view-only (ErrViewOnly).
+// viewing) through its eToro path: only eToro accounts. Trading 212 practice accounts trade
+// through their own path (T212Trading, PLAN R45 T212-c); everything else is view-only
+// (ErrViewOnly).
 func (a Account) Tradable() bool { return a.OnPlatform() == PlatformEtoro }
+
+// T212Trading reports whether cactusTrade may trade the account through its Trading 212 path:
+// a Trading 212 practice (demo) account. A real Trading 212 account is never traded (owner's
+// decision D41 g): it stays view-only whatever else is set.
+func (a Account) T212Trading() bool {
+	return a.OnPlatform() == PlatformTrading212 && a.Mode == ModeDemo
+}
+
+// Agentable reports whether the account can have an agent at all: an eToro account (Tradable)
+// or a Trading 212 practice account (T212Trading).
+func (a Account) Agentable() bool { return a.Tradable() || a.T212Trading() }
 
 // EnvAccountID is the account that uses the deployment's environment keys.
 const EnvAccountID = "env-demo"

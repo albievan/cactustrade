@@ -65,7 +65,7 @@ func newOpen(t *testing.T, id, acct string, d domain.Direction, at time.Time) do
 		stop, tp = 193_000_000, 0
 	}
 	o, err := domain.NewOrder(domain.Order{
-		RequestID: id, AccountID: acct, Mode: domain.ModeDemo, Kind: domain.OrderOpen, Direction: d,
+		RequestID: id, AccountID: acct, Mode: domain.ModeDemo, Kind: domain.OrderOpen, Direction: d, Platform: domain.PlatformEtoro,
 		Instrument: 1001, Amount: 9_000_000_000_01, Entry: entry, StopLoss: stop, TakeProfit: tp,
 	}, at)
 	if err != nil {
@@ -174,7 +174,7 @@ func runOrders(t *testing.T, s ports.Store, acct, other string, t0 time.Time) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelO, err := domain.NewOrder(domain.Order{RequestID: "x-1", AccountID: acct, Mode: domain.ModeDemo, Kind: domain.OrderCancel, TargetOrderID: 13_902_599}, t0.Add(3*time.Minute))
+	cancelO, err := domain.NewOrder(domain.Order{RequestID: "x-1", AccountID: acct, Mode: domain.ModeDemo, Kind: domain.OrderCancel, Platform: domain.PlatformEtoro, TargetOrderID: 13_902_599}, t0.Add(3*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}

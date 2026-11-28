@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
+	"github.com/albievan/cactustrade/internal/ports"
 )
 
 // Setting keys for an account's agent and limits.
@@ -26,6 +27,9 @@ type limitsJSON struct {
 	MaxPortfolioAge    int64  `json:"maxPortfolioAgeS"`
 	MaxQuoteAge        int64  `json:"maxQuoteAgeS"`
 	MaxShort           *int64 `json:"maxShortBp,omitempty"` // absent in limits stored before shorts: default
+	// MinOrderValue and T212Fractional are Trading 212's (R45); absent (0, off) on eToro.
+	MinOrderValue  int64 `json:"minOrderValueCents,omitempty"`
+	T212Fractional bool  `json:"t212Fractional,omitempty"`
 }
 
 func toLimitsJSON(l domain.RiskLimits) limitsJSON {
@@ -34,7 +38,7 @@ func toLimitsJSON(l domain.RiskLimits) limitsJSON {
 		MaxPosition: int64(l.MaxPosition), MaxOpenPositions: l.MaxOpenPositions,
 		NoEntryBeforeClose: int64(l.NoEntryBeforeClose / time.Second), FlattenBeforeClose: int64(l.FlattenBeforeClose / time.Second),
 		MaxPortfolioAge: int64(l.MaxPortfolioAge / time.Second), MaxQuoteAge: int64(l.MaxQuoteAge / time.Second),
-		MaxShort: ptrTo(int64(l.MaxShort)),
+		MaxShort: ptrTo(int64(l.MaxShort)), MinOrderValue: int64(l.MinOrderValue), T212Fractional: l.T212Fractional,
 	}
 }
 
@@ -47,7 +51,7 @@ func (j limitsJSON) domain() domain.RiskLimits {
 		MaxOpenPositions: j.MaxOpenPositions, NoEntryBeforeClose: time.Duration(j.NoEntryBeforeClose) * time.Second,
 		FlattenBeforeClose: time.Duration(j.FlattenBeforeClose) * time.Second,
 		MaxPortfolioAge:    time.Duration(j.MaxPortfolioAge) * time.Second, MaxQuoteAge: time.Duration(j.MaxQuoteAge) * time.Second,
-		MaxShort: domain.HardMaxShort,
+		MaxShort: domain.HardMaxShort, MinOrderValue: domain.Cents(j.MinOrderValue), T212Fractional: j.T212Fractional,
 	}
 	if j.MaxShort != nil {
 		l.MaxShort = domain.BasisPoints(*j.MaxShort)
@@ -125,12 +129,17 @@ func (s *Service) riskLimitsFor(ctx context.Context, a domain.Account) domain.Ri
 	if l, ok := s.storedLimits(ctx, a.ID); ok {
 		return l
 	}
-	return domain.DefaultLimitsFor(accountMode(a))
+	l := domain.DefaultLimitsFor(accountMode(a))
+	if a.OnPlatform() == domain.PlatformTrading212 {
+		l.MaxShort = 0 // long only (D41 b); the minimum order value stays unset until the owner sets it
+	}
+	return l
 }
 
-// RiskLimits returns the current account's limits (view).
+// RiskLimits returns the current account's limits (view): an eToro account or a Trading 212
+// practice account.
 func (s *Service) RiskLimits(ctx context.Context, p Principal) (domain.RiskLimits, error) {
-	v, err := s.account(ctx, p, "", domain.AccessView)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessView)
 	if err != nil {
 		return domain.RiskLimits{}, err
 	}
@@ -141,9 +150,12 @@ func (s *Service) RiskLimits(ctx context.Context, p Principal) (domain.RiskLimit
 // its agent is stopped; the trading budget may not exceed the account's equity as eToro
 // reports it now (a budget above zero therefore needs a working eToro connection). On a
 // real-money account the limits must stay within domain.RealCeilings (OD25), and raising any
-// of them disarms real trading (OD24). Audited with the old and new values.
+// of them disarms real trading (OD24). The platform's rules apply too (ValidateForPlatform):
+// on a Trading 212 practice account the budget is checked against Trading 212's equity (in
+// the account's currency), a minimum order value is required and shorts and the fractional
+// switch are refused (T212-e, T212-m). Audited with the old and new values.
 func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskLimits) (domain.RiskLimits, error) {
-	v, err := s.account(ctx, p, "", domain.AccessOwner)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessOwner)
 	if err != nil {
 		return domain.RiskLimits{}, err
 	}
@@ -156,18 +168,19 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	if err := l.ValidateFor(accountMode(v.Account)); err != nil {
 		return domain.RiskLimits{}, err
 	}
-	// eToro's equity is read before the control lock is taken (review m5): a Kill never
-	// waits for this call.
+	if err := l.ValidateForPlatform(v.OnPlatform()); err != nil {
+		return domain.RiskLimits{}, err
+	}
+	// The equity is read before the control lock is taken (review m5): a Kill never waits for
+	// this call.
+	budgetText := "$" + l.TradingBudget.String()
 	if l.TradingBudget > 0 {
-		if err := s.needBroker(); err != nil {
+		cur, err := s.budgetWithinEquity(ctx, v, l.TradingBudget)
+		if err != nil {
 			return domain.RiskLimits{}, err
 		}
-		pf, err := s.d.Broker.Portfolio(brokerCtx(ctx, v))
-		if err != nil {
-			return domain.RiskLimits{}, fmt.Errorf("checking the budget against equity: %w", err)
-		}
-		if eq := pf.Equity(); l.TradingBudget > eq {
-			return domain.RiskLimits{}, domain.Invalid("tradingBudgetCents", fmt.Sprintf("must not exceed the account equity ($%s)", eq))
+		if v.T212Trading() {
+			budgetText = domain.FormatMoney(cur, l.TradingBudget) // the account's currency, never "$" (T212-f)
 		}
 	}
 	// Under the agent's control lock, checked again: a concurrent StartAgent or Kill either
@@ -188,11 +201,41 @@ func (s *Service) SetRiskLimits(ctx context.Context, p Principal, l domain.RiskL
 	}
 	ob, _ := json.Marshal(toLimitsJSON(old))
 	s.audit(ctx, p, "risk.limits_changed", v.ID, "old="+string(ob)+" new="+string(b))
-	s.emitFor(ctx, v.ID, p.Username, "risk.limits_changed", domain.SeverityWarning, "Risk limits of "+v.Name+" changed", "trading budget $"+l.TradingBudget.String())
+	s.emitFor(ctx, v.ID, p.Username, "risk.limits_changed", domain.SeverityWarning, "Risk limits of "+v.Name+" changed", "trading budget "+budgetText)
 	if domain.RaisesAny(old, l) {
 		s.disarmIfArmed(ctx, v.Account, p, domain.DisarmLimits)
 	}
 	return l, nil
+}
+
+// budgetWithinEquity refuses a trading budget above the account's equity as its platform
+// reports it now (eToro's portfolio, or Trading 212's account summary), and returns the
+// currency of that equity ("USD" on eToro).
+func (s *Service) budgetWithinEquity(ctx context.Context, v domain.AccountView, budget domain.Cents) (string, error) {
+	if v.T212Trading() {
+		if err := s.needT212(); err != nil {
+			return "", err
+		}
+		a, err := s.d.T212.Account(ports.WithAccount(ctx, v.Account))
+		if err != nil {
+			return "", fmt.Errorf("checking the budget against equity: %w", err)
+		}
+		if budget > a.Equity {
+			return "", domain.Invalid("tradingBudgetCents", "must not exceed the account equity ("+domain.FormatMoney(a.Currency, a.Equity)+")")
+		}
+		return a.Currency, nil
+	}
+	if err := s.needBroker(); err != nil {
+		return "", err
+	}
+	pf, err := s.d.Broker.Portfolio(brokerCtx(ctx, v))
+	if err != nil {
+		return "", fmt.Errorf("checking the budget against equity: %w", err)
+	}
+	if eq := pf.Equity(); budget > eq {
+		return "", domain.Invalid("tradingBudgetCents", fmt.Sprintf("must not exceed the account equity ($%s)", eq))
+	}
+	return "USD", nil
 }
 
 // limitsChangeable refuses a change of limits unless the stored agent state is stopped and no
@@ -247,7 +290,7 @@ type RiskLimitsView struct {
 // the web UI only shows it): the account's owner, in a web session, with the agent stopped
 // and no kill switch on. Whether a budget fits the equity is checked only on the change.
 func (s *Service) RiskLimitsView(ctx context.Context, p Principal) (RiskLimitsView, error) {
-	v, err := s.account(ctx, p, "", domain.AccessView)
+	v, err := s.agentAccount(ctx, p, "", domain.AccessView)
 	if err != nil {
 		return RiskLimitsView{}, err
 	}

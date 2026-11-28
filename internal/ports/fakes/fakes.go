@@ -171,6 +171,8 @@ type Store struct {
 	TradesErr error
 	// GatesErr makes every RealGates call fail.
 	GatesErr error
+	// T212Err makes every T212Instruments call fail (e.g. a failed catalogue write).
+	T212Err error
 }
 
 type instrRec struct {

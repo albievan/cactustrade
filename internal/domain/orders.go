@@ -7,18 +7,23 @@ import (
 	"time"
 )
 
-// OrderKind is what an order of ours asks eToro to do.
+// OrderKind is what an order of ours asks the broker to do.
 type OrderKind string
 
 // Order kinds.
 const (
 	OrderOpen   OrderKind = "open"   // open a position (the only kind that reserves cash)
-	OrderClose  OrderKind = "close"  // close a position by its positionId
-	OrderCancel OrderKind = "cancel" // cancel a pending open order
+	OrderClose  OrderKind = "close"  // close a position by its positionId (Trading 212: sell the held quantity)
+	OrderCancel OrderKind = "cancel" // cancel a pending order
+	// OrderStop is a Trading 212 sell stop of a held quantity, placed right after a fill
+	// (D41 c). eToro carries the stop on the open order, so an eToro order is never a stop.
+	OrderStop OrderKind = "stop"
 )
 
 // Valid reports whether k is a known kind.
-func (k OrderKind) Valid() bool { return k == OrderOpen || k == OrderClose || k == OrderCancel }
+func (k OrderKind) Valid() bool {
+	return k == OrderOpen || k == OrderClose || k == OrderCancel || k == OrderStop
+}
 
 // OrderState is the lifecycle of an order. The broker's lookup reports pending, filled,
 // partially_filled, rejected or unknown; created, sent, cancelled and abandoned are ours.
@@ -95,13 +100,35 @@ func MaxSends(k OrderKind) int {
 	return 3
 }
 
-// Order is one request of ours to eToro. Its RequestID is the x-request-id; it is persisted
-// before the request is sent and reused on every resend (CLAUDE.md §2.7).
+// MaxSendsFor bounds how often one order of the platform p is sent. eToro: MaxSends. Trading
+// 212 takes no request id, so a resend could duplicate the order (T14): a buy, a stop and a
+// sell are sent once and never again (D41 a); a cancel may be sent up to 3 times, because it
+// cannot add exposure (D44).
+func MaxSendsFor(p Platform, k OrderKind) int {
+	if p == PlatformTrading212 {
+		if k == OrderCancel {
+			return 3
+		}
+		return 1
+	}
+	return MaxSends(k)
+}
+
+// Order is one request of ours to a broker. Its RequestID is eToro's x-request-id; it is
+// persisted before the request is sent and reused on every resend (CLAUDE.md §2.7). Trading
+// 212 never sees it: there it only names our row, which is still persisted before the send.
 type Order struct {
 	RequestID string
 	AccountID string
 	Mode      TradingMode
 	Kind      OrderKind
+	// Platform is the broker the order goes to ("" reads as eToro).
+	Platform Platform
+	// Ticker is Trading 212's instrument (e.g. "AAPL_US_EQ"); "" for eToro.
+	Ticker string
+	// Quantity is the Trading 212 share quantity (always positive; the side comes from the
+	// kind); 0 for eToro.
+	Quantity Micros
 	// Direction of the position opened (open) or closed (close).
 	Direction  Direction
 	Instrument InstrumentID
@@ -111,14 +138,16 @@ type Order struct {
 	TakeProfit Micros // open: optional (0), on the winning side of Entry
 	// PositionID is the position to close (close) or the first position filled (open).
 	PositionID    int64
-	TargetOrderID int64 // cancel: eToro's order id of the open order to cancel
-	EtoroOrderID  int64 // eToro's id once known
-	State         OrderState
-	Reason        string
-	Sends         int
-	CreatedAt     time.Time
-	SentAt        time.Time // the latest send
-	UpdatedAt     time.Time
+	TargetOrderID int64 // cancel: the broker's order id of the order to cancel
+	// EtoroOrderID is the broker's order id once known: eToro's, or Trading 212's for a
+	// Trading 212 order (the name and its column are kept from before Trading 212).
+	EtoroOrderID int64
+	State        OrderState
+	Reason       string
+	Sends        int
+	CreatedAt    time.Time
+	SentAt       time.Time // the latest send
+	UpdatedAt    time.Time
 }
 
 // NewOrder validates o for its kind and returns it in state created, stamped at.
@@ -131,6 +160,14 @@ func NewOrder(o Order, at time.Time) (Order, error) {
 	return o, nil
 }
 
+// OnPlatform is the order's platform ("" = eToro).
+func (o Order) OnPlatform() Platform {
+	if o.Platform == "" {
+		return PlatformEtoro
+	}
+	return o.Platform
+}
+
 func (o Order) validate() error {
 	switch {
 	case o.RequestID == "":
@@ -140,7 +177,17 @@ func (o Order) validate() error {
 	case o.Mode != ModeDemo && o.Mode != ModeReal:
 		return Invalid("mode", "demo or real")
 	case !o.Kind.Valid():
-		return Invalid("kind", "open, close or cancel")
+		return Invalid("kind", "open, close, cancel or stop")
+	}
+	switch o.OnPlatform() {
+	case PlatformEtoro:
+	case PlatformTrading212:
+		return o.validateT212()
+	default:
+		return Invalid("platform", "orders go to eToro or Trading 212 only")
+	}
+	if o.Ticker != "" || o.Quantity != 0 {
+		return Invalid("ticker", "an eToro order has no ticker or quantity")
 	}
 	switch o.Kind {
 	case OrderOpen:
@@ -153,6 +200,8 @@ func (o Order) validate() error {
 		if o.TargetOrderID <= 0 {
 			return Invalid("targetOrderId", "a cancel needs eToro's order id")
 		}
+	case OrderStop:
+		return Invalid("kind", "an eToro order carries its stop on the open: there is no stop order")
 	}
 	return nil
 }
@@ -183,7 +232,7 @@ func (o Order) Transition(to OrderState, at time.Time, reason string) (Order, er
 		return o, fmt.Errorf("order %s: %s → %s: %w", o.RequestID, o.State, to, ErrIllegalTransition)
 	}
 	if to == OrderSent {
-		if o.Sends >= MaxSends(o.Kind) {
+		if o.Sends >= MaxSendsFor(o.OnPlatform(), o.Kind) {
 			return o, fmt.Errorf("order %s: already sent %d times: %w", o.RequestID, o.Sends, ErrIllegalTransition)
 		}
 		o.Sends++
@@ -204,6 +253,8 @@ func (o Order) Transition(to OrderState, at time.Time, reason string) (Order, er
 // (S2, PLAN 7.19; a demo order ignores the permit).
 func IntentFor(o Order, permit RealPermit) (OrderIntent, error) {
 	switch {
+	case o.OnPlatform() != PlatformEtoro:
+		return OrderIntent{}, Invalid("platform", "only an eToro order has an eToro intent (Trading 212: T212IntentFor)")
 	case o.Kind != OrderOpen:
 		return OrderIntent{}, Invalid("kind", "only an open order has an intent")
 	case o.Mode != ModeDemo && o.Mode != ModeReal:

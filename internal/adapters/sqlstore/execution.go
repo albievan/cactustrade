@@ -64,8 +64,21 @@ func accountExists(ctx context.Context, db *sql.DB, id string) (bool, error) {
 
 type orders struct{ db *sql.DB }
 
+// orderCols: etoro_order_id holds the broker's order id for both platforms (migration 00016
+// kept its name).
 const orderCols = "request_id, account_id, mode, kind, direction, instrument_id, amount_cents, entry_micros, stop_micros, take_profit_micros, " +
-	"position_id, target_order_id, etoro_order_id, state, reason, sends, created_at, sent_at, updated_at"
+	"position_id, target_order_id, etoro_order_id, state, reason, sends, created_at, sent_at, updated_at, platform, ticker, quantity_micros"
+
+// maxTicker is the longest Trading 212 ticker stored (VARCHAR(64)).
+const maxTicker = 64
+
+// platformOf is the platform stored for p ("" is eToro).
+func platformOf(p domain.Platform) string {
+	if p == "" {
+		return string(domain.PlatformEtoro)
+	}
+	return string(p)
+}
 
 const maxReason = 500
 
@@ -77,10 +90,14 @@ func (r orders) Create(ctx context.Context, o domain.Order) error {
 	if !ok {
 		return fmt.Errorf("orders.Create: account %s: %w", o.AccountID, domain.ErrNotFound)
 	}
-	_, err = r.db.ExecContext(ctx, "INSERT INTO orders ("+orderCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	if len(o.Ticker) > maxTicker {
+		return fmt.Errorf("orders.Create: ticker: %w", domain.ErrInvalid)
+	}
+	_, err = r.db.ExecContext(ctx, "INSERT INTO orders ("+orderCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		o.RequestID, o.AccountID, string(o.Mode), string(o.Kind), string(o.Direction), int64(o.Instrument), int64(o.Amount),
 		int64(o.Entry), int64(o.StopLoss), int64(o.TakeProfit), o.PositionID, o.TargetOrderID, o.EtoroOrderID,
-		string(o.State), clip(o.Reason, maxReason), o.Sends, us(o.CreatedAt), usZ(o.SentAt), us(o.UpdatedAt))
+		string(o.State), clip(o.Reason, maxReason), o.Sends, us(o.CreatedAt), usZ(o.SentAt), us(o.UpdatedAt),
+		platformOf(o.Platform), o.Ticker, int64(o.Quantity))
 	if isDuplicate(err) {
 		return fmt.Errorf("orders.Create: request id %s: %w", o.RequestID, domain.ErrConflict)
 	}
@@ -92,13 +109,15 @@ func (r orders) Create(ctx context.Context, o domain.Order) error {
 
 func scanOrder(sc interface{ Scan(...any) error }) (domain.Order, error) {
 	var o domain.Order
-	var mode, kind, dir, state string
-	var inst, amount, entry, stop, tp, created, sent, updated int64
+	var mode, kind, dir, state, platform string
+	var inst, amount, entry, stop, tp, created, sent, updated, qty int64
 	err := sc.Scan(&o.RequestID, &o.AccountID, &mode, &kind, &dir, &inst, &amount, &entry, &stop, &tp,
-		&o.PositionID, &o.TargetOrderID, &o.EtoroOrderID, &state, &o.Reason, &o.Sends, &created, &sent, &updated)
+		&o.PositionID, &o.TargetOrderID, &o.EtoroOrderID, &state, &o.Reason, &o.Sends, &created, &sent, &updated,
+		&platform, &o.Ticker, &qty)
 	if err != nil {
 		return domain.Order{}, err
 	}
+	o.Platform, o.Quantity = domain.Platform(platform), domain.Micros(qty)
 	o.Mode, o.Kind, o.Direction, o.State = domain.TradingMode(mode), domain.OrderKind(kind), domain.Direction(dir), domain.OrderState(state)
 	o.Instrument, o.Amount = domain.InstrumentID(inst), domain.Cents(amount)
 	o.Entry, o.StopLoss, o.TakeProfit = domain.Micros(entry), domain.Micros(stop), domain.Micros(tp)
@@ -185,7 +204,7 @@ func (r orders) ListSince(ctx context.Context, accountID string, since time.Time
 
 type agentPositions struct{ db *sql.DB }
 
-const agentPosCols = "account_id, position_id, open_request_id, instrument_id, direction, opened_at, closed_at, close_request_id"
+const agentPosCols = "account_id, position_id, open_request_id, instrument_id, direction, opened_at, closed_at, close_request_id, ticker, quantity_micros"
 
 func (r agentPositions) Add(ctx context.Context, p domain.AgentPosition) error {
 	ok, err := accountExists(ctx, r.db, p.AccountID)
@@ -195,8 +214,12 @@ func (r agentPositions) Add(ctx context.Context, p domain.AgentPosition) error {
 	if !ok {
 		return fmt.Errorf("agentPositions.Add: account %s: %w", p.AccountID, domain.ErrNotFound)
 	}
-	_, err = r.db.ExecContext(ctx, "INSERT INTO agent_positions ("+agentPosCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		p.AccountID, p.PositionID, p.OpenRequestID, int64(p.Instrument), string(p.Direction), us(p.OpenedAt), usZ(p.ClosedAt), p.CloseRequestID)
+	if len(p.Ticker) > maxTicker {
+		return fmt.Errorf("agentPositions.Add: ticker: %w", domain.ErrInvalid)
+	}
+	_, err = r.db.ExecContext(ctx, "INSERT INTO agent_positions ("+agentPosCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		p.AccountID, p.PositionID, p.OpenRequestID, int64(p.Instrument), string(p.Direction), us(p.OpenedAt), usZ(p.ClosedAt), p.CloseRequestID,
+		p.Ticker, int64(p.Quantity))
 	if isDuplicate(err) {
 		return fmt.Errorf("agentPositions.Add: position %d: %w", p.PositionID, domain.ErrConflict)
 	}
@@ -208,11 +231,12 @@ func (r agentPositions) Add(ctx context.Context, p domain.AgentPosition) error {
 
 func scanAgentPos(sc interface{ Scan(...any) error }) (domain.AgentPosition, error) {
 	var p domain.AgentPosition
-	var inst, opened, closed int64
+	var inst, opened, closed, qty int64
 	var dir string
-	if err := sc.Scan(&p.AccountID, &p.PositionID, &p.OpenRequestID, &inst, &dir, &opened, &closed, &p.CloseRequestID); err != nil {
+	if err := sc.Scan(&p.AccountID, &p.PositionID, &p.OpenRequestID, &inst, &dir, &opened, &closed, &p.CloseRequestID, &p.Ticker, &qty); err != nil {
 		return domain.AgentPosition{}, err
 	}
+	p.Quantity = domain.Micros(qty)
 	p.Instrument, p.Direction, p.OpenedAt, p.ClosedAt = domain.InstrumentID(inst), domain.Direction(dir), fromUS(opened), fromUSZ(closed)
 	return p, nil
 }

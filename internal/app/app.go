@@ -60,6 +60,9 @@ type Deps struct {
 	// "unavailable". Connectors are the browser sign-ins of those that have one (Saxo).
 	Holdings   map[domain.Platform]ports.Holdings
 	Connectors map[domain.Platform]ports.OAuthConnector
+	// T212 is the Trading 212 adapter for practice accounts (PLAN R45): the catalogue, the
+	// account and, from R45.6, its orders. nil = Trading 212 trading is not available.
+	T212 ports.T212Broker
 	// LLM is the LLM reviewer: the agent's review of a trade, the scanner, the admin's test
 	// and the model list. Every review is logged with its trace (PLAN 5.5). nil = not
 	// available (with reviewing on, the agent then rejects every trade).
