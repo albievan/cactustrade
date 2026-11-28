@@ -196,6 +196,7 @@ func (r orderRepo) Create(_ context.Context, o domain.Order) error {
 	if _, ok := r.s.exec.orders[o.RequestID]; ok {
 		return domain.ErrConflict
 	}
+	o.Platform = o.OnPlatform() // stored as the SQL store does: "" reads back as eToro
 	r.s.exec.orders[o.RequestID] = o
 	return nil
 }

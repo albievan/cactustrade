@@ -382,6 +382,8 @@ type Store interface {
 	Trades() Trades
 	RealGates() RealGates
 	StatementSchedules() StatementSchedules
+	T212Instruments() T212Instruments
+	InstrumentMatches() InstrumentMatches
 	Ping(ctx context.Context) error
 	Driver() string
 	Close() error
