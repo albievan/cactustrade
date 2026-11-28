@@ -3,6 +3,7 @@ import { EquityCharts } from "../components/EquityChart";
 import { AnalysisDrill, TILE_TITLES, type Tile } from "../components/AnalysisDrill";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
+import { oneOf, usePref } from "../lib/prefs";
 import {
   analysisPdfUrl, api, money, usd,
   type Account, type Analysis as AnalysisData, type AnalysisGroup, type AnalysisGrouping, type AnalysisPreset, type AnalysisQuery, type EquitySeries,
@@ -24,23 +25,41 @@ const PRESETS: { id: AnalysisPreset; label: string; title: string }[] = [
   { id: "custom", label: "Custom", title: "Choose the first and the last risk day" },
 ];
 
+const isPreset = oneOf(PRESETS.map((p) => p.id));
+const isDay = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isRange = (v: unknown) => {
+  const r = v as { from?: unknown; to?: unknown } | null;
+  return !!r && typeof r === "object" && isDay(r.from) && isDay(r.to);
+};
+const isIds = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+const NO_RANGE = { from: "", to: "" };
+const NONE: string[] = [];
+
 export function Analysis() {
-  const [preset, setPreset] = useState<AnalysisPreset>("month");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [range, setRange] = useState<{ from: string; to: string } | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [chosen, setChosen] = useState<string[]>([]);
+  // R50: the period, the custom range and the accounts chosen are the user's preferences
+  const [preset, setPreset] = usePref<AnalysisPreset>("analysis.preset", "month", isPreset);
+  const [savedRange, setRange] = usePref<{ from: string; to: string }>("analysis.customRange", NO_RANGE, isRange);
+  const range = savedRange.from && savedRange.to ? savedRange : null;
+  const [from, setFrom] = useState(savedRange.from);
+  const [to, setTo] = useState(savedRange.to);
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [savedChosen, setChosen] = usePref<string[]>("analysis.accounts", [], isIds);
   const [data, setData] = useState<AnalysisData | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => { api.accounts().then(setAccounts).catch(() => setAccounts([])); }, []);
+  // an account chosen earlier that is no longer yours is left out (none left = every account)
+  const chosenKey = accounts ? savedChosen.filter((id) => accounts.some((a) => a.id === id)).join("\n") : "";
+  const chosen = useMemo(() => (chosenKey ? chosenKey.split("\n") : NONE), [chosenKey]);
+  const waiting = savedChosen.length > 0 && !accounts; // ask once the accounts are known
+  const rangeFrom = range?.from, rangeTo = range?.to;
 
   const query: AnalysisQuery | null = useMemo(() => {
-    if (preset === "custom") return range ? { preset, from: range.from, to: range.to, accountIds: chosen } : null;
+    if (waiting) return null;
+    if (preset === "custom") return rangeFrom && rangeTo ? { preset, from: rangeFrom, to: rangeTo, accountIds: chosen } : null;
     return { preset, accountIds: chosen };
-  }, [preset, range, chosen]);
+  }, [preset, rangeFrom, rangeTo, chosen, waiting]);
 
   useEffect(() => {
     if (!query) return;
@@ -54,7 +73,7 @@ export function Analysis() {
     return () => { live = false; };
   }, [query]);
 
-  const toggle = (id: string) => setChosen((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
+  const toggle = (id: string) => setChosen(chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id]);
 
   return (
     <>
@@ -86,7 +105,7 @@ export function Analysis() {
           {!range && <span className="small text-secondary">Choose both days (at most 400 days back).</span>}
         </form>
       )}
-      {accounts.length > 1 && (
+      {accounts && accounts.length > 1 && (
         <div className="d-flex flex-wrap align-items-center gap-1 mb-3" role="group" aria-label="Accounts">
           <span className="small text-secondary me-1">Accounts:</span>
           <button type="button" className={"btn btn-sm " + (chosen.length === 0 ? "btn-success" : "btn-outline-secondary")}
@@ -344,15 +363,22 @@ function RiskActivity({ a }: { a: AnalysisData }) {
 }
 
 type SortKey = "label" | "trades" | "winRateBp" | "netCents" | "feesCents" | "avgNetCents";
+const UNSORTED: { key: SortKey | null; desc: boolean } = { key: null, desc: false };
 
 const COLS: { key: SortKey; label: string; end?: boolean }[] = [
   { key: "label", label: "Group" }, { key: "trades", label: "Trades", end: true }, { key: "winRateBp", label: "Win rate", end: true },
   { key: "netCents", label: "Realised P&L", end: true }, { key: "feesCents", label: "Fees", end: true }, { key: "avgNetCents", label: "Avg / trade", end: true },
 ];
 
+const isGroupSort = (v: unknown) => {
+  const s = v as { key?: unknown; desc?: unknown } | null;
+  return !!s && typeof s === "object" && COLS.some((c) => c.key === s.key) && typeof s.desc === "boolean";
+};
+
 // GroupTable is one grouping as a table sortable by any figure column (click the header).
 function GroupTable({ g, bucket }: { g: AnalysisGrouping; bucket: string }) {
-  const [sort, setSort] = useState<{ key: SortKey | null; desc: boolean }>({ key: null, desc: false });
+  // R50: each grouping's sort is the user's preference
+  const [sort, setSort] = usePref<{ key: SortKey | null; desc: boolean }>(`analysis.groups.${g.dimension}.sort`, UNSORTED, isGroupSort);
   const rows = useMemo(() => {
     const shown = g.dimension === "date" ? g.groups.filter((x) => x.trades > 0) : [...g.groups];
     if (!sort.key) return shown;

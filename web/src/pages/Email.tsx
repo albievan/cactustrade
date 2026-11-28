@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, type EmailSetup, type EmailSetupInput, type OutboxMail } from "../lib/api";
 import { useSession } from "../lib/session";
+import { usePref } from "../lib/prefs";
 import { ProblemAlert } from "../components/ProblemAlert";
 
 const P = ({ children }: { children: ReactNode }) => <span className="fw-semibold">{children}</span>;
@@ -41,7 +42,7 @@ export function Email() {
   const [password, setPassword] = useState("");
   const [to, setTo] = useState("");
   const [outbox, setOutbox] = useState<OutboxMail[]>([]);
-  const [showGuide, setShowGuide] = useState(false);
+  const [showGuide, setShowGuide] = usePref<boolean>("email.showGuide", false); // R50
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   const [error, setError] = useState<unknown>(null);

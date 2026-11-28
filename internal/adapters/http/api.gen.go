@@ -3184,6 +3184,12 @@ type Position struct {
 	UnrealisedPnlCents Cents `json:"unrealisedPnlCents"`
 }
 
+// Preferences Your view preferences, key → value (R50)
+type Preferences map[string]interface{}
+
+// PreferencesPatch Keys to set (any allowed value) or delete (null)
+type PreferencesPatch map[string]*interface{}
+
 // Problem defines model for Problem.
 type Problem struct {
 	// CanFix with missing: the caller may fix it (the web UI then shows a button to the fix)
@@ -4375,6 +4381,9 @@ type UpdateLlmProfileJSONRequestBody = LlmProfileInput
 // SetResearchSettingsJSONRequestBody defines body for SetResearchSettings for application/json ContentType.
 type SetResearchSettingsJSONRequestBody = ResearchConfig
 
+// SetMyPreferencesJSONRequestBody defines body for SetMyPreferences for application/json ContentType.
+type SetMyPreferencesJSONRequestBody = PreferencesPatch
+
 // SetMyProfileJSONRequestBody defines body for SetMyProfile for application/json ContentType.
 type SetMyProfileJSONRequestBody = ProfileInput
 
@@ -4647,6 +4656,12 @@ type ServerInterface interface {
 	// GetMarketStatus Today's sessions for LSE, NYSE/NASDAQ and ASX (viewer)
 	// (GET /api/v1/market/status)
 	GetMarketStatus(w http.ResponseWriter, r *http.Request)
+	// GetMyPreferences Your own view preferences in the web app (web session only; R50)
+	// (GET /api/v1/me/preferences)
+	GetMyPreferences(w http.ResponseWriter, r *http.Request)
+	// SetMyPreferences Change your own view preferences (merge patch; null deletes a key; web session only)
+	// (PUT /api/v1/me/preferences)
+	SetMyPreferences(w http.ResponseWriter, r *http.Request)
 	// GetMyProfile Your e-mail address and e-mail notification choices
 	// (GET /api/v1/me/profile)
 	GetMyProfile(w http.ResponseWriter, r *http.Request)
@@ -6776,6 +6791,34 @@ func (siw *ServerInterfaceWrapper) GetMarketStatus(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetMyPreferences operation middleware
+func (siw *ServerInterfaceWrapper) GetMyPreferences(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMyPreferences(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetMyPreferences operation middleware
+func (siw *ServerInterfaceWrapper) SetMyPreferences(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetMyPreferences(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetMyProfile operation middleware
 func (siw *ServerInterfaceWrapper) GetMyProfile(w http.ResponseWriter, r *http.Request) {
 
@@ -8047,6 +8090,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/public/password-reset/confirm", wrapper.ConfirmPasswordReset)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/me/profile", wrapper.GetMyProfile)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/me/profile", wrapper.SetMyProfile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/me/preferences", wrapper.GetMyPreferences)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/me/preferences", wrapper.SetMyPreferences)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/email", wrapper.GetEmailSetup)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/email", wrapper.SetEmailSetup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/email/test", wrapper.SendTestEmail)

@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LiveInvestChart, addPoint, pointOf, thin } from "./LiveInvestChart";
 import type { LiveSnapshot } from "../lib/live";
+import { PrefsProvider } from "../lib/prefs";
 
 const pos = (long: boolean, amountCents: number, unrealisedPnlCents: number) => ({ long, amountCents, unrealisedPnlCents });
 const snap = (at: string, positions: ReturnType<typeof pos>[], equityCents = 10_000_000) =>
@@ -64,5 +65,39 @@ describe("LiveInvestChart", () => {
     fireEvent.click(screen.getByRole("button", { name: "Equity" }));
     expect(await screen.findByRole("img", { name: "Graph: Equity" })).toBeInTheDocument();
     expect(urls.some((u) => u.endsWith("days=400"))).toBe(true);
+  });
+
+  it("keeps Max (and the view) at the next sign-in, in any browser (R50)", async () => {
+    const server: Record<string, unknown> = {};
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith("/api/v1/me/preferences")) {
+        if (init?.method === "PUT") Object.assign(server, JSON.parse(String(init.body)));
+        return new Response(JSON.stringify(server), { status: 200 });
+      }
+      const points = [
+        { at: "2026-11-20T16:00:00Z", cash: 9_000_000, equity: 10_000_000 },
+        { at: "2026-11-26T16:00:00Z", cash: 9_500_000, equity: 10_050_000 },
+      ];
+      return new Response(JSON.stringify([{ accountId: "a1", name: "A", platform: "etoro", mode: "demo", currency: "USD", points }]), { status: 200 });
+    });
+    const page = () => <PrefsProvider userId="u1"><LiveInvestChart accountId="a1" snapshot={null} /></PrefsProvider>;
+    const first = render(page());
+    fireEvent.click(await screen.findByRole("button", { name: "Max" }));
+    fireEvent.click(screen.getByRole("button", { name: "Equity" }));
+    await waitFor(() => expect(server).toEqual({ "dashboard.liveInvest.range": "max", "dashboard.liveInvest.view": "equity" }));
+    first.unmount();
+
+    localStorage.clear(); // another browser: only the server knows
+    urls.length = 0;
+    render(page());
+    expect(await screen.findByRole("button", { name: "Max" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Equity" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("img", { name: "Graph: Equity" })).toBeInTheDocument();
+    expect(urls.some((u) => u.endsWith("/api/v1/overview/history?days=400"))).toBe(true);
+    expect(urls.some((u) => u.endsWith("/api/v1/overview/history?days=7"))).toBe(false);
   });
 });

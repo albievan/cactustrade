@@ -5,6 +5,7 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -269,6 +270,29 @@ func Run(t *testing.T, s ports.Store) {
 		}
 		if v, _ := r.Get(ctx, "trading.mode"); v != "real" {
 			t.Fatalf("Get = %q", v)
+		}
+		// R50: a user's view preferences at their cap (domain.MaxPrefsBytes, multi-byte
+		// text) fit the value column of both dialects (MariaDB TEXT: 65 535 bytes), under a
+		// key as long as "ui.prefs." + a UUID.
+		big := domain.Preferences{}
+		val := json.RawMessage(`"` + strings.Repeat("é", domain.MaxPrefStringLen/2-1) + `"`)
+		for i := 0; ; i++ {
+			next, err := domain.MergePreferences(big, map[string]json.RawMessage{fmt.Sprintf("fill.k%03d", i): val})
+			if err != nil {
+				break
+			}
+			big = next
+		}
+		enc, err := big.Encode()
+		if err != nil || len(enc) < domain.MaxPrefsBytes-2*domain.MaxPrefStringLen {
+			t.Fatalf("prefs of %d bytes: %v", len(enc), err)
+		}
+		key := "ui.prefs.0f8fad5b-d9cb-469f-a165-70867728950e"
+		if err := r.Set(ctx, key, enc, t0); err != nil {
+			t.Fatalf("Set prefs of %d bytes: %v", len(enc), err)
+		}
+		if v, err := r.Get(ctx, key); err != nil || v != enc {
+			t.Fatalf("prefs round trip: %d bytes back of %d, %v", len(v), len(enc), err)
 		}
 	})
 

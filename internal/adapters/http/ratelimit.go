@@ -95,7 +95,11 @@ func classify(method, path, pattern string) rateClass {
 		// R49: a data reset backs the whole database up first.
 		pattern == "POST /api/v1/system/data-reset":
 		return classExport
-	case method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions:
+	case method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions,
+		// R50: saving the caller's own view preferences (a chart range, a tab) is a small
+		// settings write the web app makes as people click about; it counts as a read so it
+		// never eats the mutation budget of real actions (risk limits, starting the agent).
+		pattern == "PUT /api/v1/me/preferences":
 		return classRead
 	}
 	return classMutation

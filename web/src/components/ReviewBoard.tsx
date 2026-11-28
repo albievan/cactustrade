@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, errorText, type Review, type ReviewBoard as Board } from "../lib/api";
+import { usePref } from "../lib/prefs";
 
 const OUTCOME: Record<Review["outcome"], { label: string; cls: string }> = {
   added: { label: "added to watchlist", cls: "text-bg-success" },
@@ -13,15 +14,6 @@ const OUTCOME: Record<Review["outcome"], { label: string; cls: string }> = {
 
 // The exchange tabs, in a fixed order; a review whose instrument is not cached goes to "Other".
 const EXCHANGE_ORDER = ["LSE", "NYSE", "ASX", ""];
-const TAB_KEY = "cactustrade.review.exchange";
-
-function savedTab(): string {
-  try {
-    return window.localStorage.getItem(TAB_KEY) ?? "all";
-  } catch {
-    return "all";
-  }
-}
 
 // "Under review": every stock the scanner looked at for this account, when, the market
 // regime, and each rule it was checked against with the result. At low autonomy (R28) the
@@ -33,7 +25,8 @@ export function ReviewBoard() {
   const [error, setError] = useState("");
   const [accepted, setAccepted] = useState<number[]>([]);
   const [acceptError, setAcceptError] = useState("");
-  const [tab, setTab] = useState(savedTab);
+  // R50: the chosen exchange tab is the user's preference
+  const [tab, setTab] = usePref<string>("dashboard.reviews.tab", "all");
   const load = useCallback(() => {
     api.reviews(200).then(setBoard).catch((e) => setError(errorText(e)));
   }, []);
@@ -53,11 +46,6 @@ export function ReviewBoard() {
   function pick(key: string) {
     setTab(key);
     setOpen(null);
-    try {
-      window.localStorage.setItem(TAB_KEY, key);
-    } catch {
-      // the tab is just not remembered
-    }
   }
   useEffect(() => {
     load();

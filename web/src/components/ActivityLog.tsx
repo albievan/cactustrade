@@ -6,6 +6,14 @@ import {
 } from "../lib/activity";
 import type { Live } from "../lib/live";
 import { ProblemAlert } from "./ProblemAlert";
+import { oneOf, usePref } from "../lib/prefs";
+
+const isFilter = oneOf(FILTERS.map((f) => f.id));
+// a stored pair of sides is used only when it shows at least one
+const isSides = (v: unknown) => {
+  const s = v as Sides | null;
+  return !!s && typeof s === "object" && typeof s.long === "boolean" && typeof s.short === "boolean" && (s.long || s.short);
+};
 
 // ActivityLog is the dashboard's live log of what the agent does (R26), newest first. On load
 // it reads the latest stored events and decisions of the account; the stream's events, ticks
@@ -15,9 +23,10 @@ export function ActivityLog({ account, live }: { account: Account; live: Live })
   const [history, setHistory] = useState<ActivityEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [filter, setFilter] = useState<ActivityFilter>("all");
+  // R50: the filter and the sides shown are the user's preferences
+  const [filter, setFilter] = usePref<ActivityFilter>("dashboard.activity.filter", "all", isFilter);
   const [frozen, setFrozen] = useState<ActivityEntry[] | null>(null);
-  const [sides, setSides] = useState<Sides>({ long: true, short: true });
+  const [sides, setSides] = usePref<Sides>("dashboard.activity.sides", { long: true, short: true }, isSides);
 
   // The history, again after a resync or every poll while the stream is down.
   useEffect(() => {

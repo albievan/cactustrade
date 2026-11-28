@@ -1,11 +1,14 @@
 import { dateTime, hourMinute } from "../lib/format";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { platformBadge, platformLabel, usd, type Account, type Order } from "../lib/api";
 import type { Live, LiveFigures, LiveRegime, LiveSnapshot } from "../lib/live";
 import type { RegimeText } from "../lib/api";
 import { FixButton } from "./FixButton";
 import { InfoCard } from "./InfoCard";
 import { DirectionBadge } from "./DirectionBadge";
+import { oneOf, usePref } from "../lib/prefs";
+
+const isSide = oneOf(["", "long", "short"]);
 
 // The live dashboard's cards (PLAN 6.11). Every figure comes from the server's snapshot
 // (GET /api/v1/live); these components only format it. The only arithmetic here is the
@@ -212,7 +215,7 @@ export function LivePositions({ snapshot }: { snapshot: LiveSnapshot | null }) {
 // shows its direction (long or short), the feed can show long or short orders only, and
 // identical requests in a row (e.g. a cancel repeated every minute) are folded into one line.
 export function OrderFeed({ orders, account }: { orders: Order[]; account?: Account }) {
-  const [only, setOnly] = useState<"" | "long" | "short">("");
+  const [only, setOnly] = usePref<"" | "long" | "short">("dashboard.orders.side", "", isSide); // R50
   const count = (d: string) => orders.filter((o) => o.direction === d).length;
   const lines = foldRepeats(only ? orders.filter((o) => o.direction === only) : orders);
   const pick = (v: "" | "long" | "short", label: string, n: number) => (

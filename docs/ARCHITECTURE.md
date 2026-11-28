@@ -411,6 +411,17 @@ DATA`; `app.ResetAllData`, `GET|POST /api/v1/system/data-reset`). It wipes the t
   Rows written between the backup and the wipe (a few seconds of events or scans) are in
   neither.
 
+### View preferences (R50)
+
+A user's view choices in the web app (chart ranges, tabs, filters, sort, grouping, folded
+cards, periods) are one JSON object per user in `settings` (`ui.prefs.<userId>`), read and
+changed only by that user from a web session (`GET`/`PUT /api/v1/me/preferences`, a merge
+patch). The rules (key pattern, value shapes, 200 keys, 60 KiB) are `domain.MergePreferences`;
+the use cases are `app.MyPreferences` / `SetMyPreferences`. In the web app `PrefsProvider`
+loads them before the pages render and `usePref(key, default)` replaces `useState` for a
+view choice; saves are debounced (500 ms). They are never read by the agent, the risk
+engine or authorization, and are not audited. A data reset (R49) keeps them.
+
 ## Accounts
 
 Every eToro call is made for one account: the app checks the caller's access (owner / trade /

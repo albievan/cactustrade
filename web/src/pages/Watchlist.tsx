@@ -5,6 +5,7 @@ import {
 } from "../lib/api";
 import { useSession } from "../lib/session";
 import { useMode, useRefreshMode } from "../lib/mode";
+import { usePref } from "../lib/prefs";
 import { NeedAccount } from "../components/NeedAccount";
 import { ProblemAlert } from "../components/ProblemAlert";
 import { ResearchCard } from "../components/ResearchCard";
@@ -17,6 +18,11 @@ const EXCHANGES: Record<string, string> = { LSE: "LSE", NYSE: "NYSE / NASDAQ", A
 
 // Filter is the theme filter: every share, one theme's (by id), or those without a theme.
 type Filter = { kind: "all" } | { kind: "none" } | { kind: "theme"; id: string };
+const ALL: Filter = { kind: "all" };
+const isFilter = (v: unknown) => {
+  const f = v as { kind?: unknown; id?: unknown } | null;
+  return !!f && (f.kind === "all" || f.kind === "none" || (f.kind === "theme" && typeof f.id === "string"));
+};
 
 // The instruments the agent may trade. Adding asks eToro whether the share can be bought as a
 // real share, long, at leverage 1; anything else is refused with eToro's reason. Themes,
@@ -31,7 +37,8 @@ export function Watchlist() {
   const [themes, setThemes] = useState<Theme[]>([]);
   const [overview, setOverview] = useState<WatchlistOverview | null>(null);
   const [quotes, setQuotes] = useState<Record<number, Quote>>({});
-  const [filter, setFilter] = useState<Filter>({ kind: "all" });
+  // R50: the theme filter is the user's preference; a theme that is gone shows every share
+  const [savedFilter, setFilter] = usePref<Filter>("watchlist.themeFilter", ALL, isFilter);
   const [proposals, setProposals] = useState<ThemeProposals | null>(null);
   const [imported, setImported] = useState<WatchlistImportResult | null>(null);
   const [platformLists, setPlatformLists] = useState<PlatformWatchlist[] | null>(null);
@@ -69,6 +76,7 @@ export function Watchlist() {
   }
   if (status && !status.account) return <><h1 className="h3">Watchlist</h1><NeedAccount /></>;
   const themeName = (id?: string) => themes.find((t) => t.id === id)?.name;
+  const filter: Filter = savedFilter.kind === "theme" && !themes.some((t) => t.id === savedFilter.id) ? ALL : savedFilter;
   const shown = items.filter((w) => {
     switch (filter.kind) {
       case "all": return true;
