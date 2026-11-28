@@ -152,8 +152,11 @@ func (o Order) validateT212() error {
 // T212IntentFor builds the Trading 212 request for an order of ours. It is the only place a
 // T212Intent is built. It refuses anything but a valid buy, stop or sell of a Trading 212
 // practice account that is created or sent: a real-money account (ErrRealModeGated, D41 g),
-// a short, a sell (stop or market) of more than held — the quantity cactusTrade holds in the
-// ticker (D44) — and a fraction unless fractional is on and T212FractionsVerified (D43).
+// a short, a sell (stop or market) of more than held, and a fraction unless fractional is on
+// and T212FractionsVerified (D43). held is what this sell may still sell: the quantity
+// cactusTrade holds in the ticker (D44, at most what Trading 212 makes available) NET of the
+// sell orders of ours already resting there (a stop not yet cancelled, a sell in flight), so
+// a stop and a sale never sell the same shares twice.
 func T212IntentFor(o Order, held Micros, fractional bool) (T212Intent, error) {
 	switch {
 	case o.OnPlatform() != PlatformTrading212:
@@ -624,4 +627,58 @@ func T212Eligibility(id InstrumentID, symbol string, t T212Instrument, accountCu
 		e.RealLong = true
 	}
 	return e
+}
+
+// T212StopTick is the price step a Trading 212 stop price is rounded to: 0.01 of the
+// instrument's currency (a penny on a USD share, a hundredth of a penny on a GBX share). T2b
+// (the precision Trading 212 accepts) is unverified until the owner's practice run (R45.13).
+const T212StopTick Micros = 10_000
+
+// T212StopPrice is the playbook stop rounded to T212StopTick towards the price (T212-h): a
+// sell stop sits below the price, so it is rounded up, never down (a lower stop would lose
+// more than the playbook allowed). 0 for a stop that is not positive.
+func T212StopPrice(stop Micros) Micros {
+	if stop <= 0 {
+		return 0
+	}
+	if r := stop % T212StopTick; r != 0 {
+		return stop + T212StopTick - r
+	}
+	return stop
+}
+
+// T212OrderValue is quantity × the price per share (T212MinorPerShare) in account minor
+// units, rounded down: what a buy is worth, weighed against the minimum order value (T212-m).
+func T212OrderValue(quantity, perShare Micros) Cents {
+	if quantity <= 0 || perShare <= 0 {
+		return 0
+	}
+	return Cents(bigRatio(bigProd(int64(quantity), int64(perShare)), bigProd(1_000_000_000_000), false))
+}
+
+// Portfolio is the Trading 212 account as the risk engine weighs it (AssessEntry, Observe,
+// the drawdown): free cash, the cash Trading 212 holds for orders, and every position at its
+// cost and result in the account's currency (each a real share held long at leverage 1, as
+// Trading 212 Invest holds only those). A position in a ticker of ours (an open agent
+// position) carries that position's id and eToro instrument, so the reservation of a fill
+// the account does not show yet is kept (WithUnseenFills); any other position carries the
+// eToro instrument instrumentOf gives its ticker (the watchlist's matches; 0 = none), so an
+// entry in a share the account already holds is refused (T212-i). Equity is the sum of those
+// figures.
+func (a T212Account) Portfolio(ours []AgentPosition, instrumentOf map[string]InstrumentID) Portfolio {
+	pf := Portfolio{AvailableCash: a.AvailableToTrade, PendingOpen: a.ReservedForOrders, AsOf: a.AsOf}
+	for _, p := range a.Positions {
+		pos := Position{
+			Instrument: instrumentOf[p.Ticker], OpenedAt: p.OpenedAt, OpenRate: p.AvgPrice, Units: p.Quantity,
+			Amount: p.Cost, UnrealisedPnL: p.PnL, RealAsset: true, Long: true, Leverage: 1,
+		}
+		for _, ap := range ours {
+			if ap.Open() && ap.Ticker != "" && ap.Ticker == p.Ticker {
+				pos.ID, pos.Instrument = ap.PositionID, ap.Instrument
+				break
+			}
+		}
+		pf.Positions = append(pf.Positions, pos)
+	}
+	return pf
 }

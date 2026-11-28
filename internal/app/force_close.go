@@ -58,11 +58,11 @@ func (s *Service) forceClosable(ctx context.Context, p Principal, accountID stri
 	if err := s.forceCloser(p); err != nil {
 		return domain.AccountView{}, err
 	}
-	v, err := s.account(ctx, p, accountID, domain.AccessTrade)
+	v, err := s.agentAccount(ctx, p, accountID, domain.AccessTrade)
 	if err != nil {
 		return domain.AccountView{}, err
 	}
-	if !v.Tradable() {
+	if !v.Agentable() {
 		return domain.AccountView{}, fmt.Errorf("%s: %w", v.Name, domain.ErrViewOnly)
 	}
 	return v, nil
@@ -80,7 +80,7 @@ func (s *Service) forceClosableAll(ctx context.Context, p Principal) ([]domain.A
 	}
 	out := make([]domain.AccountView, 0, len(vs))
 	for _, v := range vs {
-		if v.Tradable() && v.Access.AtLeast(domain.AccessTrade) {
+		if v.Agentable() && v.Access.AtLeast(domain.AccessTrade) {
 			out = append(out, v)
 		}
 	}

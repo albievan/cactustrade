@@ -107,7 +107,8 @@ func (s *Service) currentAccountID(ctx context.Context, p Principal, vs []domain
 
 // CurrentAccount is the account the caller is working on ("" view when there is none).
 func (s *Service) CurrentAccount(ctx context.Context, p Principal) (domain.AccountView, error) {
-	return s.account(ctx, p, "", domain.AccessView)
+	// A Trading 212 practice account chosen as current is current (review of R45.2–R45.5).
+	return s.agentAccount(ctx, p, "", domain.AccessView)
 }
 
 // SetCurrentAccount switches the caller's current account: an eToro account or a Trading 212

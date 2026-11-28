@@ -80,7 +80,7 @@ func (s *Service) Decisions(ctx context.Context, p Principal, accountID string, 
 	if q.Outcome != "" && !q.Outcome.Valid() {
 		return nil, domain.Invalid("outcome", "unknown outcome "+string(q.Outcome))
 	}
-	v, err := s.account(ctx, p, accountID, domain.AccessView)
+	v, err := s.agentAccount(ctx, p, accountID, domain.AccessView)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func (s *Service) Decision(ctx context.Context, p Principal, accountID, id strin
 	if err := s.authorize(p, domain.PermView); err != nil {
 		return DecisionDetail{}, err
 	}
-	v, err := s.account(ctx, p, accountID, domain.AccessView)
+	v, err := s.agentAccount(ctx, p, accountID, domain.AccessView)
 	if err != nil {
 		return DecisionDetail{}, err
 	}

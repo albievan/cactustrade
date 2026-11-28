@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "fill": null,
+      "order": {
+        "createdAt": "2026-11-21T10:00:00Z",
+        "filledQuantity": 0,
+        "id": 980,
+        "initiatedFrom": "API",
+        "instrument": { "currency": "GBX", "isin": "GB0031348658", "name": "Barclays", "ticker": "BARCl_EQ" },
+        "quantity": 2,
+        "side": "BUY",
+        "status": "REJECTED",
+        "ticker": "BARCl_EQ",
+        "type": "MARKET"
+      }
+    }
+  ],
+  "nextPagePath": null
+}

@@ -48,30 +48,21 @@ type positionWire struct {
 	} `json:"walletImpact"`
 }
 
+// summary is the account summary in minor units.
+type summary struct {
+	domain.Holdings
+	reserved domain.Cents
+}
+
 // Holdings reads the account summary and the open positions of the account in ctx. Amounts
 // are in the account's own currency (often GBP or EUR, never converted). A summary without
 // its currency or total value is refused (fail closed).
 func (c *Client) Holdings(ctx context.Context) (domain.Holdings, error) {
-	var sum summaryWire
-	if err := c.get(ctx, OpAccountSummary, nil, &sum); err != nil {
-		return domain.Holdings{}, err
-	}
-	cur := strings.ToUpper(strings.TrimSpace(sum.Currency))
-	if len(cur) != 3 || sum.TotalValue == nil || sum.Cash == nil {
-		return domain.Holdings{}, fmt.Errorf("trading212 %s: no currency, cash or total value in the response: %w", OpAccountSummary, domain.ErrUnavailable)
-	}
-	var pos []positionWire
-	if err := c.get(ctx, OpPositions, nil, &pos); err != nil {
+	h, pos, err := c.holdings(ctx)
+	if err != nil {
 		return domain.Holdings{}, err
 	}
 	var cv conv
-	h := domain.Holdings{
-		Platform: domain.PlatformTrading212, Currency: cur, Cash: cv.cents(sum.Cash.AvailableToTrade),
-		Equity: cv.cents(*sum.TotalValue), AsOf: c.cfg.Now().UTC(),
-	}
-	if inv := sum.Investments; inv != nil {
-		h.Invested, h.UnrealisedPnL, h.RealisedPnL = cv.cents(inv.TotalCost), cv.cents(inv.UnrealizedProfitLoss), cv.cents(inv.RealizedProfitLoss)
-	}
 	for _, p := range pos {
 		x := domain.Holding{
 			Symbol: p.Instrument.Ticker, Name: p.Instrument.Name, Currency: p.Instrument.Currency,
@@ -86,5 +77,33 @@ func (c *Client) Holdings(ctx context.Context) (domain.Holdings, error) {
 	if cv.err != nil {
 		return domain.Holdings{}, fmt.Errorf("trading212 %s: %w: %w", OpPositions, cv.err, domain.ErrUnavailable)
 	}
-	return h, nil
+	return h.Holdings, nil
+}
+
+// holdings reads the summary and the raw positions.
+func (c *Client) holdings(ctx context.Context) (summary, []positionWire, error) {
+	var sum summaryWire
+	if err := c.get(ctx, OpAccountSummary, nil, &sum); err != nil {
+		return summary{}, nil, err
+	}
+	cur := strings.ToUpper(strings.TrimSpace(sum.Currency))
+	if len(cur) != 3 || sum.TotalValue == nil || sum.Cash == nil {
+		return summary{}, nil, fmt.Errorf("trading212 %s: no currency, cash or total value in the response: %w", OpAccountSummary, domain.ErrUnavailable)
+	}
+	var pos []positionWire
+	if err := c.get(ctx, OpPositions, nil, &pos); err != nil {
+		return summary{}, nil, err
+	}
+	var cv conv
+	h := summary{Holdings: domain.Holdings{
+		Platform: domain.PlatformTrading212, Currency: cur, Cash: cv.cents(sum.Cash.AvailableToTrade),
+		Equity: cv.cents(*sum.TotalValue), AsOf: c.cfg.Now().UTC(),
+	}, reserved: cv.cents(sum.Cash.ReservedForOrders)}
+	if inv := sum.Investments; inv != nil {
+		h.Invested, h.UnrealisedPnL, h.RealisedPnL = cv.cents(inv.TotalCost), cv.cents(inv.UnrealizedProfitLoss), cv.cents(inv.RealizedProfitLoss)
+	}
+	if cv.err != nil {
+		return summary{}, nil, fmt.Errorf("trading212 %s: %w: %w", OpAccountSummary, cv.err, domain.ErrUnavailable)
+	}
+	return h, pos, nil
 }

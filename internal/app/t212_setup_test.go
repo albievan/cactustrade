@@ -439,8 +439,8 @@ func TestT212RiskLimits(t *testing.T) {
 	}
 }
 
-// TestT212UseCaseMatrix (T212-c): the setup use cases serve a Trading 212 practice account;
-// the eToro-only ones still refuse it (ErrViewOnly); a real Trading 212 account is refused by
+// TestT212UseCaseMatrix (T212-c): the setup use cases and the agent controls serve a Trading
+// 212 practice account; the eToro-only ones still refuse it (ErrViewOnly); a real Trading 212 account is refused by
 // all of them.
 func TestT212UseCaseMatrix(t *testing.T) {
 	te := newT212Env(t)
@@ -498,7 +498,6 @@ func TestT212UseCaseMatrix(t *testing.T) {
 	}
 	// eToro-only use cases refuse the practice account.
 	eToroOnly := map[string]call{
-		"StartAgent":     func(p Principal) error { _, err := svc.StartAgent(ctx, p, te.t212.ID); return err },
 		"Portfolio":      func(p Principal) error { _, err := svc.Portfolio(ctx, p); return err },
 		"TestConnection": func(p Principal) error { _, err := svc.TestConnection(ctx, p, te.t212.ID); return err },
 		"ApplyPreset":    func(p Principal) error { _, err := svc.ApplyRiskPreset(ctx, p, domain.PresetLow); return err },
@@ -507,6 +506,17 @@ func TestT212UseCaseMatrix(t *testing.T) {
 		if err := c(owner); !errors.Is(err, domain.ErrViewOnly) {
 			t.Errorf("%s on a Trading 212 account: %v", op, err)
 		}
+	}
+	// The agent controls serve the practice account (R45.7): a later refusal (no budget)
+	// proves the account gate passed; the real Trading 212 account stays view-only.
+	if _, err := svc.StartAgent(ctx, owner, te.t212.ID); err == nil || errors.Is(err, domain.ErrViewOnly) {
+		t.Errorf("StartAgent on a Trading 212 practice account: %v", err)
+	}
+	if _, err := svc.StartAgent(ctx, owner, te.t212Rl.ID); !errors.Is(err, domain.ErrViewOnly) {
+		t.Errorf("StartAgent on a real Trading 212 account: %v", err)
+	}
+	if _, err := svc.StopAgent(ctx, owner, te.t212Rl.ID); !errors.Is(err, domain.ErrViewOnly) {
+		t.Errorf("StopAgent on a real Trading 212 account: %v", err)
 	}
 	// A real Trading 212 account is refused by every one of them.
 	if _, err := svc.SetCurrentAccount(ctx, owner, te.t212Rl.ID); !errors.Is(err, domain.ErrViewOnly) {

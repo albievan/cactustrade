@@ -106,6 +106,17 @@ func TestT212SimStopsAndSells(t *testing.T) {
 	if err != nil || st.State != domain.OrderPending || st.Final {
 		t.Fatalf("stop = %+v %v", st, err)
 	}
+	// With the stop resting, a sell (or a second stop) without cancelling it first is refused:
+	// together they would sell more than held (review of R45.2–R45.5).
+	for _, in := range []domain.T212Intent{sell(share), stop(share, 180_000_000)} {
+		if _, err := s.Place(ctx, in); !errors.Is(err, domain.ErrNotAccepted) {
+			t.Fatalf("%s %s %s next to the resting stop: %v", in.Side, in.Type, in.Quantity, err)
+		}
+	}
+	if len(s.Violations) != 2 || !strings.Contains(s.Violations[0], "double sell") {
+		t.Fatalf("violations %v", s.Violations)
+	}
+	s.Violations = nil
 	if got, err := s.Order(ctx, st.ID); err != nil || got.StopPrice != 190_000_000 {
 		t.Fatalf("Order(stop) = %+v %v", got, err)
 	}

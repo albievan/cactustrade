@@ -43,7 +43,9 @@ func (s *Service) controlled(ctx context.Context, p Principal, accountID string,
 	if session && p.Via != ViaSession {
 		return domain.AccountView{}, fmt.Errorf("%s needs a web session, not an API key: %w", what, domain.ErrForbidden)
 	}
-	return s.account(ctx, p, accountID, domain.AccessTrade)
+	// An eToro account or a Trading 212 practice account (T212-c): its agent can always be
+	// stopped, killed and reconciled (CLAUDE.md §2.6).
+	return s.agentAccount(ctx, p, accountID, domain.AccessTrade)
 }
 
 // StartAgent starts an account's agent (agent.control, trade access, web session only). It
@@ -83,9 +85,13 @@ func (s *Service) StartAgent(ctx context.Context, p Principal, accountID string)
 		s.rt.setRealStarted(v.ID, true) // OD26: only a person's start lets a real agent trade
 	}
 	l := s.riskLimits(ctx, v.ID)
-	s.audit(ctx, p, "agent.start", v.ID, "from "+string(cur)+", trading budget $"+l.TradingBudget.String())
+	budget := "$" + l.TradingBudget.String()
+	if v.T212Trading() {
+		budget = l.TradingBudget.String() + " (account currency)" // never "$" on Trading 212 (T212-f)
+	}
+	s.audit(ctx, p, "agent.start", v.ID, "from "+string(cur)+", trading budget "+budget)
 	s.emitFor(ctx, v.ID, p.Username, "agent.started", domain.SeverityInfo, "Agent started on "+v.Name,
-		"trading budget $"+l.TradingBudget.String()+"; entries at each 5-minute bar close")
+		"trading budget "+budget+"; entries at each 5-minute bar close")
 	return AgentStatus{AccountID: v.ID, State: domain.AgentRunning}, nil
 }
 
@@ -141,6 +147,9 @@ const (
 // entry there needs (realEntryBlocked: the deployment opt-in, an armed gate in force,
 // reconciled, limits within the real ceilings; S8, PLAN 7.22).
 func (s *Service) startable(ctx context.Context, a domain.Account) error {
+	if a.OnPlatform() == domain.PlatformTrading212 {
+		return s.t212Startable(ctx, a)
+	}
 	why := ""
 	if a.Mode == domain.ModeReal && a.Tradable() {
 		why = s.realEntryBlocked(ctx, a) // read once (review m2 of the lift)
@@ -285,6 +294,10 @@ func (s *Service) Kill(ctx context.Context, p Principal, accountID, reason strin
 // too, whatever its gate's state (S7, PLAN 7.21: exits always work; each close and cancel
 // carries an exit permit).
 func (s *Service) flatten(ctx context.Context, a domain.Account, exit domain.ExitReason, why string, rep *KillReport) {
+	if a.T212Trading() {
+		s.t212Flatten(ctx, a, exit, why, rep)
+		return
+	}
 	if !a.Tradable() || s.d.Broker == nil {
 		return // nothing of ours can be there
 	}
@@ -340,18 +353,12 @@ func (s *Service) ResetKill(ctx context.Context, p Principal, accountID, confirm
 	if err := s.resetKillable(ctx, v.ID); err != nil {
 		return AgentStatus{}, err
 	}
-	if err := s.needBroker(); err != nil {
-		return AgentStatus{}, err
-	}
-	// eToro's equity is read before the control lock is taken (PLAN 6.13, as review m5 did
-	// for SetRiskLimits): a Kill never waits for this call.
-	pf, err := s.d.Broker.Portfolio(brokerCtx(ctx, v))
+	// The equity is read before the control lock is taken (PLAN 6.13, as review m5 did for
+	// SetRiskLimits): a Kill never waits for this call. eToro's portfolio, or the Trading 212
+	// account as the risk engine weighs it.
+	eq, err := s.resetEquity(ctx, v)
 	if err != nil {
-		return AgentStatus{}, fmt.Errorf("app.ResetKill: reading the equity for the new high-water mark: %w", err)
-	}
-	eq := pf.Equity()
-	if eq <= 0 {
-		return AgentStatus{}, fmt.Errorf("app.ResetKill: the account has no equity: %w", domain.ErrConflict)
+		return AgentStatus{}, err
 	}
 	locks := s.rt.agent(v.ID)
 	locks.ctl.Lock()

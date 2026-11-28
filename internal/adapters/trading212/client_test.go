@@ -346,7 +346,7 @@ func TestNewValidates(t *testing.T) {
 	if err != nil || c.demo.String() != DemoBaseURL || c.live.String() != LiveBaseURL || c.cfg.RequestTimeout != 15*time.Second {
 		t.Fatalf("defaults: %v", err)
 	}
-	if err := c.get(ctxFor(demoAcct), Op("orders"), nil, nil); err == nil || !strings.Contains(err.Error(), "not allowlisted") {
+	if err := c.get(ctxFor(demoAcct), Op("pies"), nil, nil); err == nil || !strings.Contains(err.Error(), "not allowlisted") {
 		t.Fatalf("unknown op: %v", err)
 	}
 }

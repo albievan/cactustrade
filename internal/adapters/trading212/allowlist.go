@@ -1,17 +1,21 @@
-// Package trading212 is a READ-ONLY client for the Trading 212 Public API (v0, beta). This
-// file is its allowlist: the ONLY Trading 212 paths the client may call, all of them GET.
-// There is no order, pie or export path, and the client has no method that sends anything
-// but a GET (owner's decision 2026-11-23: Trading 212 accounts are view-only for now).
-// allowlist_test.go fails the build when any other /api/ or /equity/ path literal, or any
-// other HTTP method, appears in this package.
+// Package trading212 is the client for the Trading 212 Public API (v0, beta). This file is
+// its allowlist: the ONLY Trading 212 methods and paths the client may use (CLAUDE.md §2.1,
+// D41, D43). Reads: the account summary, the positions, the order history, the active orders,
+// one order and the instrument metadata. Changes, on practice accounts only: a market order, a
+// stop order and the cancel of an order. There is no limit, stop-limit, pie, export or money
+// path. allowlist_test.go fails the build when any other path literal, or any HTTP method
+// outside this file, appears in this package.
 //
-// Verified against docs.trading212.com on 2026-11-23 (docs/trading212-api.md).
+// Verified against docs.trading212.com on 2026-11-23 and 2026-11-28 (docs/trading212-api.md).
 package trading212
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
 
 // Hosts. A demo (practice) account is served by the demo host, a real one by the live host;
-// each key works for its own environment only.
+// each key works for its own environment only. Orders go to the demo host only.
 const (
 	DemoBaseURL = "https://demo.trading212.com"
 	LiveBaseURL = "https://live.trading212.com"
@@ -20,25 +24,40 @@ const (
 // Op names an allowlisted Trading 212 operation.
 type Op string
 
-// The operations cactusTrade may perform: reading only.
+// The operations cactusTrade may perform.
 const (
 	OpAccountSummary Op = "account_summary"
 	OpPositions      Op = "positions"
-	// OpOrderHistory is allowlisted (read-only) for the realised P&L history; not called yet.
-	OpOrderHistory Op = "order_history"
+	OpOrderHistory   Op = "order_history"
+	OpInstruments    Op = "instruments"
+	OpOrders         Op = "orders"
+	OpOrder          Op = "order"
+	// The three changes (practice accounts only, PLAN R45.8).
+	OpMarketOrder Op = "market_order"
+	OpStopOrder   Op = "stop_order"
+	OpCancelOrder Op = "cancel_order"
 )
 
-// Endpoint is one allowlisted GET with its documented rate limit, kept as the minimum
-// spacing between two requests of the same account.
+// Endpoint is one allowlisted request: its method, its path ("{id}" stands for an order id)
+// and its documented rate limit, kept as the minimum spacing between two requests of the same
+// account.
 type Endpoint struct {
-	Path  string
-	Every time.Duration
+	Method string
+	Path   string
+	Every  time.Duration
+	// Mutates: the request changes the account (sent once, never retried, practice only).
+	Mutates bool
 }
 
-// Allowlist is the complete set of Trading 212 endpoints the client may call. Every one is
-// a GET; the client cannot send any other method.
+// Allowlist is the complete set of Trading 212 requests the client may send: exactly 9.
 var Allowlist = map[Op]Endpoint{
-	OpAccountSummary: {Path: "/api/v0/equity/account/summary", Every: 5 * time.Second}, // 1 req / 5 s
-	OpPositions:      {Path: "/api/v0/equity/positions", Every: time.Second},           // 1 req / 1 s
-	OpOrderHistory:   {Path: "/api/v0/equity/history/orders", Every: 3 * time.Second},  // 20 req / min
+	OpAccountSummary: {Method: http.MethodGet, Path: "/api/v0/equity/account/summary", Every: 5 * time.Second},                       // 1 / 5 s
+	OpPositions:      {Method: http.MethodGet, Path: "/api/v0/equity/positions", Every: time.Second},                                 // 1 / 1 s
+	OpOrderHistory:   {Method: http.MethodGet, Path: "/api/v0/equity/history/orders", Every: 3 * time.Second},                        // 20 / min
+	OpInstruments:    {Method: http.MethodGet, Path: "/api/v0/equity/metadata/instruments", Every: 50 * time.Second},                 // 1 / 50 s
+	OpOrders:         {Method: http.MethodGet, Path: "/api/v0/equity/orders", Every: 5 * time.Second},                                // 1 / 5 s
+	OpOrder:          {Method: http.MethodGet, Path: "/api/v0/equity/orders/{id}", Every: time.Second},                               // 1 / 1 s
+	OpMarketOrder:    {Method: http.MethodPost, Path: "/api/v0/equity/orders/market", Every: 1200 * time.Millisecond, Mutates: true}, // 50 / min
+	OpStopOrder:      {Method: http.MethodPost, Path: "/api/v0/equity/orders/stop", Every: 2 * time.Second, Mutates: true},           // 1 / 2 s
+	OpCancelOrder:    {Method: http.MethodDelete, Path: "/api/v0/equity/orders/{id}", Every: 1200 * time.Millisecond, Mutates: true}, // 50 / min
 }

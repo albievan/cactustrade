@@ -1,0 +1,16 @@
+{
+  "createdAt": "2026-11-23T15:00:01Z",
+  "currency": "GBX",
+  "filledQuantity": 0,
+  "id": 1002,
+  "initiatedFrom": "API",
+  "instrument": { "currency": "GBX", "isin": "GB00B10RZP78", "name": "Unilever", "ticker": "ULVLl_EQ" },
+  "quantity": -4,
+  "side": "SELL",
+  "status": "NEW",
+  "stopPrice": 2150.12,
+  "strategy": "QUANTITY",
+  "ticker": "ULVLl_EQ",
+  "timeInForce": "GOOD_TILL_CANCEL",
+  "type": "STOP"
+}
