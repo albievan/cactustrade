@@ -18,9 +18,9 @@ func (s *Store) DataReset() ports.DataReset { return dataResetRepo{s} }
 type dataResetRepo struct{ s *Store }
 
 // resetDerived are the settings prefixes a reset deletes; resetWatchDerived goes with the
-// watchlist (as sqlstore's resetSettings).
+// watchlist (as sqlstore's resetSettings). The aggressiveness adjustment is kept.
 var (
-	resetDerived      = []string{"agent.aggressiveness_adapt.", "research.state.", "events.seen."}
+	resetDerived      = []string{"research.state.", "events.seen."}
 	resetWatchDerived = []string{"watchlist.signals."}
 )
 

@@ -78,18 +78,31 @@ func (s *Service) agentSince(ctx context.Context, accountID string) time.Time {
 }
 
 func (s *Service) agentState(ctx context.Context, accountID string) domain.AgentState {
-	v, err := s.d.Store.Settings().Get(ctx, agentStateKey(accountID))
+	st, err := s.readAgentState(ctx, accountID)
 	if err != nil {
-		if !errors.Is(err, domain.ErrNotFound) {
-			s.d.Log.WarnContext(ctx, "reading the agent state failed; treating it as stopped", "err", err)
-		}
+		s.d.Log.WarnContext(ctx, "reading the agent state failed; treating it as stopped", "err", err)
 		return domain.AgentStopped
+	}
+	return st
+}
+
+// readAgentState is an account's stored agent state, with the store's error: never stored
+// (or an unknown value) is "stopped", but a failed read is an error. Callers that must not
+// mistake an unreadable state for a stopped agent (the data reset's checks) use it and
+// refuse on error (CLAUDE.md §2.6: fail closed).
+func (s *Service) readAgentState(ctx context.Context, accountID string) (domain.AgentState, error) {
+	v, err := s.d.Store.Settings().Get(ctx, agentStateKey(accountID))
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.AgentStopped, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("app.readAgentState: %w", err)
 	}
 	switch st := domain.AgentState(v); st {
 	case domain.AgentRunning, domain.AgentPaused, domain.AgentKilled:
-		return st
+		return st, nil
 	}
-	return domain.AgentStopped
+	return domain.AgentStopped, nil
 }
 
 // riskLimits returns the stored limits, or the defaults with a zero budget. A stored value

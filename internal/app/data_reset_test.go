@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -529,4 +531,179 @@ func TestSyncTradesAfterReset(t *testing.T) {
 	if _, err := r.svc.SyncTrades(r.ctx, r.a.ID); err == nil {
 		t.Fatal("an unreadable floor read the history")
 	}
+}
+
+// TestResetAllDataKeepsTheAggressivenessAdjustment: full autonomy's step down after a
+// loss-limit day survives a reset; a reset never makes an account trade more aggressively
+// (review fix 2026-11-28).
+func TestResetAllDataKeepsTheAggressivenessAdjustment(t *testing.T) {
+	r := newResetEnv(t)
+	if err := r.store.Settings().Set(r.ctx, adaptKey(r.a.ID), "low", r.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.store.Settings().Set(r.ctx, "research.state."+r.a.ID, "{}", r.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.reset(t); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := r.store.Settings().Get(r.ctx, adaptKey(r.a.ID)); err != nil || v != "low" {
+		t.Fatalf("the aggressiveness adjustment did not survive: %q %v", v, err)
+	}
+	if _, err := r.store.Settings().Get(r.ctx, "research.state."+r.a.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("research state survived: %v", err)
+	}
+}
+
+// TestResetAllDataUnreadableAgentState: an agent state that cannot be read is never taken
+// for "stopped": the reset is refused (fail closed) and nothing is wiped.
+func TestResetAllDataUnreadableAgentState(t *testing.T) {
+	r := newResetEnv(t)
+	fs := newFaultStore(r.store)
+	r.svc.d.Store = fs
+	fs.set(func(f *faultStore) { f.getErr[agentStateKey(r.a.ID)] = errors.New("database gone") })
+	_, err := r.reset(t)
+	if !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "agent state") {
+		t.Fatalf("err = %v", err)
+	}
+	if r.store.ResetCalls != 0 || len(r.backups.Writes) != 0 {
+		t.Fatal("wiped or backed up with an unreadable agent state")
+	}
+	if _, err := r.svc.DataResetPreview(r.ctx, r.admin); err == nil {
+		t.Fatal("the preview answered with an unreadable agent state")
+	}
+}
+
+// TestResetAllDataCancelsATickInFlight: an agent tick still running when the reset takes
+// the locks is cancelled and waited for; the order it persists while unwinding is seen by
+// the checks under the locks, so the reset is refused and the order is never wiped unseen.
+func TestResetAllDataCancelsATickInFlight(t *testing.T) {
+	r := newResetEnv(t)
+	r.svc.d.Sleep = func(ctx context.Context, _ time.Duration) error {
+		time.Sleep(time.Millisecond) // let the tick unwind
+		return ctx.Err()
+	}
+	locks := r.svc.rt.agent(r.a.ID)
+	locks.entry.Lock()
+	tctx, cancel := context.WithCancel(context.Background())
+	r.svc.rt.setEntryCancel(r.a.ID, cancel)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-tctx.Done()
+		// The tick had reached its order write when it was cancelled.
+		now := r.clock.Now()
+		o, err := domain.NewOrder(domain.Order{
+			RequestID: "tick-in-flight", AccountID: r.a.ID, Mode: domain.ModeDemo, Direction: domain.Long, Kind: domain.OrderOpen,
+			Instrument: instNYSE, Amount: 100_00, Entry: 100_000_000, StopLoss: 97_000_000,
+		}, now)
+		if err == nil {
+			err = r.store.Orders().Create(context.Background(), o)
+		}
+		if err != nil {
+			t.Error(err)
+		}
+		r.svc.rt.setEntryCancel(r.a.ID, nil)
+		locks.entry.Unlock()
+	}()
+	_, err := r.reset(t)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the reset never cancelled the tick")
+	}
+	if !errors.Is(err, domain.ErrConflict) || !slices.Contains(failedCheck(err), domain.CheckResetRecentOrders) {
+		t.Fatalf("err = %v (failed %v)", err, failedCheck(err))
+	}
+	if r.store.ResetCalls != 0 {
+		t.Fatal("wiped an order a tick persisted under the reset's locks")
+	}
+	if _, err := r.store.Orders().Get(r.ctx, "tick-in-flight"); err != nil {
+		t.Fatalf("the tick's order is gone: %v", err)
+	}
+	// Every lock was released.
+	for _, id := range []string{r.a.ID, r.real.ID} {
+		l := r.svc.rt.agent(id)
+		if !l.ctl.TryLock() || !l.entry.TryLock() {
+			t.Fatalf("%s left locked", id)
+		}
+		l.entry.Unlock()
+		l.ctl.Unlock()
+	}
+}
+
+// TestResetAllDataEntryBusy: an entry lock that is never released is not waited for longer
+// than dataResetLockWait: refused, nothing wiped, every lock released.
+func TestResetAllDataEntryBusy(t *testing.T) {
+	r := newResetEnv(t)
+	locks := r.svc.rt.agent(r.a.ID)
+	locks.entry.Lock()
+	defer locks.entry.Unlock()
+	_, err := r.reset(t)
+	if !errors.Is(err, domain.ErrConflict) || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("err = %v", err)
+	}
+	if r.store.ResetCalls != 0 {
+		t.Fatal("wiped without every lock")
+	}
+	for _, id := range []string{r.a.ID, r.real.ID} {
+		l := r.svc.rt.agent(id)
+		if !l.ctl.TryLock() {
+			t.Fatalf("%s control lock left held", id)
+		}
+		l.ctl.Unlock()
+	}
+	if l := r.svc.rt.agent(r.real.ID); !l.entry.TryLock() {
+		t.Fatal("the real account's entry lock left held")
+	} else {
+		l.entry.Unlock()
+	}
+}
+
+// deadlineStore records the deadline the wipe ran under and fails it as a timed-out
+// transaction (rolled back, nothing changed).
+type deadlineStore struct {
+	ports.Store
+	deadline time.Time
+	has      bool
+}
+
+func (d *deadlineStore) DataReset() ports.DataReset { return deadlineReset{d.Store.DataReset(), d} }
+
+type deadlineReset struct {
+	ports.DataReset
+	d *deadlineStore
+}
+
+func (r deadlineReset) Reset(ctx context.Context, _ ports.ResetSpec) (map[string]int64, error) {
+	r.d.deadline, r.d.has = ctx.Deadline()
+	return nil, fmt.Errorf("sqlstore: rolled back: %w", context.DeadlineExceeded)
+}
+
+// TestResetAllDataWipeTimeout: the wipe runs under a 2-minute deadline; a timed-out wipe is
+// refused, nothing is unreconciled or latched, and the locks are released.
+func TestResetAllDataWipeTimeout(t *testing.T) {
+	r := newResetEnv(t)
+	ds := &deadlineStore{Store: r.svc.d.Store}
+	r.svc.d.Store = ds
+	start := time.Now()
+	_, err := r.reset(t)
+	if !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("err = %v", err)
+	}
+	if !ds.has || ds.deadline.Before(start.Add(dataResetWipeTimeout-time.Second)) || ds.deadline.After(time.Now().Add(dataResetWipeTimeout)) {
+		t.Fatalf("deadline %v (set %v), want about %s from now", ds.deadline, ds.has, dataResetWipeTimeout)
+	}
+	if !r.svc.Reconciled(r.a.ID).OK {
+		t.Fatal("a timed-out wipe unreconciled the account")
+	}
+	if a := r.audits("data.reset_refused"); len(a) != 1 || len(r.audits("data.reset")) != 0 {
+		t.Fatalf("audit %+v", a)
+	}
+	l := r.svc.rt.agent(r.a.ID)
+	if !l.ctl.TryLock() || !l.entry.TryLock() {
+		t.Fatal("left locked")
+	}
+	l.entry.Unlock()
+	l.ctl.Unlock()
 }

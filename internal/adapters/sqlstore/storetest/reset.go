@@ -50,6 +50,13 @@ func runReset(t *testing.T, s ports.Store, ownerID string, t0 time.Time) {
 		if _, err := dr.Reset(ctx, ports.ResetSpec{}); !errors.Is(err, domain.ErrInvalid) {
 			t.Fatalf("reset without a time = %v", err)
 		}
+		// A context that has ended (the app bounds the wipe with a deadline, review fix
+		// 2026-11-28) fails the reset with nothing changed.
+		ended, cancel := context.WithCancel(ctx)
+		cancel()
+		if _, err := dr.Reset(ended, ports.ResetSpec{At: at, AccountIDs: ids}); err == nil {
+			t.Fatal("a reset with an ended context succeeded")
+		}
 		if after, err := dr.Counts(ctx); err != nil || !maps.Equal(before, after) {
 			t.Fatalf("a failed reset changed rows:\nbefore %v\nafter  %v (%v)", before, after, err)
 		}
@@ -73,14 +80,14 @@ func runReset(t *testing.T, s ports.Store, ownerID string, t0 time.Time) {
 				t.Errorf("%s: %d left, %d reported deleted of %d", name, after[name], got[name], before[name])
 			}
 		}
-		if got["real_gates_locked"] != 1 || got["settings"] != 3 {
+		if got["real_gates_locked"] != 1 || got["settings"] != 2 {
 			t.Errorf("reported %v", got)
 		}
 		for name, n := range before {
 			switch {
 			case slices.Contains(resetWipedTables, name):
 			case name == "settings":
-				if want := n - 3 + 1 + int64(len(ids)); after[name] != want {
+				if want := n - 2 + 1 + int64(len(ids)); after[name] != want {
 					t.Errorf("settings = %d, want %d", after[name], want)
 				}
 			case after[name] != n:
@@ -89,9 +96,12 @@ func runReset(t *testing.T, s ports.Store, ownerID string, t0 time.Time) {
 		}
 		st := s.Settings()
 		for k, want := range map[string]string{
-			"agent.aggressiveness_adapt.acc-reset": "", "research.state.acc-reset": "", "events.seen." + ownerID: "",
-			"agent.aggressivenessXadapt.acc-reset": "kept", // "_" is escaped, not a wildcard
-			"watchlist.signals.acc-reset":          "s",    // goes with the watchlist only
+			"research.state.acc-reset": "", "events.seen." + ownerID: "",
+			// Full autonomy's step down after a loss-limit day is kept: a reset never makes an
+			// account trade more aggressively (review fix 2026-11-28).
+			"agent.aggressiveness_adapt.acc-reset": "x",
+			"agent.aggressivenessXadapt.acc-reset": "kept",
+			"watchlist.signals.acc-reset":          "s", // goes with the watchlist only
 			"agent.state.acc-reset":                "stopped",
 			domain.SettingDataResetAt:              at.Format(time.RFC3339Nano),
 			domain.HistorySinceKey("acc-reset"):    at.Format(time.RFC3339Nano),

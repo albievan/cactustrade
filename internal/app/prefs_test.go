@@ -116,7 +116,7 @@ func TestMyPreferencesOwnOnly(t *testing.T) {
 
 func TestMyPreferencesSurvivesDataResetPrefixes(t *testing.T) {
 	// R49's wiped settings prefixes must never match a preferences key.
-	for _, wiped := range []string{"agent.aggressiveness_adapt.", "research.state.", "events.seen.", "watchlist.signals."} {
+	for _, wiped := range []string{"research.state.", "events.seen.", "watchlist.signals."} {
 		if strings.HasPrefix(PrefsKeyPrefix, wiped) || strings.HasPrefix(wiped, PrefsKeyPrefix) {
 			t.Fatalf("prefs prefix %q overlaps a reset prefix %q", PrefsKeyPrefix, wiped)
 		}

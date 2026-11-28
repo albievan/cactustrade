@@ -15,12 +15,17 @@ func (s *Server) GetMyPreferences(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]json.RawMessage(p))
 }
 
+// maxPrefsBody caps a preferences patch at the HTTP edge (413 above it), whatever the general
+// JSON cap (maxBody) becomes: the stored preferences are capped at 60 KiB by the domain, so no
+// patch needs more (review fix 2026-11-28).
+const maxPrefsBody = 64 << 10
+
 // SetMyPreferences applies a merge patch to the caller's own view preferences (R50). The
 // body is read as raw JSON values so the use case validates exactly what was sent; the
 // session's CSRF token is checked by the middleware like every cookie write.
 func (s *Server) SetMyPreferences(w http.ResponseWriter, r *http.Request) {
 	var patch map[string]json.RawMessage
-	if !decode(w, r, &patch) {
+	if !decodeLimit(w, r, &patch, maxPrefsBody) {
 		return
 	}
 	if patch == nil { // the body was "null"

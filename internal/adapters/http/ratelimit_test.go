@@ -38,7 +38,8 @@ func TestRateLimitClassify(t *testing.T) {
 		{"POST", "/api/v1/watchlist/import", "POST /api/v1/watchlist/import", classMutation},
 		{"GET", "/api/v1/watchlist/overview", "GET /api/v1/watchlist/overview", classRead},
 		{"GET", "/api/v1/live", "GET /api/v1/live", classStream},
-		{"PUT", "/api/v1/me/preferences", "PUT /api/v1/me/preferences", classRead},
+		{"PUT", "/api/v1/me/preferences", "PUT /api/v1/me/preferences", classPrefs},
+		{"GET", "/api/v1/me/preferences", "GET /api/v1/me/preferences", classRead},
 		{"PUT", "/api/v1/me/profile", "PUT /api/v1/me/profile", classMutation},
 		{"GET", "/healthz", "GET /healthz", classNever},
 		{"GET", "/metrics", "GET /metrics", classNever},
@@ -58,7 +59,7 @@ func TestRateLimitPerClass(t *testing.T) {
 		class rateClass
 		n     int
 	}{
-		{classRead, 600}, {classMutation, 60}, {classExport, 10}, {classStream, 30},
+		{classRead, 600}, {classMutation, 60}, {classExport, 10}, {classStream, 30}, {classPrefs, 120},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.class), func(t *testing.T) {
@@ -192,7 +193,7 @@ func TestRateLimitNeverThrottlesStopping(t *testing.T) {
 	if code, m, _ := x.do("POST", "/api/v1/agent/start", "", x.csrfHdr()...); code != 200 {
 		t.Fatalf("start %d %v", code, m)
 	}
-	for _, c := range []rateClass{classRead, classMutation, classExport, classStream} {
+	for _, c := range []rateClass{classRead, classMutation, classExport, classStream, classPrefs} {
 		for _, id := range []string{"ip:127.0.0.1", "user:" + uid, "key:" + keyID} {
 			for {
 				if ok, _ := x.h.rates.Allow(c, id); !ok {
@@ -218,5 +219,52 @@ func TestRateLimitNeverThrottlesStopping(t *testing.T) {
 	}
 	if code, body := x.bearer("POST", "/api/v1/agent/kill", `{"reason":"again"}`, key); code != 200 || !strings.Contains(body, `"already":true`) {
 		t.Fatalf("kill with a key %d %s", code, body)
+	}
+}
+
+// TestRateLimitPreferences (review fix 2026-11-28): saving view preferences has its own
+// bucket per principal: exhausting it leaves reads and mutations untouched, exhausting
+// those leaves it untouched, and it does not follow the address; the body is capped at
+// 64 KiB at the HTTP edge (413).
+func TestRateLimitPreferences(t *testing.T) {
+	x := newAgentTCServer(t, func(*app.Deps) {}, Config{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, MetricsToken: "mt"}, slog.New(slog.DiscardHandler))
+	x.h.rates = newRateLimiter(RateLimits{Read: 5, Mutation: 2, Prefs: 3})
+	put := func(hdr ...string) int {
+		code, _, _ := x.do("PUT", "/api/v1/me/preferences", `{"dashboard.liveInvest.range":"max"}`, append(x.csrfHdr(), hdr...)...)
+		return code
+	}
+	var got []string
+	for range 4 {
+		got = append(got, fmt.Sprint(put()))
+	}
+	if strings.Join(got, " ") != "200 200 200 429" {
+		t.Fatalf("preference saves: %v", got)
+	}
+	// the same user from another address: still the principal's empty bucket
+	if code := put("X-Forwarded-For", "198.51.100.7"); code != 429 {
+		t.Fatalf("from another address: %d", code)
+	}
+	if code, _, _ := x.do("GET", "/api/v1/agent", ""); code != 200 {
+		t.Fatalf("a read after the saves: %d", code)
+	}
+	if code, _, _ := x.do("POST", "/api/v1/agent/reconcile", "", x.csrfHdr()...); code != 200 {
+		t.Fatalf("a mutation after the saves: %d", code)
+	}
+
+	// the other way round: exhausted reads and mutations leave the saves alone
+	y := newAgentTCServer(t, func(*app.Deps) {}, Config{MetricsToken: "mt"}, slog.New(slog.DiscardHandler))
+	y.h.rates = newRateLimiter(RateLimits{Read: 1, Mutation: 1, Prefs: 3})
+	y.do("GET", "/api/v1/agent", "")
+	y.do("POST", "/api/v1/agent/reconcile", "", y.csrfHdr()...)
+	if code, _, _ := y.do("POST", "/api/v1/agent/reconcile", "", y.csrfHdr()...); code != 429 {
+		t.Fatalf("mutations not exhausted: %d", code)
+	}
+	if code, m, _ := y.do("PUT", "/api/v1/me/preferences", `{"a.b":1}`, y.csrfHdr()...); code != 200 {
+		t.Fatalf("a save after the mutations: %d %v", code, m)
+	}
+	// the body cap: one byte over 64 KiB is 413, whatever the general cap
+	big := `{"a.b":"` + strings.Repeat("x", maxPrefsBody) + `"}`
+	if code, _, _ := y.do("PUT", "/api/v1/me/preferences", big, y.csrfHdr()...); code != 413 {
+		t.Fatalf("a %d-byte body: %d", len(big), code)
 	}
 }

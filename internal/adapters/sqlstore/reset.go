@@ -64,10 +64,11 @@ var resetKept = []resetTable{
 }
 
 // resetSettings are the LIKE patterns (escape '!') of the settings derived from the wiped
-// data: the adapted aggressiveness, web research's state and the events seen. The
-// watchlist's signals go with the watchlist (resetWatchSettings).
+// data: web research's state and the events seen. The watchlist's signals go with the
+// watchlist (resetWatchSettings). Full autonomy's aggressiveness adjustment
+// (agent.aggressiveness_adapt.<id>, the step down after a loss-limit day) is kept: a reset
+// must never make an account trade more aggressively (review fix 2026-11-28).
 var resetSettings = []string{
-	"agent.aggressiveness!_adapt.%",
 	"research.state.%",
 	"events.seen.%",
 }

@@ -5,7 +5,7 @@ import { useMode } from "../lib/mode";
 import { EventsBell } from "./EventsBell";
 import { AccountSwitcher } from "./AccountSwitcher";
 import { RealBanner } from "./RealBanner";
-import { usePrefsFlush, usePrefsSaveFailed } from "../lib/prefs";
+import { usePrefsSaveFailed, usePrefsSignOut } from "../lib/prefs";
 
 interface Item { to: string; icon: string; label: string; perm?: string; end?: boolean }
 
@@ -45,7 +45,7 @@ export function Layout() {
   const real = mode?.mode === "real";
   const [navOpen, setNavOpen] = useState(false);
   const prefsFailed = usePrefsSaveFailed();
-  const flushPrefs = usePrefsFlush();
+  const endPrefs = usePrefsSignOut();
   const location = useLocation();
   return (
     <>
@@ -75,7 +75,7 @@ export function Layout() {
             <i className="bi bi-person-circle me-1" />{me?.user.username} <span className="opacity-75">({me?.user.role})</span>
           </NavLink>
         </div>
-        <button className="btn btn-sm btn-outline-secondary" onClick={() => void flushPrefs().finally(() => void signOut())} title="Sign out" aria-label="Sign out"><i className="bi bi-box-arrow-right" /></button>
+        <button className="btn btn-sm btn-outline-secondary" onClick={() => void endPrefs().finally(() => void signOut())} title="Sign out" aria-label="Sign out"><i className="bi bi-box-arrow-right" /></button>
       </header>
       <RealBanner />
       {real && <div className="real-strip">REAL MONEY — orders use your live eToro account</div>}

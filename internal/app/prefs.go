@@ -18,6 +18,10 @@ func prefsKey(userID string) string { return PrefsKeyPrefix + userID }
 
 // prefsCaller lets only a signed-in person in the web app at their own preferences. An API
 // key is refused: preferences are the web app's view choices, not an automation surface.
+// No RBAC permission is checked, on purpose (R50 decision, review fix 2026-11-28): every
+// role, a viewer included, may keep its own view choices, and the key is always the caller's
+// own id, so there is nothing a permission could add; the gate is an authenticated web
+// session whose default password has been changed.
 func prefsCaller(p Principal) error {
 	if p.UserID == "" {
 		return domain.ErrUnauthenticated

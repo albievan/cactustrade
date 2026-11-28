@@ -19,6 +19,14 @@ export const RETRY_MS = 15_000;
 
 const cacheKey = (userId: string) => `cactustrade.prefs.${userId}`;
 
+function clearCache(userId: string) {
+  try {
+    localStorage.removeItem(cacheKey(userId));
+  } catch {
+    /* storage off: nothing to clear */
+  }
+}
+
 function readCache(userId: string): Values {
   try {
     const v = JSON.parse(localStorage.getItem(cacheKey(userId)) ?? "{}");
@@ -34,7 +42,9 @@ export class PrefsStore {
   private values: Values;
   private pending: Patch = {};
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private saving = false;
+  // chain: every save runs after the one before it (never two requests at once, so an older
+  // patch can never land after a newer one); flush and sign-out wait on it.
+  private chain: Promise<void> = Promise.resolve();
   private listeners = new Set<() => void>();
   private failed = false;
   private disposed = false;
@@ -81,11 +91,25 @@ export class PrefsStore {
     this.setFailed(true);
   }
 
-  // flush sends what is pending now (on leaving the page, keepalive lets it finish).
+  // flush sends what is pending now, after any save already on its way, and resolves once
+  // both are done (on leaving the page, keepalive lets it finish). Nothing pending at the
+  // time of a change made during an in-flight save is lost: it goes with this request.
   flush(keepalive = false): Promise<void> {
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;
-    return this.save(keepalive);
+    return this.enqueue(keepalive);
+  }
+
+  // signOut is the last save before signing out: everything pending reaches the server
+  // (after any save in flight), then this browser's copy is removed, so the next person on
+  // this browser never sees it. It never rejects.
+  async signOut(): Promise<void> {
+    try {
+      await this.flush();
+    } finally {
+      this.dispose();
+      clearCache(this.userId);
+    }
   }
 
   // dispose stops the timer (the provider unmounts: signed out or another user).
@@ -100,19 +124,21 @@ export class PrefsStore {
     if (this.disposed) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.save(false);
+      void this.enqueue(false);
     }, ms);
   }
 
+  // enqueue chains a save after the one before it; the result settles when it is done.
+  private enqueue(keepalive: boolean): Promise<void> {
+    this.chain = this.chain.then(() => this.save(keepalive));
+    return this.chain;
+  }
+
+  // save sends what is pending when it runs (never rejects: the chain must go on).
   private async save(keepalive: boolean): Promise<void> {
-    if (this.saving && !keepalive) {
-      this.schedule(SAVE_DELAY_MS);
-      return;
-    }
     const patch = this.pending;
     if (Object.keys(patch).length === 0) return;
     this.pending = {};
-    this.saving = true;
     try {
       await api.setMyPreferences(patch, keepalive);
       this.setFailed(false);
@@ -124,8 +150,6 @@ export class PrefsStore {
       // otherwise keep what was not saved, unless changed again since; try again later, quietly
       this.pending = { ...patch, ...this.pending };
       this.schedule(RETRY_MS);
-    } finally {
-      this.saving = false;
     }
   }
 
@@ -246,8 +270,16 @@ export function usePrefsSaveFailed(): boolean {
   return useSyncExternalStore(store ? store.subscribe : noop, () => (store ? store.saveFailed() : false));
 }
 
-// usePrefsFlush returns a function that saves pending choices now (before signing out).
+// usePrefsFlush returns a function that saves pending choices now, after any save already
+// on its way.
 export function usePrefsFlush(): () => Promise<void> {
   const store = useContext(PrefsContext);
   return useCallback(() => (store ? store.flush() : Promise.resolve()), [store]);
+}
+
+// usePrefsSignOut returns what to await before signing out: every pending choice reaches the
+// server, then this browser's copy of them is removed. It never rejects.
+export function usePrefsSignOut(): () => Promise<void> {
+  const store = useContext(PrefsContext);
+  return useCallback(() => (store ? store.signOut() : Promise.resolve()), [store]);
 }

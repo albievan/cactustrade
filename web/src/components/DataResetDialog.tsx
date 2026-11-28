@@ -78,7 +78,7 @@ export function DataResetDialog({ onCancel, onDone }: {
           {watchlists && <li>watchlists: {pv.kept.watchlist ?? 0}</li>}
         </ul>
         <p className="small">Kept: users, sessions, API keys, secrets, accounts and their sharing, settings, risk limits, kill switches
-          and high-water marks, instrument blocks, instruments, themes, statement schedules, the mail outbox, real-trading gate
+          and high-water marks, full autonomy&apos;s lowered aggressiveness after a loss-limit day, instrument blocks, instruments, themes, statement schedules, the mail outbox, real-trading gate
           records (an armed one is locked) and the audit log{watchlists ? "" : ", and the watchlists"}. History starts from the reset.</p>
         <p className="small" data-testid="reset-backup">{pv.backupReady
           ? <>An encrypted backup is taken first{pv.backupFolder ? <> into <code>{pv.backupFolder}</code></> : ""}; without it nothing is wiped.</>

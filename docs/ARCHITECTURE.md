@@ -379,13 +379,15 @@ DATA`; `app.ResetAllData`, `GET|POST /api/v1/system/data-reset`). It wipes the t
 ```
  phrase → password (sign-in limiter) → rt.resetting (no start, auto-start or arm; kills,
  disarms and exits go on) → ReconcileAll → domain.DataResetChecks → audit data.reset_started
- → runBackup(trigger reset; a failure stops here, nothing wiped) → every account's ctl lock
- (TryLock in id order, ≤ 5 s, else 409) → checks again → ports.DataReset.Reset (one
- transaction) → gate disarms latched, every account unreconciled → unlock → audit data.reset,
+ → runBackup(trigger reset; a failure stops here, nothing wiped) → per account in id order:
+ ctl lock, cancel its running agent tick, entry lock (TryLock, ≤ 5 s in all, else 409) →
+ checks again → ports.DataReset.Reset (one transaction, ≤ 2 min, else rolled back and 503)
+ → gate disarms latched, every account unreconciled → unlock in reverse → audit data.reset,
  warning event, e-mail to every admin and account owner → ReconcileAll
 ```
 
-- **Checks** (pure, `domain.DataResetChecks`): every agent stopped or killed; no lease held by
+- **Checks** (pure, `domain.DataResetChecks`): every agent stopped or killed (an agent state
+  that cannot be read refuses the reset: `readAgentState`, never "stopped" by default); no lease held by
   another process; no real-money gate stored armed (one no longer in force is locked first);
   every eToro account with keys reconciled OK by this run; no open agent position, no order
   that is not final, no order created in the last 15 min — on **every** platform (Trading
@@ -393,10 +395,11 @@ DATA`; `app.ResetAllData`, `GET|POST /api/v1/system/data-reset`). It wipes the t
 - **Wiped** (`sqlstore.resetWiped` = `domain.DataResetWipedTables`): `orders`,
   `agent_positions`, `trades`, `decisions`, `llm_calls`, `equity_snapshots`, `events`,
   `reviews`; with the box ticked also `watchlist`. Settings derived from them:
-  `agent.aggressiveness_adapt.*`, `research.state.*`, `events.seen.*` (and
-  `watchlist.signals.*` with the watchlists).
+  `research.state.*`, `events.seen.*` (and `watchlist.signals.*` with the watchlists).
 - **Kept** (`sqlstore.resetKept`): users, sessions, API keys, secrets, the audit log,
-  accounts and shares, every other setting, risk limits, **`risk_state`** (kill switch,
+  accounts and shares, every other setting — including full autonomy's aggressiveness
+  adjustment `agent.aggressiveness_adapt.*` (the step down after a loss-limit day: a reset
+  never makes an account trade more aggressively) — risk limits, **`risk_state`** (kill switch,
   high-water mark: a reset never clears a kill), instrument blocks, instruments, Trading 212's
   catalogue and instrument matches, themes, statement schedules, the outbox, password-reset
   links, leases, `real_gates` rows (an armed one is set locked with `DisarmDataReset`) and
@@ -419,7 +422,11 @@ changed only by that user from a web session (`GET`/`PUT /api/v1/me/preferences`
 patch). The rules (key pattern, value shapes, 200 keys, 60 KiB) are `domain.MergePreferences`;
 the use cases are `app.MyPreferences` / `SetMyPreferences`. In the web app `PrefsProvider`
 loads them before the pages render and `usePref(key, default)` replaces `useState` for a
-view choice; saves are debounced (500 ms). They are never read by the agent, the risk
+view choice; saves are debounced (500 ms) and chained on one promise (never two requests at
+once, also the `keepalive` one on `pagehide`); sign-out awaits every pending save and then
+removes this browser's copy (`cactustrade.prefs.<userId>`). The PUT has its own rate bucket
+(120/min per principal) and a 64 KiB body cap. Access needs only a signed-in web session (own
+key only, no RBAC permission; R50 decision). They are never read by the agent, the risk
 engine or authorization, and are not audited. A data reset (R49) keeps them.
 
 ## Accounts

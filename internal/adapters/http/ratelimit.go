@@ -18,17 +18,21 @@ const (
 	classMutation rateClass = "mutation"
 	classExport   rateClass = "export"
 	classStream   rateClass = "stream"
+	// classPrefs is saving the caller's own view preferences (R50): its own small bucket per
+	// principal, so it neither eats the mutation budget of real actions nor the read budget.
+	classPrefs rateClass = "prefs"
 )
 
 // RateLimits are the API rate limits per minute, per principal (user or API key) and per
 // address (PLAN 7.3). Zero fields take OD33's defaults.
 type RateLimits struct {
-	Read, Mutation, Export, Stream int
+	Read, Mutation, Export, Stream, Prefs int
 }
 
 // DefaultRateLimits are OD33's numbers: reads 600/min, mutations 60/min, exports 10/min,
-// stream connects 30/min.
-var DefaultRateLimits = RateLimits{Read: 600, Mutation: 60, Export: 10, Stream: 30}
+// stream connects 30/min; and R50's view-preference saves, 120/min per principal (review fix
+// 2026-11-28).
+var DefaultRateLimits = RateLimits{Read: 600, Mutation: 60, Export: 10, Stream: 30, Prefs: 120}
 
 func (l RateLimits) withDefaults() RateLimits {
 	d := DefaultRateLimits
@@ -44,6 +48,9 @@ func (l RateLimits) withDefaults() RateLimits {
 	if l.Stream > 0 {
 		d.Stream = l.Stream
 	}
+	if l.Prefs > 0 {
+		d.Prefs = l.Prefs
+	}
 	return d
 }
 
@@ -57,6 +64,8 @@ func (l RateLimits) perMinute(c rateClass) int {
 		return l.Export
 	case classStream:
 		return l.Stream
+	case classPrefs:
+		return l.Prefs
 	}
 	return 0
 }
@@ -95,11 +104,12 @@ func classify(method, path, pattern string) rateClass {
 		// R49: a data reset backs the whole database up first.
 		pattern == "POST /api/v1/system/data-reset":
 		return classExport
-	case method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions,
+	case pattern == "PUT /api/v1/me/preferences":
 		// R50: saving the caller's own view preferences (a chart range, a tab) is a small
-		// settings write the web app makes as people click about; it counts as a read so it
+		// settings write the web app makes as people click about; its own bucket, so it
 		// never eats the mutation budget of real actions (risk limits, starting the agent).
-		pattern == "PUT /api/v1/me/preferences":
+		return classPrefs
+	case method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions:
 		return classRead
 	}
 	return classMutation
@@ -199,7 +209,8 @@ func (l *rateLimiter) Len() int {
 
 // rateLimit applies the API rate limits to a routed request (it runs inside the mux, where
 // r.Pattern is known, after authentication): one bucket per principal (user id, or API key
-// id) and one per address, for the request's class. Kill, pause, stop and disarm are never
+// id) and one per address, for the request's class (a preferences save: the principal's
+// only). Kill, pause, stop and disarm are never
 // limited. Refused: 429 problem+json with Retry-After, counted in a metric.
 func (s *Server) rateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +226,9 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 			ids = append(ids, "key:"+st.principal.APIKeyID)
 		case st.principal.UserID != "":
 			ids = append(ids, "user:"+st.principal.UserID)
+		}
+		if c == classPrefs && len(ids) > 1 {
+			ids = ids[1:] // per principal only: people behind one address do not share it
 		}
 		if ok, wait := s.rates.Allow(c, ids...); !ok {
 			s.metrics.rateLimited.WithLabelValues(string(c)).Inc()

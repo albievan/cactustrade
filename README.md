@@ -245,8 +245,9 @@ run `--restore` there.
 System → **Reset all trading data** (admin, in the web app) starts every account's trading
 record afresh: orders, the positions cactusTrade opened, trade history, decisions, LLM calls,
 equity history, events and reviews of all accounts are deleted (the watchlists too, only if
-you tick the box). Users, accounts, keys, settings, limits, kill switches and the audit log
-stay. It is refused while an agent runs or is paused, a real-money gate is armed, an account
+you tick the box). Users, accounts, keys, settings, limits, kill switches, full autonomy's
+lowered aggressiveness after a loss-limit day and the audit log stay: a reset never makes an
+account trade more aggressively. It is refused while an agent runs or is paused, a real-money gate is armed, an account
 is not reconciled, cactusTrade has a position or an order open, or an order is younger than
 15 minutes. An encrypted backup is taken first (a backup recipient must be set under Setup →
 Backups); restore it with `cactustrade restore` or `deploy.sh --restore` to undo the reset.

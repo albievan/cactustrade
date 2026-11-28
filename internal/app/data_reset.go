@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/albievan/cactustrade/internal/domain"
@@ -16,19 +17,24 @@ import (
 // Reset all trading data (PLAN R49). An admin, in a web session, with the password and the
 // typed phrase, wipes every account's trading data (OD39) after an encrypted backup (R48).
 // The order of operations is fixed: refuse new starts and arming (rt.resetting), reconcile
-// every eToro account, check, back up, take every account's control lock, check again, wipe
-// in one transaction, latch the gate disarms in memory, mark every account unreconciled,
-// announce, reconcile again. Kills, disarms and exits are never blocked: they only wait for
-// the control lock for as long as the wipe's transaction runs.
+// every eToro account, check, back up, take every account's control lock and (after
+// cancelling its running agent tick) its entry lock, check again, wipe in one transaction
+// (bounded by dataResetWipeTimeout), latch the gate disarms in memory, mark every account
+// unreconciled, announce, reconcile again. Kills, disarms and exits are never blocked: they
+// only wait for the control lock for as long as the wipe's transaction runs.
 
 // msgResetting is why a start, an automatic start or an arming is refused during a reset.
 const msgResetting = "a data reset is running"
 
-// dataResetLockWait bounds how long the reset waits for every account's control lock (a kill
-// or a start holds it briefly); then the reset is refused.
+// dataResetLockWait bounds how long the reset waits, in all, for every account's control
+// and entry locks (a kill, a start or a cancelled agent tick holds one briefly); then the
+// reset is refused. dataResetWipeTimeout bounds the wipe's transaction: when it runs out the
+// transaction rolls back and the reset is refused, so the locks (and with them kills and
+// starts) are never held for longer.
 const (
-	dataResetLockWait = 5 * time.Second
-	dataResetLockStep = 100 * time.Millisecond
+	dataResetLockWait    = 5 * time.Second
+	dataResetLockStep    = 100 * time.Millisecond
+	dataResetWipeTimeout = 2 * time.Minute
 )
 
 // RealEvidenceWarning is what a reset does to one real-money account's demo evidence (D37,
@@ -102,7 +108,12 @@ func (s *Service) dataResetFacts(ctx context.Context, as []domain.Account, recon
 	}
 	for _, a := range as {
 		if a.Agentable() {
-			f.Agents[a.ID] = s.agentState(ctx, a.ID)
+			// An unreadable state is never taken for "stopped" here: the reset is refused.
+			st, err := s.readAgentState(ctx, a.ID)
+			if err != nil {
+				return f, fmt.Errorf("reading the agent state of %s: %w", a.Name, err)
+			}
+			f.Agents[a.ID] = st
 		}
 		switch l, err := s.d.Store.AgentLeases().Get(ctx, a.ID); {
 		case errors.Is(err, domain.ErrNotFound):
@@ -311,7 +322,8 @@ func (s *Service) ResetAllData(ctx context.Context, p Principal, confirm, passwo
 	return res, nil
 }
 
-// wipeLocked checks again and wipes; the caller holds every account's control lock.
+// wipeLocked checks again and wipes; the caller holds every account's control and entry
+// locks.
 func (s *Service) wipeLocked(ctx context.Context, as []domain.Account, check func() error, wipeWatchlists bool) (DataResetResult, error) {
 	if err := check(); err != nil {
 		return DataResetResult{}, err
@@ -321,7 +333,15 @@ func (s *Service) wipeLocked(ctx context.Context, as []domain.Account, check fun
 	for _, a := range as {
 		ids = append(ids, a.ID)
 	}
-	counts, err := s.d.Store.DataReset().Reset(ctx, ports.ResetSpec{At: at, WipeWatchlists: wipeWatchlists, AccountIDs: ids})
+	wctx, cancel := context.WithTimeout(ctx, dataResetWipeTimeout)
+	defer cancel()
+	counts, err := s.d.Store.DataReset().Reset(wctx, ports.ResetSpec{At: at, WipeWatchlists: wipeWatchlists, AccountIDs: ids})
+	// A committed wipe counts even if the deadline passed just after; a failed one rolled
+	// back (sqlstore.dataReset.Reset) and is refused. A driver may not wrap the context's
+	// error, so the deadline is read from the context itself.
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(wctx.Err(), context.DeadlineExceeded)) {
+		return DataResetResult{}, fmt.Errorf("the wipe took longer than %s and was rolled back, nothing was wiped: %w", dataResetWipeTimeout, domain.ErrUnavailable)
+	}
 	if err != nil {
 		return DataResetResult{}, fmt.Errorf("wiping: %w: %w", err, domain.ErrUnavailable)
 	}
@@ -334,35 +354,50 @@ func (s *Service) wipeLocked(ctx context.Context, as []domain.Account, check fun
 	return DataResetResult{Counts: counts, WipedWatchlists: wipeWatchlists, At: at}, nil
 }
 
-// lockAllAccounts takes every account's control lock in id order, each by TryLock retried
-// for at most dataResetLockWait in all (a kill or a start holds it only briefly). On failure
-// nothing stays locked. The result unlocks them.
+// lockAllAccounts takes every account's control lock and then its entry lock, account by
+// account in id order, each by TryLock, retried for at most dataResetLockWait in all (a kill
+// or a start holds the control lock only briefly). Before waiting for an entry lock it
+// cancels the account's running agent tick, so a tick in flight unwinds instead of placing
+// an order the wipe would delete; once the reset holds the entry lock no tick runs on the
+// account until it is released. On failure nothing stays locked. The result unlocks them in
+// reverse order.
 func (s *Service) lockAllAccounts(ctx context.Context, as []domain.Account) (func(), error) {
 	ids := make([]string, 0, len(as))
 	for _, a := range as {
 		ids = append(ids, a.ID)
 	}
 	sort.Strings(ids)
-	var held []*agentLocks
+	var held []*sync.Mutex
 	unlock := func() {
 		for i := len(held) - 1; i >= 0; i-- {
-			held[i].ctl.Unlock()
+			held[i].Unlock()
 		}
 	}
-	tries := int(dataResetLockWait / dataResetLockStep)
-	for _, id := range ids {
-		l := s.rt.agent(id)
-		for n := 0; !l.ctl.TryLock(); n++ {
-			if n >= tries {
-				unlock()
-				return nil, fmt.Errorf("an account is busy (a kill, a start or a change is running): try again: %w", domain.ErrConflict)
+	left := int(dataResetLockWait / dataResetLockStep)
+	take := func(m *sync.Mutex) error {
+		for !m.TryLock() {
+			if left <= 0 {
+				return fmt.Errorf("an account is busy (a kill, a start, a change or an agent tick is running): try again: %w", domain.ErrConflict)
 			}
+			left--
 			if err := s.d.Sleep(ctx, dataResetLockStep); err != nil {
-				unlock()
-				return nil, err
+				return err
 			}
 		}
-		held = append(held, l)
+		held = append(held, m)
+		return nil
+	}
+	for _, id := range ids {
+		l := s.rt.agent(id)
+		if err := take(&l.ctl); err != nil {
+			unlock()
+			return nil, err
+		}
+		s.rt.cancelEntries(id)
+		if err := take(&l.entry); err != nil {
+			unlock()
+			return nil, err
+		}
 	}
 	return unlock, nil
 }
