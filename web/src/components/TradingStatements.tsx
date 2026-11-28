@@ -8,6 +8,7 @@ import { useSession } from "../lib/session";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FixButton } from "./FixButton";
 import { InfoCard } from "./InfoCard";
+import { oneOf, usePref } from "../lib/prefs";
 import { ProblemAlert } from "./ProblemAlert";
 
 // Trading statements (R30): schedules that e-mail daily, weekly or monthly PDF statements,
@@ -23,6 +24,9 @@ const periodWhen: Record<StatementPeriod, string> = {
   monthly: "on the 1st at 06:00 UTC, for the month before",
 };
 const exchanges = ["LSE", "NYSE", "ASX", "Other"] as const;
+const isPeriod = (v: unknown) => typeof v === "string" && v in periodLabel;
+const isScope = oneOf<StatementScope>(["combined", "account", "exchange"]);
+const isExchange = oneOf<string>(exchanges);
 
 function when(iso?: string): string {
   return iso ? new Date(iso).toLocaleString() : "";
@@ -305,11 +309,12 @@ function ScheduleForm({ accounts, initial, id, onCancel, onSaved }: {
 
 // PreviewForm downloads any one statement as a PDF (nothing is e-mailed).
 function PreviewForm({ accounts }: { accounts: StatementAccountRef[] }) {
-  const [period, setPeriod] = useState<StatementPeriod>("weekly");
+  // R50: the period, kind and exchange are the user's preferences (the day and account are not)
+  const [period, setPeriod] = usePref<StatementPeriod>("statements.preview.period", "weekly", isPeriod);
   const [from, setFrom] = useState("");
-  const [scope, setScope] = useState<StatementScope>("combined");
+  const [scope, setScope] = usePref<StatementScope>("statements.preview.scope", "combined", isScope);
   const [accountId, setAccountId] = useState("");
-  const [exchange, setExchange] = useState<string>("LSE");
+  const [exchange, setExchange] = usePref<string>("statements.preview.exchange", "LSE", isExchange);
   const acct = accountId || accounts[0]?.id || "";
   const href = statementPreviewUrl({
     period, from: from || undefined, scope,

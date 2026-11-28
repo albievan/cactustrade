@@ -1,7 +1,8 @@
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { usd, type Analysis, type AnalysisGroup, type AnalysisGrouping, type AnalysisTradeRow } from "../lib/api";
-import { applyFilters, choices, groupRows, nextSort, sortRows, type Column, type Filters, type Sort } from "../lib/tableView";
+import { applyFilters, choices, groupRows, nextSort, sortRows, useTableView, type Column, type Sort } from "../lib/tableView";
+import { oneOf, usePref } from "../lib/prefs";
 
 // The analysis tiles' drill-down (R35): what is behind each figure. Every number comes from
 // the server's analysis (its groups and its list of closed trades); this only arranges it.
@@ -14,6 +15,7 @@ export const TILE_TITLES: Record<Tile, string> = {
 };
 
 const DIMENSIONS: AnalysisGrouping["dimension"][] = ["exchange", "account", "theme", "playbook", "direction", "date"];
+const isDimension = oneOf(DIMENSIONS);
 
 export function AnalysisDrill({ a, tile, onClose, equity }: { a: Analysis; tile: Tile; onClose: () => void; equity: ReactNode }) {
   const ours = a.trades.filter((t) => t.ours);
@@ -29,28 +31,28 @@ export function AnalysisDrill({ a, tile, onClose, equity }: { a: Analysis; tile:
         {tile === "trades" && (
           <>
             <p className="small text-secondary">Every closed trade of positions cactusTrade opened in the period, newest first. Filter, group or sort by any column.</p>
-            <TradeTable key="trades" rows={ours} label="cactusTrade's closed trades" />
+            <TradeTable key="trades" prefKey="analysis.drill.trades.trades" rows={ours} label="cactusTrade's closed trades" />
           </>
         )}
         {tile === "winrate" && (
           <>
             <p className="small text-secondary">Wins, losses and the win rate of each group; below, the trades grouped by their result.</p>
             <Breakdown a={a} figure="winrate" />
-            <TradeTable key="winrate" rows={ours} label="cactusTrade's closed trades" group="outcome" />
+            <TradeTable key="winrate" prefKey="analysis.drill.winrate.trades" rows={ours} label="cactusTrade's closed trades" group="outcome" />
           </>
         )}
         {tile === "pnl" && (
           <>
             <p className="small text-secondary">Realised P&amp;L after the fees eToro reported, by group; below, every trade from the best to the worst.</p>
             <Breakdown a={a} figure="pnl" />
-            <TradeTable key="pnl" rows={ours} label="cactusTrade's closed trades" sort={{ key: "net", desc: true }} />
+            <TradeTable key="pnl" prefKey="analysis.drill.pnl.trades" rows={ours} label="cactusTrade's closed trades" sort={{ key: "net", desc: true }} />
           </>
         )}
         {tile === "average" && (
           <>
             <p className="small text-secondary">The average realised P&amp;L per trade of each group, with its best and worst trade.</p>
             <Breakdown a={a} figure="average" />
-            <TradeTable key="average" rows={ours} label="cactusTrade's closed trades" sort={{ key: "net", desc: true }} />
+            <TradeTable key="average" prefKey="analysis.drill.average.trades" rows={ours} label="cactusTrade's closed trades" sort={{ key: "net", desc: true }} />
           </>
         )}
         {tile === "fees" && (
@@ -60,7 +62,7 @@ export function AnalysisDrill({ a, tile, onClose, equity }: { a: Analysis; tile:
               never counted as 0.{a.totals.feesUnknownTrades > 0 && ` ${a.totals.feesUnknownTrades} ${a.totals.feesUnknownTrades === 1 ? "trade has" : "trades have"} unknown fees.`}
             </p>
             <Breakdown a={a} figure="fees" />
-            <TradeTable key="fees" rows={ours} label="cactusTrade's closed trades" sort={{ key: "fees", desc: true }} />
+            <TradeTable key="fees" prefKey="analysis.drill.fees.trades" rows={ours} label="cactusTrade's closed trades" sort={{ key: "fees", desc: true }} />
           </>
         )}
         {tile === "drawdown" && (
@@ -78,7 +80,7 @@ export function AnalysisDrill({ a, tile, onClose, equity }: { a: Analysis; tile:
               {ours.length} of {a.trades.length} closed {a.trades.length === 1 ? "trade" : "trades"} listed were of positions cactusTrade opened.
               The others (opened by you or before cactusTrade) are left alone and not counted in any figure.
             </p>
-            <TradeTable key="ours" rows={a.trades} label="All closed trades" group="ours" withOurs />
+            <TradeTable key="ours" prefKey="analysis.drill.ours.trades" rows={a.trades} label="All closed trades" group="ours" withOurs />
           </>
         )}
         {tile === "llm" && <LlmDetails a={a} />}
@@ -92,7 +94,7 @@ export function AnalysisDrill({ a, tile, onClose, equity }: { a: Analysis; tile:
 
 // Breakdown shows the figure of the tile for each group of a chosen dimension.
 function Breakdown({ a, figure }: { a: Analysis; figure: "winrate" | "pnl" | "average" | "fees" }) {
-  const [dim, setDim] = useState<AnalysisGrouping["dimension"]>("exchange");
+  const [dim, setDim] = usePref<AnalysisGrouping["dimension"]>(`analysis.drill.${figure}.dimension`, "exchange", isDimension); // R50
   const g = a.groupings.find((x) => x.dimension === dim);
   const groups = (g?.groups ?? []).filter((x) => x.trades > 0);
   return (
@@ -168,18 +170,18 @@ const oursColumn: Column<AnalysisTradeRow> = {
   key: "ours", label: "Opened by", text: (t) => (t.ours ? "cactusTrade" : "not cactusTrade (not counted)"), filter: "choice", group: true,
 };
 
+const newestClosed: Sort = { key: "closed", desc: true };
+
 // TradeTable lists closed trades; it can be searched, filtered by any column, grouped and sorted.
-export function TradeTable({ rows, label, group = "", sort: initialSort = { key: "closed", desc: true }, withOurs = false }: {
-  rows: AnalysisTradeRow[]; label: string; group?: string; sort?: Sort; withOurs?: boolean;
+export function TradeTable({ prefKey, rows, label, group = "", sort: initialSort = newestClosed, withOurs = false }: {
+  prefKey: string; rows: AnalysisTradeRow[]; label: string; group?: string; sort?: Sort; withOurs?: boolean;
 }) {
   const columns = useMemo(() => (withOurs ? [...baseColumns, oursColumn] : baseColumns), [withOurs]);
   const shown = columns.filter((c) => !c.hidden);
   const groupable = columns.filter((c) => c.group);
-  const [filters, setFilters] = useState<Filters>({});
-  const [search, setSearch] = useState("");
-  const [groupBy, setGroupBy] = useState(group);
-  const [sort, setSort] = useState<Sort>(initialSort);
-  const [closed, setClosed] = useState<Record<string, boolean>>({});
+  // R50: each tile's table view is the user's preference
+  const { filters, setFilters, search, setSearch, groupBy, setGroupBy, sort, setSort, closed, setClosed } =
+    useTableView(prefKey, { groupBy: group, sort: initialSort });
   const list = useMemo(() => sortRows(applyFilters(rows, columns, filters, search), columns, sort), [rows, columns, filters, search, sort]);
   const groupCol = groupable.find((c) => c.key === groupBy);
   const groups = useMemo(() => groupRows(list, groupCol), [list, groupCol]);

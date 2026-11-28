@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Order } from "../lib/api";
 import { OrderFeed } from "./LiveCards";
+import { PrefsStore, PrefsStoreProvider } from "../lib/prefs";
 
 function order(over: Partial<Order>): Order {
   return {
@@ -43,6 +44,18 @@ describe("OrderFeed", () => {
     expect(within(feed).getByText("Short TSLA")).toBeInTheDocument();
     fireEvent.click(within(pick).getByRole("button", { name: /Long/ }));
     expect(within(screen.getByRole("list", { name: "Orders feed" })).queryByText("Short TSLA")).not.toBeInTheDocument();
+  });
+
+  it("keeps the chosen direction as the user's preference (R50)", () => {
+    const store = new PrefsStore("u1", {});
+    const first = render(<PrefsStoreProvider store={store}><OrderFeed orders={orders} /></PrefsStoreProvider>);
+    fireEvent.click(within(screen.getByRole("group", { name: "Show orders by direction" })).getByRole("button", { name: /Short/ }));
+    expect(store.get("dashboard.orders.side")).toBe("short");
+    first.unmount();
+    render(<PrefsStoreProvider store={new PrefsStore("u1", { "dashboard.orders.side": "short" })}><OrderFeed orders={orders} /></PrefsStoreProvider>);
+    expect(within(screen.getByRole("group", { name: "Show orders by direction" })).getByRole("button", { name: /Short/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByRole("list", { name: "Orders feed" })).getAllByRole("listitem")).toHaveLength(1);
+    store.dispose();
   });
 
   it("says when there are none", () => {

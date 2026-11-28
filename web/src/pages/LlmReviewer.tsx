@@ -4,6 +4,7 @@ import { useSession } from "../lib/session";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
 import { ResearchSettings } from "../components/ResearchSettings";
+import { oneOf, usePref } from "../lib/prefs";
 
 const blank: LlmProfileInput = { name: "", provider: "anthropic", model: "", baseUrl: "", timeoutSeconds: 0, inputPricePerMTok: "", outputPricePerMTok: "" };
 
@@ -145,6 +146,7 @@ export function LlmReviewer() {
 }
 
 const periods = [7, 30, 90, 400];
+const isPeriod = oneOf(periods);
 
 // usageCost shows a usage row's cost: exact when every call had a price, else what is known
 // and how many calls are unpriced (OD13: unknown is shown as unknown, never as 0).
@@ -156,7 +158,7 @@ export function usageCost(r: LlmUsageRow): string {
 
 // UsageCard: the LLM calls of the last days per profile and purpose (admin).
 function UsageCard({ setup }: { setup: LlmSetup }) {
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePref<number>("llm.usage.days", 30, isPeriod); // R50
   const [usage, setUsage] = useState<LlmUsage | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {

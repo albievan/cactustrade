@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { ReviewBoard } from "./ReviewBoard";
+import { PrefsStore, PrefsStoreProvider } from "../lib/prefs";
 
 function review(id: number, symbol: string, market: string, exchange: string, outcome = "no_signal") {
   return { instrumentId: id, symbol, theme: "AI", at: "2026-11-26T15:00:00Z", outcome, checks: [{ rule: "regime", pass: true }], summary: `${symbol} summary`, market, exchange };
@@ -29,7 +30,12 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-const mount = () => render(<MemoryRouter><ReviewBoard /></MemoryRouter>);
+let store: PrefsStore;
+const mount = (prefs: Record<string, unknown> = {}) => {
+  store = new PrefsStore("u1", prefs);
+  return render(<MemoryRouter><PrefsStoreProvider store={store}><ReviewBoard /></PrefsStoreProvider></MemoryRouter>);
+};
+afterEach(() => store?.dispose());
 const symbols = () => within(screen.getByRole("tabpanel")).getAllByRole("row").slice(1).map((r) => (r as HTMLTableRowElement).cells[0].textContent);
 
 describe("ReviewBoard", () => {
@@ -51,16 +57,22 @@ describe("ReviewBoard", () => {
     expect(within(screen.getByRole("tabpanel")).queryByText("BARC.L")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /Sydney/ }));
     expect(symbols()).toEqual(["CBA.ASX"]);
-    expect(window.localStorage.getItem("cactustrade.review.exchange")).toBe("ASX");
+    expect(store.get("dashboard.reviews.tab")).toBe("ASX"); // R50: the user's preference
     fireEvent.click(screen.getByRole("tab", { name: /Other/ }));
     expect(symbols()).toEqual(["ODD"]);
     fireEvent.click(screen.getByRole("tab", { name: /All/ }));
     expect(symbols()).toHaveLength(5);
   });
 
+  it("opens on the tab chosen at the last sign-in", async () => {
+    mount({ "dashboard.reviews.tab": "LSE" });
+    await screen.findByText("BARC.L");
+    expect(screen.getByRole("tab", { name: /London/ })).toHaveAttribute("aria-selected", "true");
+    expect(symbols()).toEqual(["BARC.L"]);
+  });
+
   it("falls back to All when the remembered exchange has nothing under review", async () => {
-    window.localStorage.setItem("cactustrade.review.exchange", "nowhere");
-    mount();
+    mount({ "dashboard.reviews.tab": "nowhere" });
     await screen.findByText("BARC.L");
     expect(screen.getByRole("tab", { name: /All/ })).toHaveAttribute("aria-selected", "true");
   });

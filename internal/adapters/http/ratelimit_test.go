@@ -38,6 +38,8 @@ func TestRateLimitClassify(t *testing.T) {
 		{"POST", "/api/v1/watchlist/import", "POST /api/v1/watchlist/import", classMutation},
 		{"GET", "/api/v1/watchlist/overview", "GET /api/v1/watchlist/overview", classRead},
 		{"GET", "/api/v1/live", "GET /api/v1/live", classStream},
+		{"PUT", "/api/v1/me/preferences", "PUT /api/v1/me/preferences", classRead},
+		{"PUT", "/api/v1/me/profile", "PUT /api/v1/me/profile", classMutation},
 		{"GET", "/healthz", "GET /healthz", classNever},
 		{"GET", "/metrics", "GET /metrics", classNever},
 		{"GET", "/", "/", classNever},

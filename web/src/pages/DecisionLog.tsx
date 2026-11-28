@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { api, errorText, usd, type Decision, type DecisionDetail } from "../lib/api";
 import { useMode } from "../lib/mode";
+import { usePref } from "../lib/prefs";
 import { NeedAccount } from "../components/NeedAccount";
 import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
@@ -18,6 +19,7 @@ export const outcomes: { value: string; label: string; badge: string }[] = [
 const verdictBadge: Record<string, string> = { approve: "text-bg-success", reduce: "text-bg-warning", reject: "text-bg-danger" };
 
 const pageSize = 100;
+const isOutcome = (v: unknown) => v === "" || outcomes.some((o) => o.value === v);
 
 function outcomeOf(v: string) {
   return outcomes.find((o) => o.value === v) ?? { value: v, label: v, badge: "text-bg-secondary" };
@@ -33,7 +35,7 @@ export function cost(v: string | undefined): string {
 export function DecisionLog() {
   const status = useMode();
   const [rows, setRows] = useState<Decision[] | null>(null);
-  const [outcome, setOutcome] = useState("");
+  const [outcome, setOutcome] = usePref<string>("decisions.outcome", "", isOutcome); // R50
   const [more, setMore] = useState(false);
   const [open, setOpen] = useState<Record<string, DecisionDetail | "loading" | string>>({});
   const [error, setError] = useState<unknown>(null);

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -157,6 +158,8 @@ type Service struct {
 	fx *fxIDs
 	// backups serialises backup runs (R48).
 	backups *backupState
+	// prefs serialises the read-merge-write of users' view preferences (R50).
+	prefs sync.Mutex
 }
 
 // New builds the service.

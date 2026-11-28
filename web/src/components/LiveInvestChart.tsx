@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, usd } from "../lib/api";
 import type { LiveSnapshot } from "../lib/live";
 import { dateTime, dayDate, hourMinute } from "../lib/format";
+import { oneOf, usePref } from "../lib/prefs";
 
 // The dashboard's live graph of the account's investments (R39): what the open positions are
 // worth (long and short apart), their open P&L, and equity, one point per live snapshot
@@ -10,6 +11,8 @@ import { dateTime, dayDate, hourMinute } from "../lib/format";
 // R43: a range — Day is the live points; Week, Month, Year and Max plot the stored equity
 // snapshots (every 15 minutes, kept 400 days), where "invested" is equity minus cash and the
 // open P&L is not stored.
+// R50: the chosen range and view are the user's preferences (they come back at the next
+// sign-in, in any browser).
 
 export interface InvestPoint { at: string; long: number; short: number; pnl: number; equity: number }
 
@@ -28,6 +31,8 @@ export const RANGES: { id: Range; label: string; days: number }[] = [
   { id: "year", label: "Year", days: 365 },
   { id: "max", label: "Max", days: 400 },
 ];
+const isView = oneOf(VIEWS.map((v) => v.id));
+const isRange = oneOf(RANGES.map((r) => r.id));
 const MAX_DRAWN = 600; // points drawn per line; longer series are thinned evenly
 const CAP = 2000; // points kept (about 2.8 hours at one every 5 seconds, plus the seed)
 
@@ -71,8 +76,8 @@ function load(key: string): InvestPoint[] {
 export function LiveInvestChart({ accountId, snapshot }: { accountId: string; snapshot: LiveSnapshot | null }) {
   const key = `cactustrade.invest.${accountId}`;
   const [points, setPoints] = useState<InvestPoint[]>(() => load(key));
-  const [view, setView] = useState<View>("invested");
-  const [range, setRange] = useState<Range>("day");
+  const [view, setView] = usePref<View>("dashboard.liveInvest.view", "invested", isView);
+  const [range, setRange] = usePref<Range>("dashboard.liveInvest.range", "day", isRange);
   const [hist, setHist] = useState<HistPoint[] | null>(null);
   const days = RANGES.find((r) => r.id === range)!.days;
   useEffect(() => {

@@ -6,7 +6,7 @@ import { InfoCard } from "../components/InfoCard";
 import { ProblemAlert } from "../components/ProblemAlert";
 import { DirectionBadge } from "../components/DirectionBadge";
 import { dateTime } from "../lib/format";
-import { applyFilters, choices, groupRows, nextSort, sortRows, type Column, type Filters, type Sort } from "../lib/tableView";
+import { applyFilters, choices, groupRows, nextSort, sortRows, useTableView, type Column, type Sort } from "../lib/tableView";
 
 const stateBadge: Record<string, string> = {
   created: "text-bg-light", sent: "text-bg-info", pending: "text-bg-info", filled: "text-bg-success",
@@ -53,11 +53,9 @@ export function Orders() {
   const status = useMode();
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [filters, setFilters] = useState<Filters>({});
-  const [search, setSearch] = useState("");
-  const [groupBy, setGroupBy] = useState("");
-  const [sort, setSort] = useState<Sort>(newestFirst);
-  const [closed, setClosed] = useState<Record<string, boolean>>({});
+  // R50: filters, search, grouping, sort and folded groups are the user's preferences
+  const { filters, setFilters, search, setSearch, groupBy, setGroupBy, sort, setSort, closed, setClosed } =
+    useTableView("orders.table", { sort: newestFirst });
   const load = useCallback(() => {
     api.orders(500).then((o) => { setOrders(o); setError(""); }).catch(setError);
   }, []);

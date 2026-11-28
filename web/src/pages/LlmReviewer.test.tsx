@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { SessionProvider } from "../lib/session";
+import { PrefsStore, PrefsStoreProvider } from "../lib/prefs";
 import { LlmReviewer } from "./LlmReviewer";
 
 const me = {
@@ -45,15 +46,16 @@ describe("InfoCard", () => {
       if (url.endsWith("/api/v1/llm")) return new Response(JSON.stringify(llm), { status: 200 });
       return new Response("{}", { status: 404 });
     });
-    localStorage.removeItem("cactustrade.info.llm");
-    render(<SessionProvider><LlmReviewer /></SessionProvider>);
+    const store = new PrefsStore("1", {});
+    render(<SessionProvider><PrefsStoreProvider store={store}><LlmReviewer /></PrefsStoreProvider></SessionProvider>);
     const toggle = await screen.findByRole("button", { name: /What it does/ });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/second pair of eyes/)).toBeInTheDocument();
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText(/second pair of eyes/)).not.toBeInTheDocument();
-    expect(localStorage.getItem("cactustrade.info.llm")).toBe("closed");
+    expect(store.get("infoCard.llm.open")).toBe(false); // R50: the user's preference, saved to the server
+    store.dispose();
   });
 });
 

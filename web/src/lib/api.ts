@@ -52,6 +52,8 @@ export type EmailSetupInput = components["schemas"]["EmailSetupInput"];
 export type OutboxMail = components["schemas"]["OutboxMail"];
 export type Profile = components["schemas"]["Profile"];
 export type ProfileInput = components["schemas"]["ProfileInput"];
+export type Preferences = components["schemas"]["Preferences"];
+export type PreferencesPatch = components["schemas"]["PreferencesPatch"];
 export type LlmTestResult = components["schemas"]["LlmTestResult"];
 export type Platform = components["schemas"]["Platform"];
 export type Overview = components["schemas"]["Overview"];
@@ -186,7 +188,8 @@ export function setCsrf(token: string | undefined) {
   }
 }
 
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+// keepalive lets a request finish after the page is left (R50: the last view preferences).
+export async function request<T>(method: string, path: string, body?: unknown, opts?: { keepalive?: boolean }): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (method !== "GET" && csrf) headers["X-CSRF-Token"] = csrf;
@@ -195,6 +198,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     headers,
     credentials: "same-origin",
     body: body === undefined ? undefined : JSON.stringify(body),
+    ...(opts?.keepalive ? { keepalive: true } : {}),
   });
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -271,6 +275,10 @@ export const api = {
   outbox: () => request<OutboxMail[]>("GET", "/api/v1/email/outbox"),
   myProfile: () => request<Profile>("GET", "/api/v1/me/profile"),
   setMyProfile: (p: ProfileInput) => request<Profile>("PUT", "/api/v1/me/profile", p),
+  // R50: the signed-in user's own view preferences (a merge patch; null deletes a key).
+  myPreferences: () => request<Preferences>("GET", "/api/v1/me/preferences"),
+  setMyPreferences: (patch: PreferencesPatch, keepalive = false) =>
+    request<Preferences>("PUT", "/api/v1/me/preferences", patch, { keepalive }),
   requestPasswordReset: (username: string) => request<void>("POST", "/api/v1/public/password-reset", { username }),
   confirmPasswordReset: (token: string, password: string) =>
     request<void>("POST", "/api/v1/public/password-reset/confirm", { token, password }),

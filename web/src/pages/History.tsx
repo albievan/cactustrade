@@ -7,6 +7,7 @@ import {
   api, exportUrl, usd, type DailyHistory, type EquitySeries, type HistoryDay, type HistoryFile, type HistorySummary, type HistoryTrade,
 } from "../lib/api";
 import { useMode } from "../lib/mode";
+import { oneOf, usePref } from "../lib/prefs";
 
 // The current account's history (PLAN 6.12): counts and sums of its closed trades, the
 // figures per risk day, the equity curve with its drawdowns, the trades and CSV exports.
@@ -17,6 +18,7 @@ export const PAST_ONLY = "Figures describe past results only; they do not predic
 const PERIODS: { label: string; days: number }[] = [
   { label: "1W", days: 7 }, { label: "1M", days: 30 }, { label: "3M", days: 90 }, { label: "1Y", days: 365 },
 ];
+const isPeriod = oneOf(PERIODS.map((p) => p.days));
 const PAGE = 50;
 
 const EXPORTS: { file: HistoryFile; icon: string; label: string }[] = [
@@ -28,6 +30,9 @@ const EXPORTS: { file: HistoryFile; icon: string; label: string }[] = [
 ];
 
 type Who = "ours" | "all";
+// R50: the period, whose trades and the dates are the user's preferences
+const isWho = oneOf<Who>(["ours", "all"]);
+const isDay = (v: unknown) => typeof v === "string" && (v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v));
 
 // dayStart turns a date field (YYYY-MM-DD, the user's calendar) into the start of that day,
 // or of the next day with next (an inclusive "to"), as an RFC 3339 time.
@@ -41,7 +46,7 @@ function dayStart(value: string, next = false): string | undefined {
 export function History() {
   const status = useMode();
   const accountId = status?.account?.id;
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePref<number>("history.days", 30, isPeriod);
   const [summary, setSummary] = useState<HistorySummary | null>(null);
   const [daily, setDaily] = useState<DailyHistory | null>(null);
   const [series, setSeries] = useState<EquitySeries[] | null>(null);
@@ -206,9 +211,9 @@ function DailyBars({ rows }: { rows: HistoryDay[] }) {
 }
 
 function Trades({ accountId, summary }: { accountId: string; summary: HistorySummary | null }) {
-  const [who, setWho] = useState<Who>("ours");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [who, setWho] = usePref<Who>("history.trades.who", "ours", isWho);
+  const [from, setFrom] = usePref<string>("history.trades.from", "", isDay);
+  const [to, setTo] = usePref<string>("history.trades.to", "", isDay);
   const [rows, setRows] = useState<HistoryTrade[] | null>(null);
   const [more, setMore] = useState(false);
   const [error, setError] = useState<unknown>(null);

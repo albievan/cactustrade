@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { EquityCharts } from "../components/EquityChart";
+import { oneOf, usePref } from "../lib/prefs";
 import { api, errorText, money, platformBadge, platformLabel, type AccountHoldings, type EquitySeries, type Overview as OverviewData } from "../lib/api";
 
 // Every account the user can view, on every platform: totals per currency, one card per
@@ -9,12 +10,13 @@ import { api, errorText, money, platformBadge, platformLabel, type AccountHoldin
 const RANGES: { label: string; days: number }[] = [
   { label: "1D", days: 1 }, { label: "1W", days: 7 }, { label: "1M", days: 30 }, { label: "3M", days: 90 }, { label: "All", days: 400 },
 ];
+const isRange = oneOf(RANGES.map((r) => r.days));
 
 export function Overview() {
   const [data, setData] = useState<OverviewData | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePref<number>("overview.days", 30, isRange); // R50
   const [series, setSeries] = useState<EquitySeries[] | null>(null);
   const [chartError, setChartError] = useState("");
   const load = useCallback(() => {

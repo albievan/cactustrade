@@ -161,6 +161,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your own view preferences in the web app (web session only; R50)
+         * @description The view choices you made in the web app (chart range, tabs, filters, sort order, folded cards…), kept on the server so they follow you to any browser. Only your own; an API key is refused (403). They are never an input to trading.
+         */
+        get: operations["getMyPreferences"];
+        /**
+         * Change your own view preferences (merge patch; null deletes a key; web session only)
+         * @description A JSON merge patch of keys (one level): each value replaces its key (last write wins), null deletes it, keys not named are kept. Keys match ^[a-z][A-Za-z0-9]*(\.[A-Za-z0-9_-]+){1,7}$ (at most 128 bytes); a value is a string (at most 1024 bytes), a number, true/false, or an array or flat object of at most 100 of those. At most 200 keys and 60 KiB together; a refused patch changes nothing (400). Not audited (view choices only).
+         */
+        put: operations["setMyPreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/email": {
         parameters: {
             query?: never;
@@ -2349,6 +2373,14 @@ export interface components {
             notify: components["schemas"]["NotifyPrefs"];
             /** @description Your current password; required when the e-mail address changes, never stored or returned */
             currentPassword?: string;
+        };
+        /** @description Your view preferences, key → value (R50) */
+        Preferences: {
+            [key: string]: unknown;
+        };
+        /** @description Keys to set (any allowed value) or delete (null) */
+        PreferencesPatch: {
+            [key: string]: unknown;
         };
         SmtpPreset: {
             id: string;
@@ -4603,6 +4635,56 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             429: components["responses"]["Problem"];
+        };
+    };
+    getMyPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Your preferences (an empty object when none are saved) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preferences"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    setMyPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferencesPatch"];
+            };
+        };
+        responses: {
+            /** @description Stored; all your preferences after the patch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preferences"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            413: components["responses"]["Problem"];
         };
     };
     getEmailSetup: {

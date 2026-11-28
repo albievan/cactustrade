@@ -1,5 +1,6 @@
 // Presentation helpers for a table the viewer can filter, group and sort by any column.
 // Nothing here decides anything about trading: it only rearranges rows the server sent.
+import { usePref } from "./prefs";
 
 export type Column<T> = {
   key: string;
@@ -70,4 +71,27 @@ export function groupRows<T>(rows: T[], col: Column<T> | undefined): Group<T>[] 
 export function nextSort(cur: Sort, key: string): Sort {
   if (!cur || cur.key !== key) return { key, desc: false };
   return cur.desc ? null : { key, desc: true };
+}
+
+// ---- R50: the table's view as the user's preferences -------------------------------------
+
+const isStringMap = (v: unknown) =>
+  !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v as object).every((x) => typeof x === "string");
+const isBoolMap = (v: unknown) =>
+  !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v as object).every((x) => typeof x === "boolean");
+const isSort = (v: unknown) => {
+  const s = v as { key?: unknown; desc?: unknown } | null;
+  return !!s && typeof s === "object" && typeof s.key === "string" && typeof s.desc === "boolean";
+};
+
+// useTableView keeps a table's filters, search, grouping, sort and folded groups as the
+// user's preferences under prefix (e.g. "orders.table" → "orders.table.sort"), so the table
+// looks the same at the next sign-in, in any browser.
+export function useTableView(prefix: string, defaults: { groupBy?: string; sort: Sort }) {
+  const [filters, setFilters] = usePref<Filters>(prefix + ".filters", {}, isStringMap);
+  const [search, setSearch] = usePref<string>(prefix + ".search", "");
+  const [groupBy, setGroupBy] = usePref<string>(prefix + ".groupBy", defaults.groupBy ?? "");
+  const [sort, setSort] = usePref<Sort>(prefix + ".sort", defaults.sort, isSort);
+  const [closed, setClosed] = usePref<Record<string, boolean>>(prefix + ".closed", {}, isBoolMap);
+  return { filters, setFilters, search, setSearch, groupBy, setGroupBy, sort, setSort, closed, setClosed };
 }

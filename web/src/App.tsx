@@ -24,6 +24,7 @@ import { History } from "./pages/History";
 import { Analysis } from "./pages/Analysis";
 import { RealTrading } from "./pages/RealTrading";
 import { Backups } from "./pages/Backups";
+import { PrefsProvider } from "./lib/prefs";
 
 export function App() {
   const { me, loading } = useSession();
@@ -34,8 +35,10 @@ export function App() {
   // The built-in admin/admin must choose a new password before anything else. The page is
   // outside the Layout, so it shows the real-money banner itself (OD27).
   if (me.user.mustChangePassword) return <ModeProvider><ChangeDefaultPassword /></ModeProvider>;
+  // R50: the user's view preferences are loaded before any page renders.
   return (
     <ModeProvider>
+    <PrefsProvider key={me.user.id} userId={me.user.id}>
     <Routes>
       <Route element={<Layout />}>
         <Route path="risk" element={<RiskLimits />} />
@@ -61,6 +64,7 @@ export function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+    </PrefsProvider>
     </ModeProvider>
   );
 }
