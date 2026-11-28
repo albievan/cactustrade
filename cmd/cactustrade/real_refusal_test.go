@@ -41,6 +41,12 @@ var modeSites = map[string][]string{
 		`if m != ModeReal {`, // ValidateFor (OD25)
 	},
 	"internal/domain/history.go": {`case t.Mode != ModeDemo && t.Mode != ModeReal:`}, // validation
+	// R45 (D41 g): Trading 212 trades practice accounts only; real is refused everywhere.
+	"internal/domain/account.go": {`return a.OnPlatform() == PlatformTrading212 && a.Mode == ModeDemo`}, // T212Trading: demo only
+	"internal/domain/t212.go": {
+		`case o.Mode != ModeDemo:`, // validateT212: any non-demo Trading 212 order refused
+		`case o.Mode != ModeDemo:`, // T212IntentFor: any non-demo Trading 212 intent refused
+	},
 	// R28: presets are capped at the real ceilings on a real account; only demo starts itself.
 	"internal/domain/style.go": {
 		`if m == ModeReal {`, // PresetFor: RealCeilings (OD25)

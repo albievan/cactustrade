@@ -16,6 +16,11 @@ type AgentPosition struct {
 	ClosedAt time.Time
 	// CloseRequestID is the close order sent for it ("" = none yet).
 	CloseRequestID string
+	// Ticker and Quantity: a Trading 212 position's instrument and the share quantity
+	// cactusTrade bought (only that is ever sold, D44). "" and 0 on eToro. A Trading 212
+	// position has no position id of its own: PositionID is the buy order's id.
+	Ticker   string
+	Quantity Micros
 }
 
 // Open reports whether the position is still open as far as cactusTrade knows.
