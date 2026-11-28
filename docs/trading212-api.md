@@ -51,15 +51,74 @@ never adds amounts in different currencies.
 ## Why not trading (yet)
 
 No shorts/CFDs, no idempotency key on orders, no market data, no stop-loss on a market order:
-the guardrails of `CLAUDE.md` §2 cannot be met as for eToro, so trading needs rules agreed with
-the owner first.
+the guardrails of `CLAUDE.md` §2 cannot be met as for eToro. The owner agreed the rules for
+Trading 212 in writing (D41–D44, 2026-11-28; CLAUDE.md §2 amended); trading is planned as R45
+(practice accounts only) and is not built yet.
 
-## Orders (researched 2026-11-27, not used — R45)
+## Orders (re-verified 2026-11-28 at docs.trading212.com, API v0 beta — R45, not used yet)
 
-`POST /equity/orders/market` `{ticker, quantity, extendedHours}` (50/min), `/limit` (`limitPrice`),
-`/stop` (`stopPrice`), `/stop_limit` (`stopPrice`, `limitPrice`, `timeValidity` DAY|GOOD_TILL_CANCEL);
-a sell is a negative quantity; `DELETE /equity/orders/{id}` cancels (may fail when the order is already filling); no
-close endpoint (sell the quantity). Key scope `orders:execute`; Invest and Stocks ISA only. **Not
-idempotent** (no client order id; a repeated request may duplicate an order). No SL/TP on a market
-order. No market data. `GET /equity/metadata/instruments` (1/50 s) gives ticker, ISIN, currency,
-`maxOpenQuantity`; no minimum order value. No watchlist endpoint.
+Trading is planned under D41–D44 (PLAN R45). Nothing below is called until R45.8 adds it to
+`allowlist.go`. These are the documented shapes; recorded answers from the owner's practice run
+(R45.13) replace the synthetic fixtures.
+
+| Method and path | Limit | Scope | Use (R45) |
+|---|---|---|---|
+| `POST /api/v0/equity/orders/market` | 50 / min | orders:execute | buy; close (sell) |
+| `POST /api/v0/equity/orders/stop` | 1 / 2 s | orders:execute | sell-stop after a fill |
+| `DELETE /api/v0/equity/orders/{id}` | 50 / min | orders:execute | cancel (the stop before a close; a stale buy) |
+| `GET /api/v0/equity/orders` | 1 / 5 s | orders:read | active orders (stop check, matching) |
+| `GET /api/v0/equity/orders/{id}` | 1 / 1 s | orders:read | one active order, or 404 |
+| `GET /api/v0/equity/history/orders` | 20 / min | history:orders | fills, matching (`cursor`, `ticker`, `limit` ≤ 50; follow `nextPagePath` verbatim) |
+| `GET /api/v0/equity/metadata/instruments` | 1 / 50 s | metadata | ticker, ISIN, currency, maxOpenQuantity (refreshed by Trading 212 every 10 min) |
+
+Not used: `POST /equity/orders/limit`, `/stop_limit` (D41), pies, `GET /equity/metadata/exchanges`
+(1 / 30 s; cactusTrade uses its own calendar).
+
+- **Market:** `{ticker, quantity, extendedHours}`. A negative quantity sells; `extendedHours`
+  defaults to false (cactusTrade always sends false). A market order sent while the market is
+  closed is **queued until the next open**, and slippage is possible: send only in session.
+- **Stop:** `{ticker, quantity, stopPrice, timeValidity: DAY | GOOD_TILL_CANCEL}`. It becomes a
+  market order once the last traded price reaches `stopPrice`.
+- **Not idempotent:** "Sending the same request multiple times may result in duplicate orders."
+  There is no client order id.
+- **Errors:** 400 failed validation, 401, 403 (e.g. "Scope( orders:execute ) missing"), 408, 429.
+- **Order** (the answer to every POST, and the item of the order lists): `id` (int64),
+  `createdAt`, `currency`, `extendedHours`, `filledQuantity`, `filledValue`, `initiatedFrom`
+  (API|IOS|ANDROID|WEB|SYSTEM|AUTOINVEST|INSTRUMENT_AUTOINVEST),
+  `instrument{currency,isin,name,ticker}`, `limitPrice`, `quantity`, `side` (BUY|SELL),
+  `status`, `stopPrice`, `strategy` (QUANTITY|VALUE), `ticker`, `timeInForce`, `type`
+  (LIMIT|STOP|MARKET|STOP_LIMIT), `value`. The request field is `timeValidity`, the response
+  field is `timeInForce`.
+- **Status:** LOCAL, UNCONFIRMED, CONFIRMED, NEW, CANCELLING, CANCELLED, PARTIALLY_FILLED,
+  FILLED, REJECTED, REPLACING, REPLACED.
+- **DELETE:** 200 with no body = cancel request accepted (not guaranteed while the order is
+  filling); 404 = unknown.
+- **History item:** `{order: Order, fill: {filledAt, id, price, quantity, tradingMethod
+  (TOTV|OTC), type, walletImpact{currency, fxRate, netValue, realisedProfitLoss,
+  taxes[{chargedAt, currency, name, quantity}]}}}`. Tax names: COMMISSION_TURNOVER,
+  CURRENCY_CONVERSION_FEE, FINRA_FEE, FRENCH_TRANSACTION_TAX, PTM_LEVY, STAMP_DUTY,
+  STAMP_DUTY_RESERVE_TAX, TRANSACTION_FEE.
+- **Instrument metadata:** `addedOn`, `currencyCode`, `extendedHours`, `isin`,
+  `maxOpenQuantity`, `name`, `shortName`, `ticker`, `type` (STOCK, ETF, …),
+  `workingScheduleId`. There is **no `minTradeQuantity`** and no minimum order value.
+- **Limits:** at most 50 pending orders per ticker per account. Orders only in the primary
+  account currency (multi-currency accounts not supported); Invest and Stocks ISA only; orders
+  by value are not supported through the API.
+- **Scopes:** account, portfolio, metadata, orders:read, orders:execute, history:orders
+  (others exist: history:transactions, history:dividends, pies:read, pies:write — not needed).
+- **Rate-limit headers:** `x-ratelimit-limit`, `-period`, `-remaining`, `-reset` (Unix
+  seconds), `-used`. Limits are per account.
+- **Terms:** https://www.trading212.com/legal-documentation/API-Terms_EN.pdf (read by the
+  owner, D41 h).
+
+**Not documented — fail closed until the owner's practice run (R45.13):**
+- whether the demo (practice) environment accepts API orders (T7);
+- quantity decimals, and stops on fractional quantities (T8: whole shares until verified, D43);
+- stop price units for GBX shares, and price precision (T2b);
+- what `GET /equity/orders/{id}` answers after a fill (T4, assumed 404);
+- how long before a fill shows in history (T5b);
+- whether a 429 is answered before processing (T6b, treated as an unknown outcome);
+- what happens on a sell larger than the holding (T11; the positions endpoint has
+  `quantityAvailableForTrading`, and cactusTrade refuses such a sell itself);
+- GOOD_TILL_CANCEL across sessions (T12);
+- `quantityAvailableForTrading` while a stop is open (T13).

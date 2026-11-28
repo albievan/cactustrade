@@ -45,6 +45,10 @@ Each rule has a test; a change that breaks one is a BLOCKER.
    one exception: `GET /api/v1/watchlists` (read the user's own watchlists for the import;
    owner's decision D38, 2026-11-27); no watchlist write path, pinned by `TestWatchlistReadOnly`.
    `allowlist_test.go` fails the build when any other `/api/` path literal appears.
+   The Trading 212 adapter (`internal/adapters/trading212`) talks only to its `allowlist.go`:
+   GET account summary, positions, order history, open orders, one order, instrument metadata;
+   POST market order and stop order; DELETE order (D41, D43). No limit, stop-limit, pie,
+   export or money path; its `allowlist_test.go` fails on any other path or method.
 2. **Never spend more than is in the account.** Before every order fetch available cash from
    eToro (no cache older than a few seconds) and reject when
    `amount > min(available cash, remaining trading budget)`. The trading budget is set in the
@@ -57,6 +61,12 @@ Each rule has a test; a change that breaks one is a BLOCKER.
    (open + pending) may use at most 25 % of the account's trading budget. Check eligibility
    (real/long/x1 for a long, cfd/short/x1 for a short) before the first trade in an
    instrument; refuse any other settlement type, direction or leverage.
+   **On Trading 212 (D41, D43) exactly three shapes, constants in its adapter:** a market buy
+   (long, the share itself, no extended hours); a sell stop of a quantity cactusTrade holds; a
+   market sell of a quantity cactusTrade holds. A sell never exceeds the quantity cactusTrade
+   holds (no short). Every Trading 212 position carries a confirmed sell stop or is sold.
+   Whole shares only unless the account's fractional switch is on (only after T212's fraction
+   and stop rules are verified on the practice account).
 4. **No margin, no orders that could together exceed cash:** reserve cash for every open order.
 5. **The LLM never calls the broker.** No tools, no credentials, no network path to eToro;
    it only returns a structured verdict and can only shrink or reject.
@@ -64,6 +74,9 @@ Each rule has a test; a change that breaks one is a BLOCKER.
    reconciliation or any unhandled state = no new orders. Exits must still work.
 7. **Idempotency.** Every order carries a unique `x-request-id` persisted *before* sending; a
    retry reuses it. On start-up reconcile against the eToro portfolio before anything else.
+   Trading 212 takes no request id: the order is persisted before sending, sent once and never
+   resent; a lost answer stops new orders on that account until it is matched (ticker,
+   quantity, time) in the open orders or order history.
 
 **Demo by default.** Real mode only through the gated switch (≥ N qualifying days of demo
 history, N set per real account by its admin, 1–60, default 5 — owner's decisions D36 and
@@ -72,6 +85,8 @@ D37, 2026-11-27; admin, typed confirmation phrase, banner on every page). Real t
 only with the gate armed, `CACTUSTRADE_REAL_TRADING=on`, an agent started by a person in this
 process and a fresh permit per entry. Never run real-mode orders
 yourself. Never put real credentials in code, tests, fixtures, logs or commits.
+Trading 212 trades on practice (demo) accounts only; a real Trading 212 account is refused
+everywhere (D41 g).
 
 ## 3. Architecture — non-negotiable
 - `internal/domain` (pure Go, no I/O, no `time.Now()`), `internal/app` (use cases),
