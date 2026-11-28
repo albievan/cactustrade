@@ -132,8 +132,8 @@ func (s *Service) agentTickAll(ctx context.Context, wg *sync.WaitGroup) {
 	s.autoStartAll(ctx, as)
 	for _, a := range as {
 		switch {
-		case !a.Tradable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:
-			continue
+		case !a.Agentable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:
+			continue // a Trading 212 practice account ticks too (R45.7); a real one never
 		case a.Mode == domain.ModeReal && (!s.rt.realStartedHere(a.ID) || s.realEntryBlocked(ctx, a) != ""):
 			continue
 		case s.agentState(ctx, a.ID) != domain.AgentRunning || !s.rt.claimTick(a.ID):
@@ -183,7 +183,12 @@ func (s *Service) AgentTick(ctx context.Context, accountID string) (AgentTrace, 
 		return tr, fmt.Errorf("app.AgentTick: %w", err)
 	}
 	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
-	killWhy := s.agentTickLocked(ctx, a, &tr)
+	var killWhy string
+	if a.OnPlatform() == domain.PlatformTrading212 {
+		killWhy = s.t212TickLocked(ctx, a, &tr) // its own path (T212-b); a real account is refused there
+	} else {
+		killWhy = s.agentTickLocked(ctx, a, &tr)
+	}
 	if killWhy != "" {
 		// Tripped outside the entry lock: Kill holds the control lock and waits for it.
 		if err := s.trip(ctx, a, killWhy); err != nil {

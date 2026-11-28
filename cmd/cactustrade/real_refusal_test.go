@@ -87,7 +87,7 @@ var modeSites = map[string][]string{
 		`if a.Mode == domain.ModeReal && a.Tradable() {`,               // S5 mayOpen: a real entry needs a fresh entry permit
 	},
 	"internal/app/supervisor.go": {
-		`if !a.Tradable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal || !s.hasKeys(ctx, a) {`, // S6 superviseTick: eToro accounts with keys
+		`if !a.Agentable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal || !s.hasKeys(ctx, a) {`, // S6 superviseTick: eToro accounts with keys, and Trading 212 practice accounts (R45.7: Agentable adds demo only)
 		`if a.Mode == domain.ModeDemo {`,                               // S6: a demo account is always wanted
 		`if a.Mode == domain.ModeReal {`,                               // S6: a real one only when realSupervised (exits)
 		`case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`, // S6 supervise: no mode skipped
@@ -101,7 +101,7 @@ var modeSites = map[string][]string{
 		`if v.Mode == domain.ModeReal {`,                                // S8 StartAgent: a person's start marks a real agent (OD26, review M2)
 	},
 	"internal/app/agent.go": {
-		`case !a.Tradable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`,                        // S9 agentTickAll: eToro accounts
+		`case !a.Agentable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`,                       // S9 agentTickAll: eToro accounts, and Trading 212 practice accounts (R45.7: Agentable adds demo only)
 		`case a.Mode == domain.ModeReal && (!s.rt.realStartedHere(a.ID) || s.realEntryBlocked(ctx, a) != ""):`, // S9 agentTickAll: real only when started by a person here and entries may be made
 		`case a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal:`,                                         // S9 agentGate: no mode refused
 		`if a.Mode == domain.ModeReal {`, // S9 agentGate: real only when entries may be made and started by a person here (OD26)

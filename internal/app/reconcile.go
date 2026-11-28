@@ -81,8 +81,8 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]Reconciliation, error) {
 	}
 	var out []Reconciliation
 	for _, a := range as {
-		if !a.Tradable() || !s.hasKeys(ctx, a) {
-			continue
+		if !a.Agentable() || !s.hasKeys(ctx, a) {
+			continue // a Trading 212 practice account is reconciled too (R45.7)
 		}
 		r, err := s.Reconcile(ctx, a.ID)
 		if err != nil {
@@ -118,6 +118,9 @@ func (s *Service) Reconcile(ctx context.Context, accountID string) (Reconciliati
 	a, err := s.d.Store.Accounts().Get(ctx, accountID)
 	if err != nil {
 		return Reconciliation{}, fmt.Errorf("app.Reconcile: %w", err)
+	}
+	if a.T212Trading() {
+		return s.t212Reconcile(ports.WithAccount(ctx, a), a) // its own path (T212-b)
 	}
 	if !a.Tradable() {
 		return Reconciliation{}, fmt.Errorf("app.Reconcile: %s: %w", a.Name, domain.ErrViewOnly)

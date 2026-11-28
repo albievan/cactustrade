@@ -528,7 +528,7 @@ func (s *Service) Orders(ctx context.Context, p Principal, accountID string, lim
 	if limit < 1 || limit > 500 {
 		return nil, domain.Invalid("limit", "must be 1–500")
 	}
-	v, err := s.account(ctx, p, accountID, domain.AccessView)
+	v, err := s.agentAccount(ctx, p, accountID, domain.AccessView)
 	if err != nil {
 		return nil, err
 	}

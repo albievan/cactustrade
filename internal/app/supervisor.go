@@ -80,7 +80,7 @@ func (s *Service) superviseTick(ctx context.Context, wg *sync.WaitGroup) {
 	for _, a := range as {
 		// A real-money account's gate and our records there are read in its own goroutine
 		// (realSupervised), so a slow store never holds up another account's exits.
-		if !a.Tradable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal || !s.hasKeys(ctx, a) {
+		if !a.Agentable() || a.Mode != domain.ModeDemo && a.Mode != domain.ModeReal || !s.hasKeys(ctx, a) {
 			continue
 		}
 		if a.Mode == domain.ModeDemo {
@@ -148,6 +148,9 @@ func (s *Service) supervise(ctx context.Context, accountID string) (SupervisorRe
 		return rep, fmt.Errorf("app.Supervise: %w", err)
 	}
 	ctx = ports.WithAccount(ctx, a) // log lines name the account and mode (PLAN 7.2)
+	if a.T212Trading() {
+		return s.t212Supervise(ctx, a) // its own path (T212-b)
+	}
 	switch {
 	case !a.Tradable():
 		rep.Skipped = "view-only account"

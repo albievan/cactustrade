@@ -649,6 +649,32 @@ func (s *Service) t212RestingSells(ctx context.Context, accountID, ticker, exclu
 	return q, nil
 }
 
+// t212MayCancel reports whether a cancel may be sent for an order of ours now
+// (t212CancelBlocked over the cancels already stored for it).
+func (s *Service) t212MayCancel(ctx context.Context, a domain.Account, target domain.Order) bool {
+	os, err := s.d.Store.Orders().ListSince(ctx, a.ID, target.CreatedAt)
+	if err != nil {
+		return false
+	}
+	var r cancelRecord
+	for _, c := range os {
+		if c.Kind != domain.OrderCancel || c.TargetOrderID != target.EtoroOrderID {
+			continue
+		}
+		r.sent++
+		if c.CreatedAt.After(r.lastAt) {
+			r.lastAt = c.CreatedAt
+		}
+		switch {
+		case !c.State.Final():
+			r.inFlight = true
+		case c.State == domain.OrderFilled:
+			r.accepted = true
+		}
+	}
+	return !t212CancelBlocked(r, s.d.Clock.Now())
+}
+
 // t212OurStops returns the stop orders of ours that are not final for an agent position.
 func (s *Service) t212OurStops(ctx context.Context, accountID string, positionID int64) ([]domain.Order, error) {
 	open, err := s.d.Store.Orders().ListOpen(ctx, accountID)
@@ -679,8 +705,23 @@ func (s *Service) closeT212Position(ctx context.Context, a domain.Account, ap do
 		prev, err := s.d.Store.Orders().Get(ctx, ap.CloseRequestID)
 		if err == nil && !prev.State.Final() {
 			if prev.EtoroOrderID > 0 {
-				if prev, err = s.pollT212(ctx, a, prev); err != nil || !prev.State.Final() {
+				if prev, err = s.pollT212(ctx, a, prev); err != nil {
 					return prev, err
+				}
+				if !prev.State.Final() && s.d.Clock.Now().Sub(prev.SentAt) >= pendingMax {
+					// A sale still working after a minute is cancelled (at most maxCancels,
+					// one in flight) and, once it ended unfilled, sent again below.
+					if s.t212MayCancel(ctx, a, prev) {
+						if _, err := s.cancelT212(ctx, a, prev, fmt.Sprintf("sale still pending after %s", pendingMax)); err != nil {
+							s.d.Log.WarnContext(ctx, "cancelling a stale Trading 212 sale failed", "account", a.ID, "request", prev.RequestID, "err", err)
+						}
+						if prev, err = s.pollT212(ctx, a, prev); err != nil {
+							return prev, err
+						}
+					}
+				}
+				if !prev.State.Final() {
+					return prev, nil
 				}
 				if cur, gerr := s.d.Store.AgentPositions().Get(ctx, a.ID, ap.PositionID); gerr == nil && !cur.Open() {
 					return prev, nil
